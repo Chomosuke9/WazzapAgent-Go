@@ -1,335 +1,304 @@
 # Roadmap dan Work Breakdown
 
-Estimasi tidak memakai minggu kalender karena kapasitas tim belum diketahui. Setiap phase memiliki dependency dan exit gate; phase berikutnya tidak boleh memakai status “hampir selesai” sebagai dependency.
+Project ini greenfield. Source lama dipakai untuk inventaris fitur dan test ideas, bukan sebagai runtime, data source, atau compatibility target.
 
-## Milestone 0 — Bekukan baseline
+## Milestone 0 — Product scope dan technical decisions
 
 ### Tujuan
 
-Membuat perilaku lama dapat diukur sebelum ada replacement.
+Menetapkan release scope sebelum coding besar.
 
 ### Work items
 
-- Inventaris semua protocol frames dari docs, TS, Python, dispatcher, dan tests.
-- Buat canonical schema untuk frame/action/event dan error codes.
-- Tambah `render_html`, `download_media`, nullable/pending attachment, dan actual delivery semantics.
-- Rekam golden JSON untuk setiap frame sukses/gagal dan malformed input.
-- Snapshot semua control panel route, request, response, status code, dan auth behavior.
-- Snapshot hasil schema SQLite fresh dan upgraded.
-- Rekam golden prompt/messages/tool schemas/action extraction untuk LLM1/LLM2.
-- Rekam message normalization fixtures dari representative Baileys events.
-- Bentuk CI baseline untuk Node typecheck/tests dan Python lint/tests.
+- Klasifikasikan fitur di baseline sebagai `required`, `deferred`, atau `rejected`.
+- Tentukan canonical message, action, result, dan stable error model baru.
+- Tetapkan command list release pertama.
+- Tentukan API versioning dan authentication model control panel.
+- Buat native WhatsApp capability test matrix.
+- Tutup ADR SQLite driver/CGO, database topology, process topology, config reload, dan deployment target.
+- Definisikan SLO awal dan resource limits.
 
 ### Exit gate
 
-- Tidak ada runtime action yang hilang dari schema.
-- TS dan Python dapat membaca semua golden frame.
-- Schema dan HTTP snapshot committed.
-- Existing test suite hijau atau known failures didokumentasikan.
-- Setiap known contract drift memiliki keputusan.
+- Scope v1 disetujui.
+- Semua P0/P1 feature memiliki acceptance criteria.
+- Critical ADR selesai.
+- Tidak ada requirement import data, auth, atau protocol lama.
 
-## Milestone 1 — Fondasi Go
+## Milestone 1 — Fondasi aplikasi
 
 ### Tujuan
 
-Menyediakan executable yang reproducible tanpa mengambil alih production behavior.
+Menyediakan executable Go yang reproducible dan operable.
 
 ### Work items
 
-- Buat `cmd/wazzapagent` dan lifecycle context.
-- Implement config typed, defaults, validation, secret redaction, dan restart metadata.
+- Buat `cmd/wazzapagent` dan composition root.
+- Implement typed config, defaults, validation, immutable snapshots, dan secret redaction.
 - Implement structured logger dan instance ID.
-- Tambah live/ready endpoints.
-- Track `go.sum`; tambahkan lint/test/race/build commands ke repository guidance.
-- Pin toolchain dan dependency versions.
-- Tutup ADR SQLite driver/CGO, config hot reload, dan single-binary versus service split sebelum package boundary dibekukan.
-- Rapikan prototype `pkg/whatsapp/socket.go` ke adapter/spike atau hapus setelah fungsinya tercakup.
+- Tambah liveness/readiness endpoints.
+- Tambah lifecycle context, graceful shutdown, dan goroutine tracking.
+- Track `go.sum`; pin toolchain/dependencies.
+- Rapikan prototype `pkg/whatsapp/socket.go` menjadi adapter spike atau hapus setelah tercakup.
+- Siapkan CI untuk format, vet, test, race, vulnerability scan, dan build.
 
 ### Exit gate
 
 ```text
+go vet ./...
 go test ./...
 go test -race ./...
-go vet ./...
+go build ./cmd/...
 ```
 
-Binary start, health endpoint lulus, invalid config gagal sebelum membuka socket, dan SIGTERM selesai tanpa goroutine leak.
+Binary start dengan config minimal, invalid config gagal sebelum network startup, health endpoints benar, dan SIGTERM selesai tanpa leak.
 
-Dependency: Milestone 0 schema minimal.
+Dependency: Milestone 0.
 
-## Milestone 2 — Protocol SDK dan compatibility harness
-
-### Tujuan
-
-Go dapat berbicara protocol v2 tanpa side effect WhatsApp.
-
-### Work items
-
-- Typed frame envelope, custom validation, error mapping.
-- Request ID generation/correlation dan timeout behavior.
-- Hello/auth/heartbeat/reconnect state machine.
-- Reliable bounded queue dan overflow metrics.
-- Mock WS server/client untuk Node dan Python compatibility.
-- Replay seluruh golden fixtures ke Go decoder/encoder.
-- Explicit adapter untuk legacy top-level control frames.
-- Tutup ADR raw Baileys action result: normalized protocol baru dan serializer compatibility v2.
-
-### Exit gate
-
-- Go ↔ Node dan Go ↔ Python handshake lulus.
-- Semua action/event round-trip field-identical sesuai canonical schema.
-- Reconnect tidak reorder reliable frames.
-- Timeout dan late ACK behavior parity.
-- Queue overflow deterministic dan observable.
-
-Dependency: Milestone 0–1.
-
-## Milestone 3 — Persistence read-only dan migrations framework
+## Milestone 2 — Persistence v1
 
 ### Tujuan
 
-Membaca semua state existing dengan aman tanpa menjadi writer ketiga.
+Membangun storage baru dengan schema dan ownership jelas sejak awal.
 
 ### Work items
 
-- Tenant path resolver dan stable TenantID mapping.
-- Open existing split DB read-only.
-- Typed repositories untuk settings, models, activation, memories, stats, moderation, stickers, jobs.
-- Verify SQLite pragmas, timestamp, NULL, default, `__global__`, dan ordering semantics.
-- Embedded versioned migrations dengan dry-run dan checksum, tetapi writes disabled.
-- Schema diff command dan backup verifier.
-- Concurrency tests dengan Node/Python writers pada copied fixtures.
+- Tenant/account schema dan data root layout.
+- Embedded immutable migrations dengan version/checksum.
+- Repositories untuk settings, directory, models/providers, activation, memories, moderation, stats, stickers/media.
+- Tables untuk action receipts, inbox/outbox, audit, jobs, dan sub-agent.
+- WAL/foreign key/busy/checkpoint configuration.
+- Transaction boundaries dan repository interfaces.
+- Backup, restore, integrity-check, dan retention commands.
 
 ### Exit gate
 
-- Query outputs cocok dengan implementations lama pada fixture DB.
-- Dua tenant dengan chat ID sama tidak berbagi data.
-- No schema mutation pada read-only mode.
-- Semua historical fixture dapat diperiksa dan migration plan deterministik.
+- Fresh DB mencapai schema v1 deterministically.
+- Migration rerun idempotent dan checksum mismatch fail-fast.
+- Two-tenant isolation tests lulus.
+- Crash/restart tidak merusak committed transactions.
+- Backup dapat direstore dan dibuka oleh release yang sama.
 
 Dependency: Milestone 1.
 
-## Milestone 4 — Control plane Go
+## Milestone 3 — Native WhatsApp adapter
 
 ### Tujuan
 
-Memindahkan HTTP control panel dan account catalog terlebih dahulu, dengan adapters ke runtime lama.
+Membuktikan konektivitas native Go untuk account baru sebelum agent dibangun di atasnya.
 
 ### Work items
 
-- Auth, rate limiter, security headers, body limits.
-- Account catalog CRUD dengan atomic writes dan stable IDs.
-- Overview/account runtime status adapter.
-- Settings, memory, model, activation, bot config, stickers CRUD.
-- Environment editor dengan secret masking dan restart flags.
-- Audit persistence.
-- Sub-agent outbox admin proxy.
-- Optional update/restart adapter; tidak menjadi core requirement binary.
-- Static UI parity atau reverse proxy UI lama sementara.
+- Per-tenant hypermeow device store.
+- QR dan pairing-code flows.
+- Connect/reconnect/logout/device removal lifecycle.
+- Canonical event normalization.
+- Text send/receive, reply, mention, reaction, delete, read, presence.
+- Group metadata, participant roles, kick.
+- Media download/upload.
+- Capability flags dan typed unsupported errors.
+- Per-chat/JID send serialization dan reconnect backoff.
 
 ### Exit gate
 
-- Black-box HTTP contract tests lulus terhadap server lama dan Go.
-- Semua mutations audited.
-- Unauthorized, path traversal, oversized body, malformed JSON, dan rate limit tests lulus.
-- Account removal mempertahankan tenant data.
+- Fresh account dapat pair dan reconnect setelah process/host restart.
+- DM/group basic actions lulus pada real devices.
+- Multi-account isolation lulus.
+- Network loss, logout, stream conflict, dan cancellation tests lulus.
+- Unsupported P1 capability memiliki fallback atau dikeluarkan eksplisit dari v1.
 
-Dependency: Milestone 2–3. Pair/reconnect boleh tetap diproxy ke Node.
+Dependency: Milestone 1–2.
 
-## Milestone 5 — Agent core Go dalam shadow mode
+## Milestone 4 — Message domain dan command core
 
 ### Tujuan
 
-Mengganti Python bridge behavior tanpa mengirim action nyata.
+Membangun normalized message pipeline dan user-facing non-LLM features.
 
-### Work stream A: history dan context
+### Work items
 
-- Message model, quoted hydration, sender refs, assistant identity.
-- Exact history serialization dan injection guards.
+- Message unwrap, stable context IDs, quoted lookup, sender refs.
+- LID/phone JID resolution.
+- Mention/tag-all/replied-to-bot detection.
+- Group metadata cache dan stampede protection.
+- Command/button registries dengan explicit registration.
+- Owner/admin/superadmin/user permissions.
+- Activation, mute, delete, kick, settings, model, memory, help.
+- Media and sticker catalog/conversion.
+- Interactive messages sesuai capability matrix.
+
+### Exit gate
+
+- Golden normalization fixtures lulus.
+- Context lookup dan cache bounds teruji.
+- Permission/activation tidak dapat dibypass.
+- Required v1 commands lulus integration tests.
+- Media path, MIME, size, timeout, dan cleanup tests lulus.
+
+Dependency: Milestone 2–3.
+
+## Milestone 5 — Agent core
+
+### Tujuan
+
+Membangun end-to-end LLM response pipeline.
+
+### Work stream A: history/context
+
+- Message history model dan bounded retention.
+- Quoted hydration dan assistant identity.
+- Deterministic history serialization.
+- Context injection guards.
 - Settings/model/memory context builder.
-- Tutup ADR durability/retention `contextMsgId` sebelum history implementation dibekukan.
 
 ### Work stream B: batching
 
-- Per-chat queues dan locks.
-- Debounce, burst cap, stale context-only behavior.
-- Prefix interrupt/cancellation.
+- Per-chat queue/lock.
+- Debounce, burst cap, stale context-only policy.
+- Prefix interrupt dan cancellation.
 - Idle trigger, mute gate, reply dedup.
 
 ### Work stream C: LLM
 
-- OpenAI-compatible client dan provider chain.
-- LLM1 tools/decision parsing.
-- LLM2 prompt order, tools, validator, vision/text fallback.
-- Fake deterministic providers.
+- OpenAI-compatible provider abstraction.
+- LLM1 typed routing/tools.
+- LLM2 prompt/tools/result validator.
+- Primary/fallback, timeouts, retries, multimodal fallback.
+- Fake deterministic provider.
 
-### Work stream D: action intent
+### Work stream D: durable actions
 
-- Extract legacy markers dan tool calls.
-- Permission/activation checks.
-- Implement `ShadowGateway` yang memenuhi canonical gateway port, merekam intent/diff, dan menolak network serta production writes.
-- Compare Go action intents dengan Python, tanpa dispatch.
+- Typed action extraction and validation.
+- Permission check immediately before side effect.
+- Transactional action receipt and outbox.
+- Unknown-outcome reconciliation state.
+- History finalization from normalized send result.
 
 ### Exit gate
 
-- Golden prompt fixtures byte-equivalent atau intentional deltas di-ADR-kan.
-- Replay corpus menghasilkan routing/action intents setara.
-- Per-chat ordering sama; chat berbeda concurrent.
-- Cancellation, timeouts, fallback, dedup, dan malformed model output lulus.
-- Shadow mode tidak memiliki side effect.
+- Golden prompt/tool/action tests lulus.
+- Per-chat ordering dan cross-chat concurrency benar.
+- Duplicate request tidak mengulang local side effect.
+- Timeout, fallback, cancellation, malformed output, and crash injection lulus.
+- End-to-end DM/group response bekerja pada test accounts.
 
-Dependency: Milestone 2–3.
+Dependency: Milestone 2–4.
 
 ## Milestone 6 — Jobs, direct invoke, dan sub-agent
 
 ### Tujuan
 
-Memindahkan cold/background workflows beserta durability semantics.
+Menambah workflows asynchronous dengan durability lengkap.
 
 ### Work items
 
 - Shared ChatReinvoker.
-- One-shot scheduler dan daily scheduler.
-- Transactional job claims dan restart recovery.
-- Direct invoke HTTP, fail-closed auth, async 202 behavior.
-- Sub-agent client, retry, steering, resumable upload.
-- Webhook auth, progress keepalive, completion durability.
-- Tracker state machine, deferred completion, checkpointed delivery, output spool.
-- Recovery dan admin outbox.
-- Buat writable store ownership matrix per table/file: Go hanya boleh menulis table baru yang Go-owned untuk shadow/durable staging; table dan JSON milik Node/Python tetap read-only sampai Milestone 7.
+- One-shot dan daily scheduler dengan transactional leases.
+- Direct invoke HTTP dengan fail-closed auth dan async acceptance.
+- Sub-agent client, retries, steering, resumable upload.
+- Authenticated webhook dan progress keepalive.
+- Durable tracker, deferred completion, output spool, delivery checkpoints.
+- Recovery, retry, discard, dan dead-letter operations.
 
 ### Exit gate
 
-- Ownership matrix disetujui dan diuji; Milestone 6 tidak menulis table/file yang masih dimiliki Node/Python.
-- Crash pada setiap state transition tidak kehilangan atau menggandakan completion.
-- Past-due jobs, shutdown cancellation, daily recurrence, dan timezone DST cases diuji.
-- Cold work menunggu WhatsApp open tanpa menghapus task.
+- Past-due, shutdown cancellation, recurrence, timezone, dan lease expiry tests lulus.
+- Cold work menunggu account `open` tanpa kehilangan job.
 - Webhook di-ACK hanya setelah durable ownership.
-- File size/hash/path traversal tests lulus.
+- Crash pada setiap state transition tidak kehilangan atau menggandakan completion.
+- File size/hash/traversal and duplicate delivery tests lulus.
 
-Dependency: Milestone 5. Writable store ownership matrix merupakan deliverable pertama Milestone 6 sebelum implementation yang menulis state.
+Dependency: Milestone 5.
 
-## Milestone 7 — Go menjadi agent dan migration owner
+## Milestone 7 — Control panel
 
 ### Tujuan
 
-Cutover Python bridge tenant-by-tenant dan hentikan dual schema ownership.
+Menyediakan seluruh operasi v1 melalui secure web interface/API.
 
 ### Work items
 
-- Aktifkan Go action dispatch melalui Node/Baileys sidecar.
-- Transactional action inbox/receipts dan outbox.
-- Migrasi `action-receipts.json` dan `subagent_tracker.json` secara idempotent.
-- Enable repository writes setelah backup dan schema lock.
-- Hentikan Python untuk canary tenant.
-- Compare metrics, replies, actions, job state, dan DB writes.
-- Expand canary bertahap.
-- Tetapkan auth ownership untuk fase ini: Node sidecar tetap menjadi pemilik auth dan Go tidak menyentuh `<tenant>/auth`.
+- Initial secure token setup dan auth middleware.
+- Account add/pair/reconnect/logout/disable/delete-data workflow.
+- Settings, models/providers, activation, memories, moderation, stickers.
+- Jobs and sub-agent administration.
+- Secret-safe config editor.
+- Audit events, health, metrics, backup/restore.
+- Embedded static UI.
 
 ### Exit gate
 
-- Tidak ada Python writer untuk tenant yang sudah cutover.
-- Node sidecar auth ownership dan rollback path terdokumentasi; native auth tetap terpisah sampai Milestone 8–9.
-- Duplicate replay setelah process crash tidak mengulang side effect.
-- Rollback ke Python/Node telah diuji pada backup copy dan canary.
-- Minimal 24 jam burn-in per stage; durasi final disepakati dari traffic nyata.
+- Auth fail-closed, timing-safe comparison, rate limiting, and security headers lulus.
+- Tenant-scoped authorization/path tests lulus.
+- Semua mutations transactional dan audited.
+- Pairing dan representative management workflows lulus browser/API tests.
 
-Dependency: Milestone 4–6.
+Dependency: Milestone 2–6. UI dapat dimulai paralel setelah API contracts stabil.
 
-## Milestone 8 — WhatsApp native Go spike
-
-### Tujuan
-
-Menentukan apakah `hypermeow` dapat mengganti Baileys tanpa asumsi.
-
-### Spike matrix
-
-- QR dan pairing number flow.
-- Fresh login, reconnect, logout, device removal.
-- Existing Baileys auth import; jika tidak mungkin, explicit re-pair UX.
-- Private/group messages, LID/PN mapping, participant roles.
-- Quoted/reply, mentions/tag-all, reaction, delete, kick.
-- Image/video/audio/document/sticker download dan upload.
-- View-once/ephemeral/edited/protocol wrappers.
-- Buttons, carousel, copy-code, quiz, Lottie, raw relay equivalents.
-- Group metadata update and cache behavior.
-- Network loss, conflict, rate-limit, stream replaced, device logout.
-- Multi-account resource isolation.
-
-### Exit gate
-
-Buat ADR memilih salah satu:
-
-1. sidecar Node dipertahankan;
-2. native Go hanya untuk subset tenants/features;
-3. native Go siap canary penuh.
-
-Native Go tidak boleh lanjut hanya karena basic QR/send text berhasil.
-
-Dependency: dapat dimulai paralel setelah Milestone 1, tetapi production cutover setelah Milestone 7 stabil.
-
-## Milestone 9 — Gateway native canary
+## Milestone 8 — Advanced WhatsApp features
 
 ### Tujuan
 
-Mengganti Node/Baileys untuk tenant yang memenuhi readiness matrix.
+Menyelesaikan fitur adapter yang kompleks tanpa menghambat runtime inti.
 
 ### Work items
 
-- Implement canonical gateway adapter native.
-- Import atau re-pair session dengan backup.
-- Side-by-side event normalization comparison pada test accounts.
-- Canary private chat, lalu test group, lalu selected production tenant.
-- Feature flags per tenant untuk adapter selection.
-- Rollback adapter tanpa DB downgrade.
+- Buttons, carousel, copy-code, quiz.
+- Lottie and animated sticker handling.
+- View-once, ephemeral, edited, and uncommon protocol wrappers.
+- Broadcast/announcement behavior.
+- Device compatibility fallbacks.
+- Real-device matrix Android/iOS/Web.
 
 ### Exit gate
 
-- Semua required capability matrix lulus pada real Android/iOS/Web participants yang disepakati.
-- No message loss/duplication pada reconnect tests.
-- Interactive/media behavior diterima.
-- Rollback time objective tercapai.
+- Setiap required feature lulus real-device tests.
+- Unsupported features memiliki UX fallback yang aman.
+- Reconnect tidak menyebabkan duplicate interactive sends.
+- Media/resource bounds tetap terpenuhi.
 
-Dependency: Milestone 7–8.
+Dependency: Milestone 3–5. Dapat paralel dengan Milestone 6–7.
 
-## Milestone 10 — Deployment dan cleanup
+## Milestone 9 — Hardening dan release candidate
 
 ### Tujuan
 
-Menyelesaikan replacement dan menghapus compatibility code secara terkontrol.
+Menyiapkan release baru dari fresh environment.
 
 ### Work items
 
-- Reproducible Linux/Windows builds dan artifacts/checksums.
-- Container atau systemd/Pterodactyl deployment strategy.
-- Tutup ADR update mechanism sesuai deployment target yang dipilih.
-- Migration dry-run, backup, restore, rollback commands.
-- Operator runbook dan alerts.
-- Hapus Python setelah seluruh tenant cutover.
-- Hapus Node hanya jika ADR native Go disetujui; jika sidecar permanen, pin dan minimalisasi tanggung jawabnya.
-- Deprecate protocol v2 `folderPath` identity setelah migration window.
-- Remove legacy readers setelah retention period dan restore drill.
+- End-to-end fresh install dan pairing.
+- Multi-account load/soak/fault tests.
+- Security review dan `govulncheck`.
+- Backup/restore and schema-upgrade drill.
+- Reproducible target builds/checksums.
+- Container atau systemd/Pterodactyl packaging.
+- Operator runbook, alerts, capacity, and retention defaults.
+- License/dependency inventory.
 
 ### Exit gate
 
-- Fresh install dan upgrade install automated.
-- Restore drill berhasil.
-- Production readiness dashboard dan alerts aktif.
-- Tidak ada undocumented runtime dependency.
-- Legacy service removal memiliki explicit sign-off.
+- Semua required feature gates lulus.
+- Zero tenant-isolation violation.
+- No unreconciled duplicate destructive action.
+- 24+ hour soak memenuhi error/resource budget.
+- Restore and host-restart recovery teruji.
+- Release artifact berjalan tanpa Node/Python.
+
+Dependency: Milestone 1–8 required scope.
 
 ## Critical path
 
 ```text
-M0 baseline
+M0 scope
   -> M1 foundation
-  -> M2 protocol
-  -> M3 stores
+  -> M2 persistence
+  -> M3 native WhatsApp
+  -> M4 domain/commands
   -> M5 agent
-  -> M6 durability features
-  -> M7 Python cutover
-  -> M9 native gateway (optional based on M8)
-  -> M10 cleanup
+  -> M6 background workflows
+  -> M7 control panel
+  -> M9 release candidate
 ```
 
-M4 control plane dapat berjalan paralel setelah M2/M3. M8 native spike dapat berjalan paralel, tetapi tidak boleh memblokir pemindahan agent ke Go.
+M8 dapat berjalan paralel setelah native adapter dan agent core stabil. Fitur M8 yang berstatus deferred tidak memblokir v1.

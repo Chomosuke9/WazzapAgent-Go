@@ -2,195 +2,187 @@
 
 ## Decision log
 
-### D1 — Sidecar dahulu, native WhatsApp terakhir
-
-**Status:** accepted untuk rencana awal.
-
-Go mengganti bridge/control/data behavior lebih dulu, sementara Node/Baileys tetap menjadi WhatsApp adapter. Native `hypermeow` hanya dipakai production setelah capability spike dan canary.
-
-Alasan: Baileys behavior mencakup auth, LID/JID, message wrappers, native flows, raw relay, group metadata, media crypto, pairing, dan reconnect. API similarity tidak membuktikan wire/behavior parity.
-
-### D2 — Protocol dibuat canonical dan generated
+### D1 — Native Go sejak awal
 
 **Status:** accepted.
 
-Buat schema machine-readable baru dari runtime inventory, lalu generate/validate Go, TS, Python, dan fixtures. `CONTRACT.md`, TS union, atau Python dataclasses tidak lagi berdiri sendiri sebagai source of truth.
+Production runtime memakai `hypermeow` langsung. Node/Baileys dan Python tidak menjadi sidecar. Source lama hanya referensi fitur dan test scenarios.
+
+Konsekuensi: fitur WhatsApp kompleks harus melewati capability gate; fitur yang tidak didukung ditunda atau mendapat fallback.
+
+### D2 — Kontrak baru
+
+**Status:** accepted.
+
+Canonical Go domain types menjadi kontrak internal. HTTP API memakai version baru. Tidak ada kewajiban mempertahankan protocol Node/Python atau raw Baileys result.
 
 ### D3 — Stable TenantID
 
 **Status:** accepted.
 
-Internal identity tidak memakai absolute filesystem path. `folderPath` tetap dipertahankan di protocol v2 adapter selama migration.
+Internal identity tidak memakai absolute path atau JID. Tenant ID immutable dan semua dependency tenant-scoped.
 
-### D4 — Satu migration owner
-
-**Status:** accepted.
-
-Go mengambil schema ownership hanya ketika writers lama dihentikan. Repositories tidak menjalankan DDL.
-
-### D5 — Pertahankan split DB saat behavior cutover
+### D4 — Greenfield persistence
 
 **Status:** accepted.
 
-Konsolidasi database ditunda agar rollback sederhana dan scope migration tidak bercampur dengan rewrite behavior.
+Schema dirancang baru dan versioned sejak v1. Tidak ada importer SQLite/JSON/auth/config lama.
 
-### D6 — SQLite untuk durable delivery
+### D5 — Durable delivery di SQLite
 
 **Status:** accepted.
 
-Action receipts, inbox/outbox, scheduler claims, dan sub-agent delivery state dipindahkan dari JSON ke transactional tables dengan retention. Legacy JSON importer tetap tersedia selama rollback window.
+Action receipts, inbox/outbox, scheduler leases, dan sub-agent delivery state memakai transactional tables dengan bounded retention.
+
+### D6 — Fresh pairing
+
+**Status:** accepted.
+
+Setiap account melakukan pairing baru ke native device store. Tidak ada konversi Baileys auth.
 
 ### D7 — Control panel di binary utama
 
 **Status:** proposed.
 
-Alasan: satu lifecycle, typed services, dan embed assets. Pisahkan hanya jika security/deployment boundary membutuhkan process terpisah.
+Default satu lifecycle dan embedded UI. Pisahkan hanya jika security boundary atau scaling membutuhkannya.
 
-### D8 — Self-update bukan core
+### D8 — Artifact deployment
 
 **Status:** proposed.
 
-Git fast-forward updater dipertahankan sebagai optional deployment adapter. Reproducible artifact/container deployment menjadi default target.
+Default release berupa reproducible artifact/container. Self-update via writable Git checkout bukan core feature v1.
 
 ## Risk register
 
 | ID | Risiko | Severity | Mitigasi / Gate |
 |---|---|---:|---|
-| R1 | Native Go tidak parity dengan Baileys | Critical | Sidecar default; capability matrix, real-device canary, adapter rollback |
-| R2 | Auth state tidak dapat dimigrasi | Critical | Jangan overwrite auth; re-pair plan; backup; importer hanya setelah proof |
-| R3 | Duplicate side effects setelah crash/retry | Critical | Transactional claim/receipt, fingerprint, reconciliation state, fault tests |
-| R4 | Node/Python/Go concurrent schema writes | Critical | Explicit ownership cutover, migration lock, read-only Go first |
-| R5 | Protocol drift menghasilkan silent field loss | Critical | Generated schema, shared fixtures, unknown-field telemetry |
-| R6 | Cross-tenant data/path leak | Critical | Stable TenantID, scoped dependencies, containment validation, isolation tests |
-| R7 | LLM behavior/prompt drift | High | Golden prompt/tool/action replay, shadow mode, intentional-delta ADR |
+| R1 | Hypermeow tidak mendukung fitur WhatsApp penting | Critical | Native capability matrix sebelum fitur masuk scope v1 |
+| R2 | Session/pairing tidak stabil | Critical | Dedicated account soak, reconnect/logout tests, isolated device store |
+| R3 | Duplicate side effect setelah crash | Critical | Transactional receipt/outbox, unknown-outcome reconciliation, fault injection |
+| R4 | Cross-tenant data/path leak | Critical | Stable TenantID, scoped dependencies, containment and isolation tests |
+| R5 | Message normalization salah untuk LID/wrappers | High | Sanitized native event fixtures and real-device matrix |
+| R6 | LLM action melampaui permission | Critical | Typed schema and permission recheck immediately before side effect |
+| R7 | LLM prompt/tool behavior buruk | High | Golden tests, deterministic fake provider, staged feature enablement |
 | R8 | Sub-agent completion hilang/duplikat | High | Durable ownership, delivery checkpoints, restart/fault tests |
-| R9 | Scheduler semantics berubah | High | Separate one-shot/daily policies, leases, fake-clock tests |
-| R10 | Control panel API/UI break | High | Black-box differential tests, compatibility response shapes |
-| R11 | SSRF melalui URL media/download | High | URL policy, DNS/redirect validation, network egress controls |
-| R12 | Secrets plaintext/logged | High | Redaction, masked API, permissions, secret provider, rotation |
-| R13 | SQLite lock/WAL/corruption behavior berbeda | High | Same pragmas, busy metrics, copied fixture tests, backup/restore |
-| R14 | In-memory IDs hilang setelah restart | High | Preserve semantics or persist via explicit compatibility decision |
-| R15 | Unbounded cache/queue/file growth | High | Bounds, retention, backpressure, metrics, soak tests |
-| R16 | Interactive messages berubah/tidak didukung | High | Capability tests, canonical fallback, sidecar retention |
-| R17 | CGO deployment gagal | Medium | Build in target image; consider pure-Go SQLite ADR |
-| R18 | Go/dependency versions tidak reproducible | Medium | Valid toolchain, track `go.sum`, pin actual commits/releases |
-| R19 | Windows path/case/reparse behavior | Medium | Canonical boundary handling and platform tests |
-| R20 | Git self-update incompatible dengan binary deployment | Medium | Optional adapter; signed/pinned release artifacts |
-| R21 | Activation/memory IDs memakai weak RNG | Medium | `crypto/rand`, collision/retry tests |
-| R22 | Insufficient observability blocks diagnosis | Medium | Metrics, request correlation, readiness split, audit |
+| R9 | Scheduler duplicate/late | High | Transactional leases, fake-clock/timezone tests, readiness gate |
+| R10 | SSRF melalui media/download | High | DNS/redirect validation, IP policy, egress controls, size/time limits |
+| R11 | Secrets plaintext/logged | High | Redaction, masked API, restricted files, secret provider, rotation |
+| R12 | SQLite lock/WAL/corruption | High | Driver benchmark, pragmas, busy metrics, backup/restore/fault tests |
+| R13 | Unbounded queue/cache/file growth | High | Hard bounds, retention, backpressure, quotas, soak tests |
+| R14 | Interactive messages tidak portable/stabil | High | Capability flags, safe fallback, real-device tests |
+| R15 | CGO deployment gagal | Medium | Build in target image; pure-Go SQLite ADR |
+| R16 | Toolchain/dependency tidak reproducible | Medium | Track `go.sum`, pin versions/commits, artifact checksums |
+| R17 | Windows path/reparse behavior | Medium | Canonical path containment and platform tests |
+| R18 | Control panel attack surface | High | Fail-closed auth, rate limits, CSP, request limits, audit |
+| R19 | Insufficient observability | Medium | Metrics, correlation IDs, readiness split, alerts |
+| R20 | Source reference membatasi desain baru | Medium | Treat source as feature inventory, require Go ADR for architecture |
 
-## Security changes required
+## Security requirements
 
 ### URL/media
 
-- Allow only intended schemes.
+- Allow intended schemes only.
 - Resolve host and block loopback/private/link-local/metadata ranges.
 - Revalidate every redirect and resolved address.
-- Apply download size/time limits and streaming.
-- Detect MIME from content; do not trust extension/header.
-- Store under tenant-controlled root with generated filenames.
+- Stream with strict timeout and byte limits.
+- Detect MIME from content.
+- Store using generated names under tenant root.
 
 ### Tokens and activation
 
-- Generate account/control/activation identifiers with `crypto/rand`.
-- Use constant-time token comparison.
+- Generate with `crypto/rand`.
+- Constant-time comparison.
 - Rate-limit auth, pairing, reconnect, and resource-heavy endpoints.
-- Do not pass secrets in query params for new APIs; retain legacy only behind deprecation.
+- Do not accept secrets in query params.
+- Support rotation without logging old/new values.
 
 ### Filesystem
 
-- Reject traversal, absolute path where not allowed, null bytes, symlink/reparse escape.
+- Reject traversal, unintended absolute paths, null bytes, and symlink/reparse escape.
 - Validate source and destination after canonicalization.
-- Atomic write + fsync strategy for state files where needed.
-- Enforce file count/size quotas for media and sub-agent outputs.
+- Atomic writes for config/catalog/state that is not transactional.
+- Quotas for media, output files, audit, and temp data.
 
 ### LLM/tool safety
 
-- Validate model-generated action against typed schema and current permissions.
-- Do not let prompt content bypass owner/admin/activation checks.
-- Require explicit allow policy for commands, HTML, downloads, and sub-agent file access.
-- Redact prompt/media logging by default.
+- Validate every model action against typed schema.
+- Re-evaluate permission and tenant scope immediately before execution.
+- Explicit allow policies for commands, HTML, URLs, and sub-agent files.
+- Redact prompt/media logs by default.
+- Bound action count, attachment count/size, and recursion.
 
 ## Open decisions
 
 | Decision | Wajib ditutup pada |
 |---|---|
-| O1 — sidecar atau native | Milestone 8 sebelum Milestone 9 |
-| O2 — SQLite driver | Milestone 1 |
-| O3 — process topology | Milestone 1 untuk package boundary; konfirmasi deployment di Milestone 10 |
-| O4 — DB consolidation | Setelah Milestone 7 stabil |
-| O5 — raw action result | Milestone 2 |
-| O6 — context ID durability | Milestone 5 sebelum history dibekukan |
-| O7 — config hot reload | Milestone 1 |
-| O8 — update mechanism | Milestone 10 sebelum deployment release |
+| O1 — SQLite driver | Milestone 0 |
+| O2 — single or split tenant DB | Milestone 0 |
+| O3 — single binary or service split | Milestone 0 |
+| O4 — config hot reload | Milestone 0 |
+| O5 — context ID format/retention | Milestone 0 sebelum message model |
+| O6 — unsupported interactive fallback | Milestone 3 capability review |
+| O7 — control panel auth setup | Milestone 0 |
+| O8 — artifact/container/Pterodactyl target | Milestone 0, finalized Milestone 9 |
 
-### O1 — Permanent sidecar atau full native Go?
+### O1 — SQLite driver
 
-Owner memilih setelah Milestone 8 evidence. Kriteria bukan jumlah kode Go, tetapi reliability dan feature parity.
+Bandingkan `mattn/go-sqlite3` dan pure-Go alternative untuk:
 
-### O2 — SQLite driver
-
-Current `mattn/go-sqlite3` sudah tersedia tetapi membutuhkan CGO. Bandingkan:
-
-- deployment target support;
-- WAL/backup behavior;
-- performance/concurrency;
+- target build support;
+- WAL and backup behavior;
+- concurrency/performance;
 - binary reproducibility;
-- compatibility dengan hypermeow store.
+- compatibility dengan hypermeow device store.
 
-### O3 — Single binary versus service split
+### O2 — Database topology
 
-Default single Go service. Pisahkan control plane/worker hanya bila scaling atau security isolation membutuhkannya. Tenant worker multi-process memerlukan durable queue dan scheduler leases lebih awal.
+Pilih satu DB per tenant untuk atomic transactions atau split stores untuk failure/operational isolation. Keputusan dibuat sebelum schema v1.
 
-### O4 — Database consolidation
+### O3 — Process topology
 
-Tentukan setelah Go menjadi sole writer dan backup/restore stabil. Jangan gabungkan hanya demi kerapian.
+Default single binary. Service split memerlukan authenticated transport, durable cross-process queue, dan independent lifecycle; jangan dipilih tanpa operational need.
 
-### O5 — Raw action result compatibility
+### O4 — Config reload
 
-Legacy `send_buttons`, carousel, dan copy-code dapat mengembalikan raw Baileys message object. Pilih:
+Klasifikasikan startup-only versus reloadable fields. Reload memakai immutable validated snapshot; failure mempertahankan last-known-good config.
 
-- freeze normalized portable result dan bump protocol; atau
-- compatibility serializer khusus sidecar v2.
+### O5 — Context IDs
 
-Rekomendasi: normalized result untuk protocol baru, compatibility serializer selama v2.
+Gunakan opaque stable IDs atau bounded short IDs. Tentukan persistence, collision, expiry, and quoted-message lookup semantics sebelum API/model dibekukan.
 
-### O6 — History/context ID durability
+### O6 — Interactive fallback
 
-Tentukan apakah transient six-digit IDs tetap reset/lost on restart atau dipersist. Persisting memperbaiki UX tetapi merupakan behavior change dan membutuhkan retention/collision policy.
+Untuk fitur native yang unsupported, pilih text fallback, document/image rendering, atau deferred release. Jangan mengirim malformed raw protobuf.
 
-### O7 — Config hot reload
+### O7 — Control panel auth
 
-Klasifikasikan tiap field sebagai startup-only atau hot-reload. Implement immutable config snapshot atomik; partial reload failure mempertahankan last-known-good state.
+Pilih initial bootstrap flow, token hashing/storage, session versus bearer auth, CSRF strategy, dan recovery procedure.
 
-### O8 — Update mechanism
+### O8 — Deployment target
 
-Pilih artifact/container/system package/Pterodactyl flow. Jika Git updater dipertahankan, jangan izinkan core process mengubah source tanpa signature/checksum dan rollback policy.
+Pilih target primary agar CGO, static assets, signals, filesystem permissions, health checks, dan backup path diuji pada environment nyata.
 
 ## ADR template
-
-Setiap open decision ditutup dengan ADR berisi:
 
 ```text
 Context
 Options
 Decision
 Consequences
-Compatibility impact
-Migration plan
-Rollback plan
+Security impact
+Operational impact
 Evidence/tests
 ```
 
 ## Stop conditions
 
-Hentikan rollout dan kembali ke phase sebelumnya bila:
+Hentikan phase/release bila:
 
-- canonical baseline belum stabil;
-- behavior hanya diverifikasi lewat happy-path manual test;
-- schema memiliki lebih dari satu writer;
-- native auth/session tidak memiliki rollback;
+- required capability hanya lulus happy path;
+- native session tidak pulih setelah restart/network loss;
 - durable state machine belum lulus crash injection;
-- side effect outcome tidak dapat direconcile;
+- side-effect outcome tidak dapat direconcile;
 - tenant identity/path containment belum terjamin;
-- build tidak reproducible di production target.
+- secret/auth setup tidak fail-closed;
+- resource limits tidak diterapkan;
+- build tidak reproducible pada deployment target.

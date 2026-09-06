@@ -2,53 +2,48 @@
 
 ## Prinsip
 
-1. Domain tidak bergantung langsung pada `hypermeow`, Baileys, HTTP framework, atau SQLite driver.
-2. Semua operasi tenant menerima `TenantID` eksplisit dan dependency scope tenant.
-3. `folderPath` tetap ada di protocol v2 compatibility adapter, bukan primary identity internal.
-4. Satu komponen memiliki schema dan menjalankan migrations.
-5. Network dan DB work memakai `context.Context`, deadline, bounded queue, dan graceful cancellation.
+1. Project adalah aplikasi baru; source lama hanya referensi fitur.
+2. Domain tidak bergantung langsung pada `hypermeow`, HTTP router, LLM SDK, atau SQLite driver.
+3. Semua operasi menerima `TenantID` eksplisit dan tenant-scoped dependencies.
+4. Native WhatsApp adapter memakai canonical request/result, bukan raw protobuf.
+5. Schema versioned sejak v1 dan hanya migration package yang menjalankan DDL.
 6. Side effect memakai idempotency key dan durable transactional state.
-7. Adapter Node dan native Go dapat dipertukarkan selama migration.
+7. Semua network/DB work memakai `context.Context`, deadline, bounded queue, dan graceful cancellation.
 
-## Topologi transisi
+## Topologi
 
 ```text
-                    +---------------------------+
-                    | Go service                |
-                    | config/account/control    |
-Control panel HTTP  | agent/LLM/jobs/subagent   |
-<------------------>| stores/protocol/outbox    |
-                    +-------------+-------------+
-                                  |
-                         typed adapter interface
-                                  |
-                 +----------------+----------------+
-                 |                                 |
-       Node/Baileys sidecar              native Go/hypermeow
-       compatibility path                experimental then canary
+Clients / Control Panel
+          |
+       HTTP API
+          |
++---------v-----------------------------------------+
+| Go service                                        |
+| app | accounts | agent | LLM | jobs | sub-agent  |
+| stores | inbox/outbox | control | observability  |
++-------------------------+-------------------------+
+                          |
+                 canonical Gateway port
+                          |
+                 native hypermeow adapter
+                          |
+                       WhatsApp
 ```
 
-Phase awal tetap memakai protocol v2 WebSocket menuju Node/Baileys. Setelah agent dan persistence stabil, sidecar interface dipindahkan dari wire-specific API ke canonical internal API.
+Tidak ada Node/Python sidecar dan tidak ada protocol compatibility layer.
 
 ## Package layout
 
 ```text
 cmd/
   wazzapagent/
-  migrate/
-  compat-probe/
 internal/
   app/
   config/
   tenant/
-  protocol/
-  transport/
   account/
   whatsapp/
-    adapter/
-      sidecar/
-      native/
-      shadow/
+    adapter/hypermeow/
     message/
     group/
     media/
@@ -69,6 +64,7 @@ internal/
   subagent/
   store/
     migration/
+    account/
     settings/
     stats/
     moderation/
@@ -81,29 +77,32 @@ web/
   controlpanel/
 ```
 
-Package final boleh disederhanakan setelah dependency graph terbukti. Hindari `pkg/` untuk application internals. Existing prototype `pkg/whatsapp/socket.go` bukan executable karena `main` berada dalam `package whatsapp`; pindahkan spike yang masih berguna ke adapter native dan gunakan `cmd/wazzapagent` sebagai entrypoint. Referensi: `pkg/whatsapp/socket.go:1-26`.
+Application internals berada di `internal/`. Existing prototype `pkg/whatsapp/socket.go` bukan executable karena `main` berada dalam `package whatsapp`; pindahkan hasil spike yang berguna ke `internal/whatsapp/adapter/hypermeow` dan gunakan `cmd/wazzapagent` sebagai entrypoint. Referensi: `pkg/whatsapp/socket.go:1-26`.
 
-## Komponen utama
-
-### Application lifecycle
-
-`internal/app` bertanggung jawab atas startup order, dependency wiring, readiness, shutdown, dan draining. Tidak memuat business logic.
+## Application lifecycle
 
 Startup order:
 
 1. load dan validasi config;
 2. init logging/metrics;
-3. buka migration lock dan database;
-4. jalankan migrations atau dry-run;
-5. load tenant catalog;
-6. start control panel dan health endpoint;
-7. start WhatsApp adapters;
-8. start agent sessions setelah adapter ready;
-9. arm scheduler dan sub-agent recovery hanya setelah tenant WhatsApp `open`.
+3. buka database dan jalankan versioned migrations;
+4. load tenant catalog;
+5. start HTTP control/health endpoints;
+6. start native WhatsApp clients;
+7. start agent sessions setelah account ready;
+8. arm jobs dan sub-agent recovery setelah WhatsApp `open`.
 
-Shutdown order membalik alur: stop intake, cancel jobs, drain outbox, disconnect adapters, checkpoint WAL, lalu close DB.
+Shutdown:
 
-### Tenant registry
+1. stop HTTP/action intake;
+2. mark runtime draining;
+3. cancel pending LLM/media work;
+4. persist/release job claims;
+5. drain bounded outbox sampai deadline;
+6. disconnect WhatsApp;
+7. checkpoint dan close SQLite.
+
+## Tenant dan account registry
 
 ```go
 type TenantID string
@@ -112,18 +111,19 @@ type Runtime struct {
     ID       TenantID
     RootPath string
     Stores   Stores
-    WhatsApp WhatsAppGateway
+    WhatsApp Gateway
     Agent    AgentSession
 }
 ```
 
-- Stable ID berasal dari account catalog, bukan absolute path.
-- Compatibility map menyimpan canonical path yang harus di-echo untuk protocol v2.
-- Windows path normalization hanya dilakukan di boundary.
-- Registry state machine: `stopped`, `starting`, `pairing`, `connecting`, `open`, `draining`, `failed`.
-- Per-tenant lock mencegah start/stop/reconnect race.
+- Tenant ID immutable dan bukan filesystem path.
+- Root dibuat oleh aplikasi di data directory.
+- Registry state: `stopped`, `starting`, `pairing`, `connecting`, `open`, `draining`, `failed`.
+- Per-tenant state, DB handles, queues, caches, media, dan auth store terisolasi.
+- Per-tenant lock mencegah start/stop/pair/reconnect race.
+- Account removal default menonaktifkan runtime; penghapusan data memerlukan aksi terpisah dan konfirmasi.
 
-### Canonical WhatsApp port
+## Canonical WhatsApp port
 
 ```go
 type Gateway interface {
@@ -133,67 +133,66 @@ type Gateway interface {
     React(context.Context, ReactionRequest) error
     Delete(context.Context, DeleteRequest) error
     Kick(context.Context, KickRequest) (KickResult, error)
+    MarkRead(context.Context, ReadRequest) error
+    SetPresence(context.Context, PresenceRequest) error
     ChatContext(context.Context, ChatContextRequest) (ChatContext, error)
     Pair(context.Context, PairRequest) (PairResult, error)
+    Logout(context.Context) error
     Disconnect(context.Context) error
 }
 ```
 
-Port memakai canonical result, bukan raw Baileys/hypermeow protobuf. Protocol v2 adapter mengonversi legacy raw result hanya untuk compatibility.
+- Adapter menerjemahkan event `hypermeow` ke canonical domain event.
+- Raw protobuf hanya berada di package adapter.
+- Capability flags menyatakan dukungan interactive/Lottie/message variants.
+- Unsupported feature menghasilkan stable typed error dan optional fallback.
+- Fake gateway dipakai unit/integration tests tanpa network.
 
-`adapter/shadow` mengimplementasikan port yang sama tetapi hanya merekam action intent dan diff terhadap output Python. Adapter ini dilarang membuka socket WhatsApp atau menulis state production, sehingga shadow dan active mode memakai kontrak identik tanpa side effect.
-
-### Protocol dan transport
-
-- Canonical schema menghasilkan Go structs dan golden JSON fixtures.
-- Decoder strict pada discriminator dan required fields, tetapi compatibility mode menerima legacy nullable fields.
-- Reliable delivery memakai bounded durable outbox untuk state penting.
-- `requestId` tetap didukung; internal idempotency memakai stable tenant-scoped key.
-- Heartbeat, reconnect, exponential backoff dengan jitter, dan queue metrics.
-- Unknown protocol version ditolak dengan error yang dapat didiagnosis.
-
-### Agent pipeline
+## Message pipeline
 
 ```text
-incoming event
-  -> tenant validation
+native WhatsApp event
+  -> normalize and validate tenant
+  -> deduplicate inbound event
   -> moderation/mute gate
-  -> normalize + history append
+  -> append history
   -> per-chat batch/debounce
-  -> activation + trigger decision
+  -> activation and trigger decision
   -> LLM1 routing
   -> LLM2 response/tool actions
   -> permission validation
   -> durable action claim
-  -> WhatsApp gateway
-  -> ACK hydration + history finalize
+  -> native WhatsApp gateway
+  -> finalize receipt and history
 ```
 
-Per-chat actor/goroutine boleh dipakai, tetapi harus bounded dan memiliki idle eviction. Cancellation dan restart semantics harus explicit.
+Per-chat actor/goroutine harus bounded dan memiliki idle eviction. Media dan LLM memakai global plus per-tenant semaphore.
 
-### LLM providers
+## LLM providers
 
-Gunakan OpenAI-compatible HTTP interface kecil:
+Gunakan OpenAI-compatible HTTP abstraction kecil:
 
-- configurable endpoint/model/key/timeout;
+- endpoint/model/key/timeout per role;
 - primary/fallback chain;
-- streaming tidak diperlukan sampai behavior parity tercapai;
-- preserve tool schema, prompt ordering, truncation, retries, and multimodal fallback;
-- redact secrets dan content sesuai log policy;
-- fake provider untuk deterministic golden tests.
+- typed tool schema dan validation;
+- bounded retry/backoff;
+- multimodal request dan text-only fallback;
+- secret/content redaction policy;
+- fake deterministic provider untuk tests.
 
-### Jobs
+Streaming ditunda sampai non-streaming behavior stabil.
 
-Satu scheduler dengan dua policy berbeda:
+## Jobs
 
-- one-shot: delete setelah completion atau hard failure, keep pada shutdown cancellation;
-- daily: calculate next local fire time dan tetap tersimpan setelah failure.
+Satu scheduler dengan policy berbeda:
 
-Claim due jobs secara transactional agar multi-instance tidak mengeksekusi dua kali. WhatsApp readiness menjadi execution gate, bukan trigger deletion.
+- one-shot diselesaikan sekali dan tetap pending bila shutdown membatalkan eksekusi;
+- daily menyimpan IANA timezone, local time, dan next fire;
+- transactional lease mencegah duplicate execution;
+- WhatsApp readiness menunda execution tanpa menghapus job;
+- retry policy dan terminal failure tercatat.
 
-### Sub-agent
-
-State machine durable:
+## Sub-agent
 
 ```text
 submitted -> running -> completed_received -> outputs_staged
@@ -201,64 +200,75 @@ submitted -> running -> completed_received -> outputs_staged
           -> failed/dead_letter/tombstoned
 ```
 
-- Webhook completion di-ACK setelah durable store, bukan setelah WhatsApp delivery.
-- Output file diverifikasi size/hash dan ditulis atomically.
+- Webhook completion di-ACK setelah durable store.
+- Progress memperbarui lease/keepalive.
+- Output diverifikasi size/hash/path lalu ditulis atomically.
 - Delivery checkpoint per output mencegah duplicate attachment.
-- Admin retry/discard beroperasi pada delivery envelope, bukan menghapus result.
+- Admin retry/discard mengubah delivery envelope, bukan menghapus result.
 
-### Persistence
+## Persistence
 
-Awal: pertahankan split DB dan filenames untuk rollback mudah. Target state:
+Gunakan schema baru yang versioned sejak v1:
 
-- versioned embedded SQL migrations;
-- `schema_migrations` dan checksum;
+- migrations embedded dan immutable;
+- `schema_migrations` plus checksum;
 - explicit transaction boundaries;
-- busy timeout/WAL pragmas set konsisten;
-- DB writer ownership tunggal;
-- repositories tidak membuat schema;
-- durable `action_receipts`, inbox/outbox, scheduler claims, dan sub-agent state.
+- WAL, busy timeout, foreign keys, dan checkpoint policy;
+- repositories tidak menjalankan DDL;
+- transactional inbox/outbox/action receipts;
+- retention untuk receipts, audit, caches, media, dan tombstones;
+- backup API memakai SQLite-consistent snapshot.
 
-Detail: [Migrasi data](04-DATA-MIGRATION.md).
+Pilih single tenant database atau split database melalui ADR di Milestone 1. Tidak ada kebutuhan membaca schema project lama.
 
-### Control panel
+## Control panel
 
-- `net/http` cukup; gunakan dependency baru hanya jika dibutuhkan dan sudah disetujui.
-- Pertahankan route dan response JSON selama compatibility period.
-- Embed static assets dalam binary setelah UI parity.
-- Auth middleware fail-closed, timing-safe, rate-limited.
-- Mutation memakai validation, audit, dan atomic writes/transactions.
-- Git self-update ditempatkan di optional deployment adapter, bukan core service.
+- Gunakan `net/http` kecuali routing complexity membuktikan library tambahan perlu.
+- API baru memakai version prefix dan typed request/response.
+- Static assets dapat di-embed dalam binary.
+- Auth fail-closed, timing-safe, rate-limited, dan memiliki setup flow aman.
+- Mutation memakai validation, transaction, audit, dan CSRF-safe auth design.
+- Secrets tidak pernah dikembalikan setelah disimpan.
 
-### Observability
+## Observability
 
 Structured fields minimal:
 
-- `instance_id`, `tenant_id`, compatibility `folder_path` hash;
-- `chat_id` hash bila log policy melarang raw JID;
-- request/action/task/sub-agent IDs;
-- adapter, status, duration, queue depth, retry count, error code.
+- `instance_id`, `tenant_id`, account JID hash;
+- chat JID hash sesuai privacy policy;
+- request/action/job/sub-agent IDs;
+- adapter status, duration, queue depth, retry, stable error code.
 
 Endpoints:
 
 - `/health/live`: process loop hidup;
-- `/health/ready`: migrations selesai dan control plane siap;
-- tenant readiness terpisah untuk WS/sidecar dan WhatsApp status.
+- `/health/ready`: migrations selesai dan core services siap;
+- account readiness terpisah untuk paired/connecting/open/failed.
 
-Metrics wajib: queue depth/drop, reconnects, action latency/failures/dedup, LLM latency/tokens/fallback, DB busy/recovery, jobs due/late, sub-agent delivery state, tenant state.
+Metrics:
+
+- incoming/outgoing/dropped/deduplicated events;
+- reconnect and pairing failures;
+- action and LLM latency/errors/fallback;
+- queue depth and oldest age;
+- DB busy/WAL/checkpoint;
+- jobs due/late/retry;
+- sub-agent delivery state;
+- goroutine, heap, file, dan media growth.
 
 ## Concurrency rules
 
 - Tidak ada mutable package global untuk tenant state.
 - Satu owner goroutine atau mutex jelas per registry/runtime/cache.
-- Per-chat processing serialized.
-- Media dan LLM memiliki global dan per-tenant semaphore.
-- Semua queues bounded; overflow policy terdokumentasi.
+- Per-chat processing serialized; chat berbeda concurrent.
+- Semua queue bounded dengan documented overflow policy.
 - Background goroutine terikat lifecycle context dan WaitGroup.
-- Jalankan `go test -race ./...` pada CI dan pre-cutover.
+- Blocking SDK calls dibungkus context/deadline bila library tidak mendukung langsung.
+- `go test -race ./...` wajib di CI dan release gate.
 
 ## Dependency policy
 
-Current repository sudah memakai:
+Current repository memiliki:
 
 - `github.com/polymorfa/hypermeow`;
 - `github.com/mattn/go-sqlite3`;
@@ -267,10 +277,11 @@ Current repository sudah memakai:
 
 Referensi: `go.mod:5-28`.
 
-Sebelum coding:
+Sebelum implementasi:
 
-- validasi Go version `1.26.5` tersedia di build environment;
-- track `go.sum` untuk reproducible build;
-- putuskan CGO requirement dari `go-sqlite3` versus pure-Go SQLite;
-- pin `hypermeow` ke commit/version nyata; `v0.0.0` harus diverifikasi reproducibility dan provenance;
-- jangan tambah framework dotenv/router/migration jika stdlib atau existing dependency cukup.
+- validasi Go `1.26.5` tersedia di build environment;
+- track `go.sum`;
+- pilih CGO `go-sqlite3` atau pure-Go SQLite;
+- pin `hypermeow` ke resolvable commit/version dan audit provenance;
+- gunakan stdlib bila dependency baru tidak memberi manfaat jelas;
+- dokumentasikan licenses dan update policy dependency.
