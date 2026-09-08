@@ -43,7 +43,7 @@ Mengunci masalah, scope, architecture boundary, risiko, dan urutan delivery sebe
 - Part-based roadmap: diperbarui.
 - Agent-centric contract: diperbarui.
 - Current foundation validation: format, vet, test, race, build, and module verification pass.
-- Vulnerability scan remains pending because `govulncheck` is not installed in the current environment.
+- Part 1 `govulncheck` reachable-symbol scan lulus pada 2026-09-08.
 - Real-device verification dan canary deployment: belum menjadi hasil perubahan dokumentasi ini.
 
 ## Part 1 — Barebone production canary
@@ -92,7 +92,7 @@ pair/connect
 - External application/policy handler refreshes Config and verifies the configured owner before calling actor-free Agent Config methods.
 - Config mutation binds external authorization to an expected snapshot version, then uses durable CAS, atomic snapshot swap, and best-effort post-commit `ConfigChanged` notification.
 - Prompt command tidak diteruskan ke model.
-- Trusted metadata, configured prompt, dan raw user text tidak digabung menjadi satu untyped transcript.
+- Authenticated opaque senderRef, untrusted display name, configured prompt, dan raw user text tidak digabung menjadi satu untyped transcript.
 
 ### Work stream D — Barebone agent
 
@@ -171,10 +171,17 @@ This is the cut line. No later-Part feature may enter before all seven steps pas
 - Dedicated WhatsApp test account.
 - Dedicated data root, port, service/process, dan logs.
 - Recipient/chat allowlist wajib dan fail-closed.
-- Agent disabled by default sampai native send probe lulus.
+- Response agent disabled by default selama pair/reopen/backup dan diaktifkan hanya untuk bounded send probe.
 - Service lama tetap berjalan dan tidak dimodifikasi.
 - Backup awal kedua database setelah pairing.
 - Label deployment `v0.1-canary`, bukan stable release.
+
+### Status implementasi 2026-09-08
+
+- Work stream A-E dan concurrency/hardening tersedia pada working tree.
+- Runbook operasional tersedia di `07-PART1-RUNBOOK.md`.
+- Local format/module/vet/test/race gates, four-target `CGO_ENABLED=0` cross-build, vulnerability scan, dan disabled-runtime HTTP process smoke lulus pada Go 1.27.0; test/vet juga lulus pada minimum Go 1.26.5.
+- Real-device dan production-host gates tetap pending sampai dedicated canary resources tersedia.
 
 ## Part 2 — Reliable conversation core
 

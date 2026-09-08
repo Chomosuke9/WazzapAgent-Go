@@ -1,6 +1,11 @@
 /socket.exe
 /testing/*
 *.db
+*.db-shm
+*.db-wal
+/.env
+/data/
+/dist/
 /.idea/WazzapAgent-Go.iml
 /.idea/vcs.xml
 /.idea/modules.xml

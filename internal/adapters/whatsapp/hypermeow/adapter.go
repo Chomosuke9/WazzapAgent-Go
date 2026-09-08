@@ -1,0 +1,567 @@
+package hypermeow
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/mdp/qrterminal/v3"
+	whatsmeow "github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/store/sqlstore"
+	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
+	waLog "github.com/polymorfa/hypermeow/util/log"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+)
+
+const sendStripeCount = 64
+
+type CandidateHandler interface {
+	Handle(context.Context, conversation.IncomingCandidate) error
+}
+
+type TargetStore interface {
+	ResolveChatAddress(context.Context, agent.Key) (string, error)
+	ReconcileAccountPolicy(context.Context, identity.TenantID, identity.AccountID, string, []string) error
+}
+
+type PairingSink interface {
+	ShowPairingCode(string, time.Duration) error
+}
+
+type Config struct {
+	TenantID        identity.TenantID
+	AccountID       identity.AccountID
+	DeviceStorePath string
+	OwnerAddress    string
+	Allowlist       []string
+	QueueCapacity   uint32
+	Workers         uint32
+	ConnectTimeout  time.Duration
+	SendTimeout     time.Duration
+	Pairing         PairingSink
+	Targets         TargetStore
+	Logger          *slog.Logger
+}
+
+type Adapter struct {
+	tenantID       identity.TenantID
+	accountID      identity.AccountID
+	owner          string
+	allowlist      map[string]struct{}
+	connectTimeout time.Duration
+	sendTimeout    time.Duration
+	pairing        PairingSink
+	targets        TargetStore
+	handler        CandidateHandler
+	logger         *slog.Logger
+	container      *sqlstore.Container
+	client         *whatsmeow.Client
+	queue          chan conversation.IncomingCandidate
+	workers        uint32
+	ready          atomic.Bool
+	started        atomic.Bool
+	closed         atomic.Bool
+	events         chan account.ConnectionEvent
+	fatal          chan error
+	rootCtx        context.Context
+	cancel         context.CancelFunc
+	eventHandlerID uint32
+	wait           sync.WaitGroup
+	stripes        [sendStripeCount]sync.Mutex
+}
+
+func Open(ctx context.Context, config Config) (*Adapter, error) {
+	if config.TenantID.IsZero() || config.AccountID.IsZero() || config.Targets == nil {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("identity and target resolver are required"))
+	}
+	if config.QueueCapacity == 0 || config.Workers == 0 || config.ConnectTimeout <= 0 || config.SendTimeout <= 0 {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("positive queue, worker, and timeout values are required"))
+	}
+	owner, err := normalizeAddress(config.OwnerAddress)
+	if err != nil {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "normalize configured owner", err)
+	}
+	allowlist := make(map[string]struct{}, len(config.Allowlist))
+	for _, raw := range config.Allowlist {
+		normalized, err := normalizeAddress(raw)
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "normalize configured allowlist", err)
+		}
+		allowlist[normalized] = struct{}{}
+	}
+	if len(allowlist) == 0 {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("allowlist must fail closed"))
+	}
+	normalizedAllowlist := make([]string, 0, len(allowlist))
+	for address := range allowlist {
+		normalizedAllowlist = append(normalizedAllowlist, address)
+	}
+	if err := config.Targets.ReconcileAccountPolicy(ctx, config.TenantID, config.AccountID, owner, normalizedAllowlist); err != nil {
+		return nil, err
+	}
+	container, err := openDeviceStore(ctx, config.DeviceStorePath, waLog.Noop)
+	if err != nil {
+		return nil, err
+	}
+	device, err := container.GetFirstDevice(ctx)
+	if err != nil {
+		_ = container.Close()
+		return nil, agent.NewError(agent.ErrorStorageFailure, "load WhatsApp device", err)
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Adapter{
+		tenantID:       config.TenantID,
+		accountID:      config.AccountID,
+		owner:          owner,
+		allowlist:      allowlist,
+		connectTimeout: config.ConnectTimeout,
+		sendTimeout:    config.SendTimeout,
+		pairing:        config.Pairing,
+		targets:        config.Targets,
+		logger:         logger,
+		container:      container,
+		client:         whatsmeow.NewClient(device, waLog.Noop),
+		queue:          make(chan conversation.IncomingCandidate, config.QueueCapacity),
+		workers:        config.Workers,
+		events:         make(chan account.ConnectionEvent, 8),
+		fatal:          make(chan error, 1),
+	}, nil
+}
+
+func (adapter *Adapter) BindHandler(handler CandidateHandler) error {
+	if handler == nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "bind WhatsApp handler", fmt.Errorf("candidate handler is required"))
+	}
+	if adapter.started.Load() || adapter.handler != nil {
+		return agent.NewError(agent.ErrorConflict, "bind WhatsApp handler", fmt.Errorf("handler is already bound or adapter has started"))
+	}
+	adapter.handler = handler
+	return nil
+}
+
+func (adapter *Adapter) Start(ctx context.Context) error {
+	if adapter.closed.Load() {
+		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", fmt.Errorf("adapter is closed"))
+	}
+	if adapter.handler == nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "start WhatsApp adapter", fmt.Errorf("candidate handler must be bound first"))
+	}
+	if !adapter.started.CompareAndSwap(false, true) {
+		return agent.NewError(agent.ErrorConflict, "start WhatsApp adapter", fmt.Errorf("adapter is already started"))
+	}
+	if adapter.client.Store.ID == nil && adapter.pairing == nil {
+		adapter.started.Store(false)
+		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", fmt.Errorf("fresh device requires explicit pairing output"))
+	}
+	adapter.rootCtx, adapter.cancel = context.WithCancel(ctx)
+	for index := uint32(0); index < adapter.workers; index++ {
+		adapter.wait.Add(1)
+		go adapter.worker()
+	}
+	adapter.eventHandlerID = adapter.client.AddEventHandler(adapter.handleEvent)
+
+	var qrChannel <-chan whatsmeow.QRChannelItem
+	if adapter.client.Store.ID == nil {
+		var err error
+		qrChannel, err = adapter.client.GetQRChannel(adapter.rootCtx)
+		if err != nil {
+			adapter.stopAfterFailedStart()
+			return agent.NewError(agent.ErrorProviderFailure, "prepare WhatsApp pairing", err)
+		}
+		adapter.wait.Add(1)
+		go adapter.consumePairing(qrChannel)
+	}
+	connectCtx, cancel := context.WithTimeout(adapter.rootCtx, adapter.connectTimeout)
+	defer cancel()
+	if err := adapter.client.ConnectContext(connectCtx); err != nil {
+		var fatalErr error
+		select {
+		case fatalErr = <-adapter.fatal:
+		default:
+		}
+		adapter.stopAfterFailedStart()
+		if fatalErr != nil {
+			return fatalErr
+		}
+		if connectCtx.Err() == context.DeadlineExceeded {
+			return agent.NewError(agent.ErrorTimeout, "connect WhatsApp account", connectCtx.Err())
+		}
+		if connectCtx.Err() == context.Canceled {
+			return agent.NewError(agent.ErrorCancelled, "connect WhatsApp account", connectCtx.Err())
+		}
+		return agent.NewError(agent.ErrorUnavailable, "connect WhatsApp account", err)
+	}
+	if adapter.client.IsConnected() && adapter.client.IsLoggedIn() {
+		adapter.ready.Store(true)
+		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
+		return nil
+	}
+	for {
+		select {
+		case <-connectCtx.Done():
+			adapter.stopAfterFailedStart()
+			if connectCtx.Err() == context.DeadlineExceeded {
+				return agent.NewError(agent.ErrorTimeout, "wait for WhatsApp connection", connectCtx.Err())
+			}
+			return agent.NewError(agent.ErrorCancelled, "wait for WhatsApp connection", connectCtx.Err())
+		case err := <-adapter.fatal:
+			adapter.stopAfterFailedStart()
+			return err
+		case event := <-adapter.events:
+			if event.Connected {
+				return nil
+			}
+		}
+	}
+}
+
+func (adapter *Adapter) Stop(ctx context.Context) error {
+	if adapter.started.Swap(false) {
+		adapter.ready.Store(false)
+		if adapter.cancel != nil {
+			adapter.cancel()
+		}
+		adapter.client.RemoveEventHandler(adapter.eventHandlerID)
+		adapter.client.Disconnect()
+		done := make(chan struct{})
+		go func() {
+			adapter.wait.Wait()
+			close(done)
+		}()
+		select {
+		case <-ctx.Done():
+			return agent.NewError(agent.ErrorTimeout, "stop WhatsApp adapter", ctx.Err())
+		case <-done:
+		}
+	}
+	if adapter.closed.CompareAndSwap(false, true) {
+		if err := adapter.container.Close(); err != nil {
+			return agent.NewError(agent.ErrorStorageFailure, "close WhatsApp device store", err)
+		}
+	}
+	return nil
+}
+
+func (adapter *Adapter) Ready() bool                            { return adapter.ready.Load() }
+func (adapter *Adapter) Events() <-chan account.ConnectionEvent { return adapter.events }
+func (adapter *Adapter) Fatal() <-chan error                    { return adapter.fatal }
+func (adapter *Adapter) QueueUsage() (int, int)                 { return len(adapter.queue), cap(adapter.queue) }
+
+func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	if !adapter.ready.Load() {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, "send WhatsApp text", fmt.Errorf("account is not connected"))
+	}
+	address, err := adapter.targets.ResolveChatAddress(ctx, request.Key)
+	if err != nil {
+		return action.SendTextResult{}, err
+	}
+	target, err := types.ParseJID(address)
+	if err != nil || target.IsEmpty() {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", fmt.Errorf("stored target is invalid"))
+	}
+	stripe := adapter.sendStripe(request.Key.ChatID.String())
+	stripe.Lock()
+	defer stripe.Unlock()
+	sendCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), &waE2E.Message{Conversation: proto.String(request.Text)})
+	if err != nil {
+		if sendCtx.Err() == context.DeadlineExceeded {
+			return action.SendTextResult{}, agent.NewError(agent.ErrorTimeout, "send WhatsApp text", sendCtx.Err())
+		}
+		if sendCtx.Err() == context.Canceled {
+			return action.SendTextResult{}, agent.NewError(agent.ErrorCancelled, "send WhatsApp text", sendCtx.Err())
+		}
+		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", fmt.Errorf("native send failed"))
+	}
+	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
+}
+
+func (adapter *Adapter) handleEvent(event any) {
+	switch typed := event.(type) {
+	case *events.Connected:
+		adapter.ready.Store(true)
+		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
+	case *events.Disconnected:
+		adapter.ready.Store(false)
+		adapter.emitConnection(account.ConnectionEvent{Connected: false, Code: "reconnecting"})
+	case events.PermanentDisconnect:
+		adapter.ready.Store(false)
+		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", fmt.Errorf("%s", typed.PermanentDisconnectDescription())))
+	case *events.Message:
+		candidate, ok := adapter.normalizeMessage(typed)
+		if !ok {
+			adapter.logger.Info("inbound event ignored", "reason", ignoredNativeReason(typed))
+			return
+		}
+		// Blocking here is intentional bounded backpressure. Accepted native text
+		// events are never silently dropped when the worker queue is full.
+		select {
+		case <-adapter.rootCtx.Done():
+		case adapter.queue <- candidate:
+		}
+	}
+}
+
+func ignoredNativeReason(event *events.Message) string {
+	if event == nil || event.Message == nil {
+		return "invalid_event"
+	}
+	if event.IsEdit {
+		return "edited_message"
+	}
+	if event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" {
+		return "unsupported_content"
+	}
+	return "invalid_metadata"
+}
+
+func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.IncomingCandidate, bool) {
+	if event == nil || event.Message == nil || event.IsEdit {
+		return conversation.IncomingCandidate{}, false
+	}
+	text := event.Message.GetConversation()
+	extended := event.Message.GetExtendedTextMessage()
+	if text == "" && extended != nil {
+		text = extended.GetText()
+	}
+	if text == "" {
+		return conversation.IncomingCandidate{}, false
+	}
+	chat := event.Info.Chat.ToNonAD()
+	sender := event.Info.Sender.ToNonAD()
+	sender = preferPhoneAddress(sender, event.Info.SenderAlt)
+	if !event.Info.IsGroup {
+		if event.Info.IsFromMe {
+			chat = preferPhoneAddress(chat, event.Info.RecipientAlt)
+		} else {
+			chat = preferPhoneAddress(chat, event.Info.SenderAlt)
+		}
+	}
+	if chat.IsEmpty() || sender.IsEmpty() || event.Info.ID == "" || event.Info.Timestamp.IsZero() {
+		return conversation.IncomingCandidate{}, false
+	}
+	chatKind := conversation.ChatDirect
+	if chat == types.StatusBroadcastJID {
+		chatKind = conversation.ChatStatus
+	} else if event.Info.IsGroup {
+		chatKind = conversation.ChatGroup
+	}
+	chatAddress := chat.String()
+	_, allowlisted := adapter.allowlist[chatAddress]
+	if !allowlisted && !event.Info.IsGroup {
+		for _, alternative := range []types.JID{event.Info.SenderAlt, event.Info.RecipientAlt} {
+			if !alternative.IsEmpty() {
+				if _, exists := adapter.allowlist[alternative.ToNonAD().String()]; exists {
+					allowlisted = true
+					break
+				}
+			}
+		}
+	}
+	mentioned := false
+	if chatKind == conversation.ChatGroup && extended != nil {
+		mentioned = adapter.mentionsOwnAccount(extended.GetContextInfo().GetMentionedJID())
+	}
+	return conversation.IncomingCandidate{
+		TenantID:              adapter.tenantID,
+		AccountID:             adapter.accountID,
+		ProviderMessageID:     string(event.Info.ID),
+		ProviderChatAddress:   chatAddress,
+		ProviderSenderAddress: sender.String(),
+		SenderName:            event.Info.PushName,
+		ChatKind:              chatKind,
+		Text:                  text,
+		MentionsBot:           mentioned,
+		FromMe:                event.Info.IsFromMe,
+		Owner:                 adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
+		Allowlisted:           allowlisted,
+		OccurredAt:            event.Info.Timestamp.UTC(),
+		ReceivedAt:            time.Now().UTC(),
+	}, true
+}
+
+func (adapter *Adapter) isConfiguredOwner(addresses ...types.JID) bool {
+	for _, address := range addresses {
+		if !address.IsEmpty() && address.ToNonAD().String() == adapter.owner {
+			return true
+		}
+	}
+	return false
+}
+
+func preferPhoneAddress(primary types.JID, alternatives ...types.JID) types.JID {
+	if primary.Server == types.DefaultUserServer || primary.Server == types.HostedServer {
+		return primary.ToNonAD()
+	}
+	for _, alternative := range alternatives {
+		alternative = alternative.ToNonAD()
+		if alternative.Server == types.DefaultUserServer || alternative.Server == types.HostedServer {
+			return alternative
+		}
+	}
+	return primary.ToNonAD()
+}
+
+func (adapter *Adapter) mentionsOwnAccount(mentioned []string) bool {
+	if len(mentioned) == 0 {
+		return false
+	}
+	own := make(map[string]struct{}, 2)
+	if adapter.client.Store.ID != nil {
+		own[adapter.client.Store.ID.ToNonAD().String()] = struct{}{}
+	}
+	if !adapter.client.Store.LID.IsEmpty() {
+		own[adapter.client.Store.LID.ToNonAD().String()] = struct{}{}
+	}
+	for _, raw := range mentioned {
+		if normalized, err := normalizeAddress(raw); err == nil {
+			if _, exists := own[normalized]; exists {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (adapter *Adapter) worker() {
+	defer adapter.wait.Done()
+	for {
+		select {
+		case <-adapter.rootCtx.Done():
+			return
+		case candidate := <-adapter.queue:
+			if err := adapter.handler.Handle(adapter.rootCtx, candidate); err != nil {
+				adapter.logger.Error("inbound processing failed", "code", agent.CodeOf(err))
+			}
+		}
+	}
+}
+
+func (adapter *Adapter) consumePairing(channel <-chan whatsmeow.QRChannelItem) {
+	defer adapter.wait.Done()
+	for {
+		select {
+		case <-adapter.rootCtx.Done():
+			return
+		case item, open := <-channel:
+			if !open {
+				return
+			}
+			switch item.Event {
+			case whatsmeow.QRChannelEventCode:
+				if err := adapter.pairing.ShowPairingCode(item.Code, item.Timeout); err != nil {
+					adapter.emitFatal(agent.NewError(agent.ErrorProviderFailure, "show WhatsApp pairing code", err))
+					return
+				}
+			case whatsmeow.QRChannelEventError:
+				adapter.emitFatal(agent.NewError(agent.ErrorProviderFailure, "pair WhatsApp account", item.Error))
+				return
+			case whatsmeow.QRChannelSuccess.Event:
+				return
+			case whatsmeow.QRChannelTimeout.Event, whatsmeow.QRChannelClientOutdated.Event,
+				whatsmeow.QRChannelScannedWithoutMultidevice.Event, whatsmeow.QRChannelErrUnexpectedEvent.Event:
+				adapter.emitFatal(agent.NewError(agent.ErrorProviderFailure, "pair WhatsApp account", fmt.Errorf("pairing ended with %s", item.Event)))
+				return
+			}
+		}
+	}
+}
+
+func (adapter *Adapter) emitConnection(event account.ConnectionEvent) {
+	select {
+	case adapter.events <- event:
+	default:
+	}
+}
+
+func (adapter *Adapter) emitFatal(err error) {
+	select {
+	case adapter.fatal <- err:
+	default:
+	}
+	if adapter.cancel != nil {
+		adapter.cancel()
+	}
+}
+
+func (adapter *Adapter) stopAfterFailedStart() {
+	adapter.ready.Store(false)
+	if adapter.cancel != nil {
+		adapter.cancel()
+	}
+	adapter.client.RemoveEventHandler(adapter.eventHandlerID)
+	adapter.client.Disconnect()
+	adapter.wait.Wait()
+	adapter.started.Store(false)
+}
+
+func (adapter *Adapter) sendStripe(chatID string) *sync.Mutex {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(chatID))
+	return &adapter.stripes[hash.Sum32()%sendStripeCount]
+}
+
+func normalizeAddress(raw string) (string, error) {
+	jid, err := types.ParseJID(raw)
+	if err != nil || jid.IsEmpty() || jid.User == "" {
+		return "", fmt.Errorf("invalid provider address")
+	}
+	return jid.ToNonAD().String(), nil
+}
+
+// TerminalPairingSink intentionally bypasses structured logging. It should be
+// constructed only for the explicit WAZZAP_PAIRING_OUTPUT=terminal mode.
+type TerminalPairingSink struct {
+	Writer io.Writer
+	mu     sync.Mutex
+}
+
+func (sink *TerminalPairingSink) ShowPairingCode(code string, validFor time.Duration) error {
+	if sink == nil || sink.Writer == nil {
+		return errors.New("pairing output is unavailable")
+	}
+	if code == "" || len(code) > 2048 || validFor <= 0 {
+		return errors.New("pairing payload or lifetime is invalid")
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	checked := &errorTrackingWriter{writer: sink.Writer}
+	_, _ = fmt.Fprintf(checked, "\nWhatsApp pairing QR (sensitive, valid for about %s):\n", validFor.Round(time.Second))
+	qrterminal.GenerateHalfBlock(code, qrterminal.L, checked)
+	_, _ = fmt.Fprintln(checked, "Scan from WhatsApp > Linked devices. Do not share this QR.")
+	return checked.err
+}
+
+type errorTrackingWriter struct {
+	writer io.Writer
+	err    error
+}
+
+func (writer *errorTrackingWriter) Write(payload []byte) (int, error) {
+	if writer.err != nil {
+		return 0, writer.err
+	}
+	written, err := writer.writer.Write(payload)
+	if err != nil {
+		writer.err = err
+	}
+	return written, err
+}

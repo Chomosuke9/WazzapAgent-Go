@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,12 @@ func TestHealthEndpoints(t *testing.T) {
 
 	assertHealth(t, application.Handler(), "/health/live", http.StatusOK, "live")
 	assertHealth(t, application.Handler(), "/health/ready", http.StatusServiceUnavailable, "not_ready")
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsResponse := httptest.NewRecorder()
+	application.Handler().ServeHTTP(metricsResponse, metricsRequest)
+	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "wazzap_model_calls_total 0") {
+		t.Fatalf("metrics response = %d/%q", metricsResponse.Code, metricsResponse.Body.String())
+	}
 
 	application.ready.Store(true)
 	assertHealth(t, application.Handler(), "/health/ready", http.StatusOK, "ready")

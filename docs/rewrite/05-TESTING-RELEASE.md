@@ -214,11 +214,11 @@ Record library commit, Go version, OS/arch, client type, test account, timestamp
 
 1. Provision fresh dedicated data directory.
 2. Use dedicated WhatsApp test account.
-3. Keep LLM agent disabled.
+3. Keep response agent disabled.
 4. Pair account.
-5. Verify native connect, incoming text, and manual/fake fixed text send.
+5. Verify native connect and account readiness.
 6. Restart process and verify session reopen.
-7. Create first coordinated database backup.
+7. Create first coordinated database backup; outbound send begins only in bounded Stage C.
 
 ### Stage C — Allowlisted agent probe
 
@@ -256,19 +256,27 @@ The old service remains running and untouched. Observe a bounded canary window a
 
 Part 1 is complete only after Stage D probes and rollback test pass.
 
+### Current local evidence — 2026-09-08
+
+- `gofmt -l .`, `go mod tidy -diff`, `go mod verify`, `go vet ./...`, `go test -count=1 ./...`, dan `go test -race -count=1 ./...`: pass pada Go 1.27.0 Windows amd64; test/vet juga pass pada minimum Go 1.26.5.
+- `CGO_ENABLED=0` build: pass untuk Windows amd64, Linux amd64, Linux arm64, dan Android arm64.
+- `govulncheck@v1.7.0`: zero reachable symbol/package vulnerabilities. Satu module-level advisory untuk package `openpgp` yang tidak diimpor tidak berada pada call graph binary; dua advisory lain ditutup dengan `golang.org/x/crypto` v0.56.0.
+- Real Windows process dengan kedua feature flag disabled: `/health/live`, `/health/ready`, dan `/metrics` pass.
+- Tidak ada real-device pairing/message atau production-host deployment pada evidence ini.
+
 ## Part 1 pre-canary checklist
 
-- [ ] Scope/non-scope frozen.
+- [x] Scope/non-scope frozen.
 - [ ] Exact artifact and checksum recorded.
-- [ ] Format, vet, tests, race, module verify, vulnerability scan, and build pass.
-- [ ] Fake end-to-end/replay/crash-boundary tests pass.
+- [x] Format, vet, tests, race, module verify, vulnerability scan, and build pass.
+- [x] Fake end-to-end/replay/crash-boundary tests pass.
 - [ ] Dedicated test account and allowlisted recipients/chats prepared.
 - [ ] Data root, port, process/service, and logs do not overlap old runtime.
 - [ ] LLM and application secrets supplied outside chat/log/CLI history.
-- [ ] Agent defaults disabled.
+- [x] Agent defaults disabled.
 - [ ] Kill switch tested.
 - [ ] Backup and rollback commands verified.
-- [ ] Health and account readiness observable.
+- [x] Health and account readiness observable locally; real-device state remains pending.
 - [ ] Operator understands `unknown_outcome` and will not blindly replay it.
 
 ## Canary stop triggers

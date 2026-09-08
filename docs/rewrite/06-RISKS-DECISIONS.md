@@ -299,9 +299,8 @@ Default limits:
 | Per-chat prompt | 16 KiB |
 | LLM response text | 16 KiB |
 | Model effects per Part 1 turn | 1 `SendText` |
-| Completed inbox dedup retention | 7 hari |
-| Action receipt/tombstone retention | 30 hari |
-| Terminal message/action content scrub target | 24 jam, final before canary |
+| Terminal inbox/action/receipt tombstone retention | 30 hari |
+| Terminal message/action content scrub | 24 jam |
 | SQLite busy timeout | 5 detik |
 | Graceful shutdown | 30 detik |
 

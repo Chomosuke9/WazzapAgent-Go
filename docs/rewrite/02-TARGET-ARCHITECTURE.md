@@ -560,7 +560,8 @@ Validated startup config includes:
 - HTTP bind address;
 - configured owner address, normalized only inside trusted identity/adapter code;
 - required chat/recipient allowlist;
-- `agent_enabled`, default `false`;
+- `WAZZAP_WHATSAPP_ENABLED` untuk native account runtime dan `WAZZAP_AGENT_ENABLED` untuk response policy; keduanya default `false`;
+- explicit terminal/disabled pairing output, default `disabled`;
 - LLM endpoint/model/key and request timeout;
 - inbound queue, LLM concurrency, text/prompt/response limits;
 - reconnect/send/shutdown timeouts;
@@ -572,7 +573,7 @@ Secrets and raw provider addresses are never included in `Redacted()` output. Em
 
 - `/health/live` reports that the process event loop is alive.
 - `/health/ready` reports component state; it is not ready until migrations are complete and required workers are running.
-- When `agent_enabled=true`, readiness also requires the account state to be `open`.
+- Ketika `WAZZAP_WHATSAPP_ENABLED=true`, readiness juga mensyaratkan account state `open`, walaupun response agent masih dimatikan untuk pairing.
 - The response may expose stable state/error codes and timestamps, never secrets, raw addresses, prompts, or message content.
 - A reconnecting account makes readiness fail without making liveness fail.
 

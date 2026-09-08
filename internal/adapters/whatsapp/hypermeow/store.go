@@ -1,4 +1,4 @@
-package whatsapp
+package hypermeow
 
 import (
 	"context"
@@ -15,9 +15,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const defaultBusyTimeoutMS = 5000
+const deviceStoreBusyTimeoutMS = 5000
 
-func OpenDeviceStore(ctx context.Context, path string, logger waLog.Logger) (*sqlstore.Container, error) {
+func openDeviceStore(ctx context.Context, path string, logger waLog.Logger) (*sqlstore.Container, error) {
 	if strings.ContainsRune(path, '\x00') {
 		return nil, errors.New("device store path contains a null byte")
 	}
@@ -28,10 +28,13 @@ func OpenDeviceStore(ctx context.Context, path string, logger waLog.Logger) (*sq
 	if err != nil {
 		return nil, fmt.Errorf("resolve device store path: %w", err)
 	}
+	if filepath.Dir(absolute) == absolute {
+		return nil, errors.New("filesystem root is not a device database path")
+	}
 	if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
 		return nil, fmt.Errorf("create device store directory: %w", err)
 	}
-	container, err := sqlstore.New(ctx, "sqlite", deviceStoreDSN(absolute, defaultBusyTimeoutMS), logger)
+	container, err := sqlstore.New(ctx, "sqlite", deviceStoreDSN(absolute, deviceStoreBusyTimeoutMS), logger)
 	if err != nil {
 		return nil, fmt.Errorf("open Hypermeow device store: %w", err)
 	}

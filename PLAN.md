@@ -263,7 +263,7 @@ Menentukan scope, boundary, risiko, dependency, quality gate, dan delivery seque
 - Roadmap Part-based dan Part 1 canary scope: diperbarui.
 - Agent-centric contract pada `docs/rewrite/04-AGENT-CONTRACT.md`: diperbarui sesuai keputusan actor authorization di luar Agent.
 - Current foundation validation: `gofmt -l` bersih; `go vet ./...`, `go test ./...`, `go test -race ./...`, `go build ./cmd/...`, dan `go mod verify` lulus.
-- `govulncheck` tidak tersedia pada environment current run dan tetap menjadi gate yang belum lulus.
+- `govulncheck` Part 1 kemudian dijalankan pada 2026-09-08; tidak ada vulnerable symbol/package yang reachable.
 - Native real-device verification dan deployment: belum dilakukan oleh perubahan rencana ini.
 
 ## Part 1 — Barebone Production Canary
@@ -320,7 +320,7 @@ pair/connect
    - external application handler melakukan `Config.Refresh`, memverifikasi configured bot owner, lalu memanggil actor-free `Agent.Config()` mutation;
    - `/prompt` diproses deterministik dan tidak pernah diteruskan ke LLM;
    - Config mutation mengikat external authorization ke expected snapshot version, lalu memakai durable compare-and-swap, atomic snapshot swap, dan best-effort `ConfigChanged` notification;
-   - user text, trusted sender metadata, dan system prompt tetap menjadi bagian model message yang terpisah.
+   - user text, authenticated opaque senderRef, untrusted display name, dan system prompt tetap menjadi model message/data yang terpisah.
 5. **LLM**
    - satu OpenAI-compatible text provider;
    - non-streaming, satu model, timeout, response-size limit, dan bounded retry hanya untuk failure yang aman;
@@ -418,7 +418,7 @@ Canary hanya boleh dimulai bila:
 - memakai dedicated WhatsApp test account, bukan account service lama;
 - memakai data directory, port, process/service, dan log terpisah;
 - recipient/chat allowlist wajib dan fail-closed;
-- agent default disabled lalu diaktifkan setelah pair/connect/send probe lulus;
+- response agent default disabled saat pair/reconnect/backup, lalu diaktifkan hanya untuk bounded send probe;
 - health dan account-ready dapat dibedakan;
 - operator memiliki kill switch satu langkah;
 - service lama tidak dihentikan atau dimodifikasi;
@@ -426,7 +426,7 @@ Canary hanya boleh dimulai bila:
 - error, reconnect, queue depth, LLM latency, dan duplicate count diamati;
 - minimal DM probe, group-mention probe, prompt set/clear, restart, dan duplicate replay lulus.
 
-Part 1 startup config wajib fail-fast untuk missing tenant/account identity, owner identity, LLM endpoint/model/key, timeout/limit, atau canary allowlist. `agent_enabled` default `false`. Redacted config tidak boleh memuat secret, raw address, prompt, atau message content.
+Part 1 startup config wajib fail-fast untuk missing tenant/account identity, owner identity, LLM endpoint/model/key, timeout/limit, atau canary allowlist ketika runtime WhatsApp aktif. `WAZZAP_WHATSAPP_ENABLED` dan `WAZZAP_AGENT_ENABLED` default `false`; agent tidak dapat aktif tanpa runtime WhatsApp. Redacted config tidak boleh memuat secret, raw address, prompt, atau message content.
 
 Canary hari ini membuktikan alur dan boundary. Canary tidak membuktikan long-run reliability. Jika gate ini belum lulus, Part 1 tetap belum selesai walaupun binary berhasil build.
 
@@ -446,6 +446,14 @@ Canary hari ini membuktikan alur dan boundary. Canary tidak membuktikan long-run
 - duplicate/replay test tidak membuat planned duplicate response;
 - canary allowlist, kill switch, dan rollback telah dicoba;
 - hasil canary dilaporkan sebagai canary, bukan stable production release.
+
+### Status implementasi 2026-09-08
+
+- Contract, SQLite store, fake vertical slice, native Hypermeow adapter, OpenAI-compatible adapter, recovery, bounds, metrics, content scrubbing, dan operator runbook: implemented pada working tree.
+- Local verification lulus pada Go 1.27.0; test dan vet juga lulus pada minimum Go 1.26.5. Gate mencakup format, module tidy/verify, seluruh test, race detector, `CGO_ENABLED=0` build Windows amd64/Linux amd64/Linux arm64/Android arm64, dan `govulncheck` reachable-symbol scan.
+- Binary Windows juga lulus process smoke untuk `/health/live`, `/health/ready`, dan `/metrics` dengan WhatsApp/agent disabled; ini bukan native WhatsApp test.
+- Real-device pairing/reconnect serta production-host canary: belum dijalankan karena dedicated account/config/host tidak tersedia pada checkout ini.
+- Karena exit gate real-device belum terbukti, status release tetap **Part 1 implementation ready for canary**, bukan Part 1 production-canary complete dan bukan stable release.
 
 ## Part 2 — Reliable Conversation Core
 
