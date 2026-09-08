@@ -4,7 +4,6 @@
 /.idea/WazzapAgent-Go.iml
 /.idea/vcs.xml
 /.idea/modules.xml
-/go.sum
 /.idea/discord.xml
 /testing-only
 .idea

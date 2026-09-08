@@ -1,304 +1,342 @@
 # Roadmap dan Work Breakdown
 
-Project ini greenfield. Source lama dipakai untuk inventaris fitur dan test ideas, bukan sebagai runtime, data source, atau compatibility target.
+[`PLAN.md`](../../PLAN.md) adalah master plan. Dokumen ini merangkum delivery order dan exit gate setiap Part.
 
-## Milestone 0 — Product scope dan technical decisions
+## Cara membaca roadmap
 
-### Tujuan
+- Part adalah vertical slice yang deployable, bukan sekumpulan layer teknis.
+- Part 0 berisi persiapan dan keputusan.
+- Part 1 adalah barebone canary yang ditargetkan selesai hari ini.
+- `v0.1-canary` bukan stable production release.
+- Scope baru tidak boleh merusak isolation, durability, atau test guarantee Part sebelumnya.
 
-Menetapkan release scope sebelum coding besar.
-
-### Work items
-
-- Klasifikasikan fitur di baseline sebagai `required`, `deferred`, atau `rejected`.
-- Tentukan canonical message, action, result, dan stable error model baru.
-- Tetapkan command list release pertama.
-- Tentukan API versioning dan authentication model control panel.
-- Buat native WhatsApp capability test matrix.
-- Tutup ADR SQLite driver/CGO, database topology, process topology, config reload, dan deployment target.
-- Definisikan SLO awal dan resource limits.
-
-### Exit gate
-
-- Scope v1 disetujui.
-- Semua P0/P1 feature memiliki acceptance criteria.
-- Critical ADR selesai.
-- Tidak ada requirement import data, auth, atau protocol lama.
-
-## Milestone 1 — Fondasi aplikasi
+## Part 0 — Persiapan dan rencana
 
 ### Tujuan
 
-Menyediakan executable Go yang reproducible dan operable.
+Mengunci masalah, scope, architecture boundary, risiko, dan urutan delivery sebelum coding fitur besar.
 
 ### Work items
 
-- Buat `cmd/wazzapagent` dan composition root.
-- Implement typed config, defaults, validation, immutable snapshots, dan secret redaction.
-- Implement structured logger dan instance ID.
-- Tambah liveness/readiness endpoints.
-- Tambah lifecycle context, graceful shutdown, dan goroutine tracking.
-- Track `go.sum`; pin toolchain/dependencies.
-- Rapikan prototype `pkg/whatsapp/socket.go` menjadi adapter spike atau hapus setelah tercakup.
-- Siapkan CI untuk format, vet, test, race, vulnerability scan, dan build.
+- Inventaris fitur dan failure mode project lama.
+- Tetapkan greenfield rewrite, fresh pairing, dan no Node/Python sidecar.
+- Tetapkan modular monolith dan consumer-owned narrow interfaces.
+- Tetapkan normative chat-scoped Agent/Registry/Config/History contract dan external authorization boundary.
+- Tetapkan explicit `TenantID`, single ownership, bounded concurrency, dan durable correctness state.
+- Tetapkan package layout bertahap dan extraction seams.
+- Siapkan executable/config/logger/health/lifecycle/CI skeleton.
+- Spike modernc/Hypermeow device store; hasil spike bukan production adapter.
+- Tetapkan scope, schema minimum, tests, canary gate, kill switch, dan rollback Part 1.
 
 ### Exit gate
+
+- Master plan dan Part 1 scope disetujui.
+- Ownership/import rules tertulis.
+- Scope dan non-scope Part 1 tidak ambigu.
+- Foundation lokal lulus format, vet, test, race, dan build sebelum feature implementation dimulai.
+- Tidak ada claim real-device/deployment tanpa bukti current run.
+
+### Status 2026-09-08
+
+- Planning/audit: selesai.
+- Foundation dan Windows SQLite/Hypermeow spike: tersedia pada working tree.
+- Part-based roadmap: diperbarui.
+- Agent-centric contract: diperbarui.
+- Current foundation validation: format, vet, test, race, build, and module verification pass.
+- Vulnerability scan remains pending because `govulncheck` is not installed in the current environment.
+- Real-device verification dan canary deployment: belum menjadi hasil perubahan dokumentasi ini.
+
+## Part 1 — Barebone production canary
+
+### Tujuan
+
+Membuktikan vertical slice minimum pada dedicated test account:
 
 ```text
-go vet ./...
-go test ./...
-go test -race ./...
-go build ./cmd/...
+pair/connect
+  -> text inbound
+  -> dedup claim
+  -> senderRef
+  -> per-chat prompt
+  -> text-only LLM
+  -> durable SendText intent
+  -> WhatsApp text outbound
+  -> receipt completion
 ```
 
-Binary start dengan config minimal, invalid config gagal sebelum network startup, health endpoints benar, dan SIGTERM selesai tanpa leak.
+### Work stream A — Runtime dan native text
 
-Dependency: Milestone 0.
+- Satu active account, tetapi semua contract tetap tenant-scoped.
+- Fresh QR atau pairing-code flow; minimal satu lulus real-device test.
+- Persistent native session dan reconnect setelah process restart.
+- Incoming/outgoing text.
+- Semua eligible DM; group hanya ketika bot di-mention.
+- Ignore self/status/duplicate/unsupported event secara deterministik.
+- Process readiness dan account readiness terpisah.
 
-## Milestone 2 — Persistence v1
+### Work stream B — Identity dan senderRef
+
+- Canonical tenant/chat/message/participant identity.
+- Provider JID/ID hanya di adapter mapping.
+- Random, opaque, human-readable sender ref per tenant/chat/participant.
+- Mapping durable dengan unique constraints dan collision retry.
+- Ref stabil setelah restart dan restore.
+- Sender ref tidak pernah menjadi role/permission proof.
+
+### Work stream C — Prompt
+
+- Base system prompt.
+- Versioned per-chat `Agent.Config` snapshot with credential-free model, configurable base prompt, per-chat prompt override, and immutable permission policy reference/revision.
+- Exact `/prompt view`, `/prompt set <text>`, dan `/prompt clear` parsing.
+- `/prompt set|clear` changes only `PromptOverride`, never base or non-overridable safety instructions.
+- External application/policy handler refreshes Config and verifies the configured owner before calling actor-free Agent Config methods.
+- Config mutation binds external authorization to an expected snapshot version, then uses durable CAS, atomic snapshot swap, and best-effort post-commit `ConfigChanged` notification.
+- Prompt command tidak diteruskan ke model.
+- Trusted metadata, configured prompt, dan raw user text tidak digabung menjadi satu untyped transcript.
+
+### Work stream D — Barebone agent
+
+- Lazy `AgentRegistry`, one live Agent per tenant/account/chat key.
+- `Agent.Invoke()` as the chat-scoped façade.
+- Agent owns invocation serialization, durable `(InvocationID, digest)` claim, and stored-plan replay.
+- External invocation policy decision is bound to the refreshed Config version; stale decisions conflict before generation.
+- New generation captures one refreshed immutable Config version; replay after planning skips the model.
+- OpenAI-compatible text-only provider.
+- Non-streaming, single model, timeout, bounded safe retry.
+- Plain text output dengan hard size limit.
+- Durable `ResponseDispatcher`; Agent never imports Hypermeow directly.
+- No history, batching, tools, generic commands, media, or fallback chain.
+- Fake deterministic LLM untuk tests.
+
+### Work stream E — Minimum durable delivery
+
+- Embedded immutable migrations.
+- Tenant/chat/address, participant/sender ref, prompt, inbox, outbound action, dan receipt state.
+- Provider inbound key unik.
+- TurnStore binds unique `(AgentKey, InvocationID)` to a canonical digest and bounded generation lease.
+- Atomically store response text, response/action IDs, outbound intent, and planned state before network send.
+- Replay after planning skips ModelInvoker and reuses the same action.
+- Unknown send outcome tidak diulang otomatis.
+- Fake clock/store/sender untuk replay dan crash-boundary tests.
+
+### Concurrency
+
+- Bounded inbound queue.
+- Per-Agent invocation gate: same Agent serial, different Agents concurrent.
+- Registry coalesces concurrent construction, pins in-flight Agents, enforces a hard bound, and idle-evicts safely.
+- Global LLM semaphore.
+- Per-chat/JID outbound ordering.
+- Semua goroutine mengikuti root context dan `WaitGroup`.
+
+### Implementation order hari ini
+
+1. Freeze `04-AGENT-CONTRACT.md`: Agent key, Registry, Config, generic causation, TurnStore replay, ResponseDispatcher, sender ref, errors, and narrow ports.
+2. Implement minimum migrations and transactional store use cases, including versioned `agent_configs` CAS and atomic response/action planning.
+3. Make fake source -> AgentRegistry -> Config.Refresh/external policy -> Agent.Invoke -> TurnStore -> fake model -> durable dispatcher -> fake sender pass.
+4. Build internal Hypermeow pair/connect/text source/text sender adapter.
+5. Build text-only OpenAI-compatible adapter.
+6. Add recovery, replay, concurrency, bounds, cancellation, and redaction tests.
+7. Add fail-closed allowlist, disabled-by-default flag, readiness, kill switch, backup, and rollback probe.
+
+This is the cut line. No later-Part feature may enter before all seven steps pass.
+
+### Explicit non-scope
+
+- history, batching/debounce, contextMsgId, quoted reply, replied-to-bot;
+- commands selain `/prompt`;
+- reaction/delete/read/presence/kick/tool calling;
+- image dan media lain;
+- multi-account product surface, control panel, scheduler, direct invoke, sub-agent;
+- replacement atau shutdown service lama.
+
+### Exit gate lokal
+
+- `gofmt`, `go vet`, `go test`, `go test -race`, build, dan `govulncheck` lulus.
+- Fake end-to-end test lulus.
+- Sender-ref/prompt tenant isolation tests lulus.
+- Duplicate inbound/action, timeout, cancellation, and same-chat ordering tests lulus.
+- Secret, raw JID, prompt content, dan message body tidak muncul di normal logs.
+
+### Exit gate real-device
+
+- Dedicated account dapat pair dan reconnect setelah restart.
+- Allowlisted DM response lulus.
+- Allowlisted group mention response lulus.
+- Prompt set/view/clear dan restart persistence lulus.
+- Replay probe tidak menghasilkan duplicate planned response.
+- Kill switch dan rollback dicoba.
+
+### Canary constraints
+
+- Dedicated WhatsApp test account.
+- Dedicated data root, port, service/process, dan logs.
+- Recipient/chat allowlist wajib dan fail-closed.
+- Agent disabled by default sampai native send probe lulus.
+- Service lama tetap berjalan dan tidak dimodifikasi.
+- Backup awal kedua database setelah pairing.
+- Label deployment `v0.1-canary`, bukan stable release.
+
+## Part 2 — Reliable conversation core
 
 ### Tujuan
 
-Membangun storage baru dengan schema dan ownership jelas sejak awal.
+Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbahaya.
 
 ### Work items
 
-- Tenant/account schema dan data root layout.
-- Embedded immutable migrations dengan version/checksum.
-- Repositories untuk settings, directory, models/providers, activation, memories, moderation, stats, stickers/media.
-- Tables untuk action receipts, inbox/outbox, audit, jobs, dan sub-agent.
-- WAL/foreign key/busy/checkpoint configuration.
-- Transaction boundaries dan repository interfaces.
-- Backup, restore, integrity-check, dan retention commands.
+- Persistent bounded history dan retention.
+- Implement `Agent.History().List/Append/Reset/Trim` as the Part 2 child capability; externally authorized read/reset receives and transactionally verifies the authorized Config version.
+- Stable internal message ID dan quoted lookup.
+- Replied-to-bot trigger.
+- Debounce, burst cap, stale context, dan reply dedup.
+- Deterministic context builder dan golden serialization.
+- Structured provenance dan context injection defense.
+- `/help`, `/info`, `/reset`.
+- Backup/restore, action reconciliation, and richer metrics.
 
 ### Exit gate
 
-- Fresh DB mencapai schema v1 deterministically.
-- Migration rerun idempotent dan checksum mismatch fail-fast.
-- Two-tenant isolation tests lulus.
-- Crash/restart tidak merusak committed transactions.
-- Backup dapat direstore dan dibuka oleh release yang sama.
+- History/context survive restart.
+- Same-chat ordering dan cross-chat concurrency lulus under load.
+- Network-loss/process-kill/replay tests tidak membuat silent loss atau duplicate visible response.
 
-Dependency: Milestone 1.
-
-## Milestone 3 — Native WhatsApp adapter
-
-### Tujuan
-
-Membuktikan konektivitas native Go untuk account baru sebelum agent dibangun di atasnya.
+## Part 3 — Permission, commands, dan typed actions
 
 ### Work items
 
-- Per-tenant hypermeow device store.
-- QR dan pairing-code flows.
-- Connect/reconnect/logout/device removal lifecycle.
-- Canonical event normalization.
-- Text send/receive, reply, mention, reaction, delete, read, presence.
-- Group metadata, participant roles, kick.
-- Media download/upload.
-- Capability flags dan typed unsupported errors.
-- Per-chat/JID send serialization dan reconnect backoff.
+- Human/model/system/recovery principals.
+- Current role/capability resolution.
+- Permission recheck immediately before side effect.
+- Keep actor verification and authorization in application/policy/action layers, never inside Agent core methods.
+- Explicit command registry.
+- Typed actions untuk react, delete, mark-read, presence, dan chat context.
+- Durable receipt state machine and unknown-outcome reconciliation.
+- Provider fallback dan bounded retry policy.
+- Tolak generic model-generated `run_command`.
 
 ### Exit gate
 
-- Fresh account dapat pair dan reconnect setelah process/host restart.
-- DM/group basic actions lulus pada real devices.
-- Multi-account isolation lulus.
-- Network loss, logout, stream conflict, dan cancellation tests lulus.
-- Unsupported P1 capability memiliki fallback atau dikeluarkan eksplisit dari v1.
+- Model tidak dapat memperoleh owner/admin authority.
+- Setiap effect melewati validate -> authorize -> claim -> execute -> finalize.
+- Permission, replay, conflict, and unknown-outcome tests lulus.
 
-Dependency: Milestone 1–2.
-
-## Milestone 4 — Message domain dan command core
-
-### Tujuan
-
-Membangun normalized message pipeline dan user-facing non-LLM features.
+## Part 4 — Media dan rich context
 
 ### Work items
 
-- Message unwrap, stable context IDs, quoted lookup, sender refs.
-- LID/phone JID resolution.
-- Mention/tag-all/replied-to-bot detection.
-- Group metadata cache dan stampede protection.
-- Command/button registries dengan explicit registration.
-- Owner/admin/superadmin/user permissions.
-- Activation, mute, delete, kick, settings, model, memory, help.
-- Media and sticker catalog/conversion.
-- Interactive messages sesuai capability matrix.
+- Image receive/send dan lazy materialization.
+- Vision input serta text-only fallback.
+- MIME/size/pixel/hash/timeout/quota/cleanup checks.
+- Mention/reply rendering dan LID/phone mapping hardening.
+- Tambahkan document/audio/video satu per satu setelah capability gate.
 
 ### Exit gate
 
-- Golden normalization fixtures lulus.
-- Context lookup dan cache bounds teruji.
-- Permission/activation tidak dapat dibypass.
-- Required v1 commands lulus integration tests.
-- Media path, MIME, size, timeout, dan cleanup tests lulus.
+- Raw path/protobuf/provider DTO tidak keluar dari adapter.
+- SSRF, traversal, decompression, and oversized-media tests lulus.
+- Real-device image matrix lulus pada target yang didukung.
 
-Dependency: Milestone 2–3.
-
-## Milestone 5 — Agent core
-
-### Tujuan
-
-Membangun end-to-end LLM response pipeline.
-
-### Work stream A: history/context
-
-- Message history model dan bounded retention.
-- Quoted hydration dan assistant identity.
-- Deterministic history serialization.
-- Context injection guards.
-- Settings/model/memory context builder.
-
-### Work stream B: batching
-
-- Per-chat queue/lock.
-- Debounce, burst cap, stale context-only policy.
-- Prefix interrupt dan cancellation.
-- Idle trigger, mute gate, reply dedup.
-
-### Work stream C: LLM
-
-- OpenAI-compatible provider abstraction.
-- LLM1 typed routing/tools.
-- LLM2 prompt/tools/result validator.
-- Primary/fallback, timeouts, retries, multimodal fallback.
-- Fake deterministic provider.
-
-### Work stream D: durable actions
-
-- Typed action extraction and validation.
-- Permission check immediately before side effect.
-- Transactional action receipt and outbox.
-- Unknown-outcome reconciliation state.
-- History finalization from normalized send result.
-
-### Exit gate
-
-- Golden prompt/tool/action tests lulus.
-- Per-chat ordering dan cross-chat concurrency benar.
-- Duplicate request tidak mengulang local side effect.
-- Timeout, fallback, cancellation, malformed output, and crash injection lulus.
-- End-to-end DM/group response bekerja pada test accounts.
-
-Dependency: Milestone 2–4.
-
-## Milestone 6 — Jobs, direct invoke, dan sub-agent
-
-### Tujuan
-
-Menambah workflows asynchronous dengan durability lengkap.
+## Part 5 — Multi-account dan control plane
 
 ### Work items
 
-- Shared ChatReinvoker.
-- One-shot dan daily scheduler dengan transactional leases.
-- Direct invoke HTTP dengan fail-closed auth dan async acceptance.
-- Sub-agent client, retries, steering, resumable upload.
-- Authenticated webhook dan progress keepalive.
-- Durable tracker, deferred completion, output spool, delivery checkpoints.
-- Recovery, retry, discard, dan dead-letter operations.
+- Multiple active account runtimes dengan per-tenant budgets.
+- Account ownership registry dan state machine.
+- Two-tenant real runtime isolation.
+- Versioned control API dan embedded UI.
+- Server-side session, CSRF, rate limiting, and audit.
+- Account, prompt/model, backup/restore operations.
 
 ### Exit gate
 
-- Past-due, shutdown cancellation, recurrence, timezone, dan lease expiry tests lulus.
-- Cold work menunggu account `open` tanpa kehilangan job.
-- Webhook di-ACK hanya setelah durable ownership.
-- Crash pada setiap state transition tidak kehilangan atau menggandakan completion.
-- File size/hash/traversal and duplicate delivery tests lulus.
+- Zero cross-tenant path/data/config/secret access.
+- Lifecycle races, noisy-neighbor, auth, and browser/API tests lulus.
 
-Dependency: Milestone 5.
-
-## Milestone 7 — Control panel
-
-### Tujuan
-
-Menyediakan seluruh operasi v1 melalui secure web interface/API.
+## Part 6 — Scheduler dan direct invoke
 
 ### Work items
 
-- Initial secure token setup dan auth middleware.
-- Account add/pair/reconnect/logout/disable/delete-data workflow.
-- Settings, models/providers, activation, memories, moderation, stickers.
-- Jobs and sub-agent administration.
-- Secret-safe config editor.
-- Audit events, health, metrics, backup/restore.
-- Embedded static UI.
+- Shared cold invocation path.
+- One-shot dan daily task dengan IANA timezone.
+- Transactional leases and account-readiness gate.
+- Authenticated direct invoke.
+- Limited scheduler/direct principal; never fake owner.
+- Use the existing typed `CausationRef` (`task` or `request`) rather than overloading a WhatsApp MessageID.
 
 ### Exit gate
 
-- Auth fail-closed, timing-safe comparison, rate limiting, and security headers lulus.
-- Tenant-scoped authorization/path tests lulus.
-- Semua mutations transactional dan audited.
-- Pairing dan representative management workflows lulus browser/API tests.
+- Restart, overdue, timezone, lease expiry, and cancellation tests lulus.
+- Cold invoke refreshes live chat context.
 
-Dependency: Milestone 2–6. UI dapat dimulai paralel setelah API contracts stabil.
-
-## Milestone 8 — Advanced WhatsApp features
-
-### Tujuan
-
-Menyelesaikan fitur adapter yang kompleks tanpa menghambat runtime inti.
+## Part 7 — Sub-agent
 
 ### Work items
 
-- Buttons, carousel, copy-code, quiz.
-- Lottie and animated sticker handling.
-- View-once, ephemeral, edited, and uncommon protocol wrappers.
-- Broadcast/announcement behavior.
-- Device compatibility fallbacks.
-- Real-device matrix Android/iOS/Web.
+- Durable job state machine.
+- Authenticated submit/callback.
+- Content-addressed input/output with size/hash verification.
+- Progress, steering, correction, cancellation, retry/dead-letter.
+- Output delivery through normal action outbox.
 
 ### Exit gate
 
-- Setiap required feature lulus real-device tests.
-- Unsupported features memiliki UX fallback yang aman.
-- Reconnect tidak menyebabkan duplicate interactive sends.
-- Media/resource bounds tetap terpenuhi.
+- Crash at every transition preserves completion and avoids duplicate file delivery.
+- Waiting never holds a chat lock.
 
-Dependency: Milestone 3–5. Dapat paralel dengan Milestone 6–7.
+## Part 8 — Advanced WhatsApp features
 
-## Milestone 9 — Hardening dan release candidate
+- Sticker, buttons, carousel, quiz, copy-code, Lottie, and safe HTML.
+- Moderation/kick/broadcast/announcement.
+- View-once, ephemeral, edited, and uncommon wrappers.
+- Capability-aware fallback per client/platform.
 
-### Tujuan
+### Exit gate
 
-Menyiapkan release baru dari fresh environment.
+- Each feature passes adapter capability, security, and real-client compatibility gates.
+- No domain dependency on raw protobuf workaround.
+
+## Part 9 — Scale, hardening, dan stable release
 
 ### Work items
 
-- End-to-end fresh install dan pairing.
-- Multi-account load/soak/fault tests.
-- Security review dan `govulncheck`.
-- Backup/restore and schema-upgrade drill.
-- Reproducible target builds/checksums.
-- Container atau systemd/Pterodactyl packaging.
-- Operator runbook, alerts, capacity, and retention defaults.
-- License/dependency inventory.
+- Security and dependency/license audit.
+- Load, fault injection, backup/restore, migration, and 24+ hour soak.
+- Per-tenant resource budgets and noisy-neighbor tests.
+- Tenant sharding/lease only if measurements require it.
+- Debian, Windows, and Termux artifacts/checksums/runbooks.
+- Stable release sign-off.
 
 ### Exit gate
 
-- Semua required feature gates lulus.
 - Zero tenant-isolation violation.
-- No unreconciled duplicate destructive action.
-- 24+ hour soak memenuhi error/resource budget.
-- Restore and host-restart recovery teruji.
-- Release artifact berjalan tanpa Node/Python.
-
-Dependency: Milestone 1–8 required scope.
+- No unbounded queue/goroutine/WAL/file/memory growth.
+- Recovery and rollback drills pass.
+- Runtime requires no Node/Python.
 
 ## Critical path
 
 ```text
-M0 scope
-  -> M1 foundation
-  -> M2 persistence
-  -> M3 native WhatsApp
-  -> M4 domain/commands
-  -> M5 agent
-  -> M6 background workflows
-  -> M7 control panel
-  -> M9 release candidate
+P0 plan
+ -> P1 barebone canary
+ -> P2 reliable conversation
+ -> P3 safe actions
+ -> P4 media/context
+ -> P5 multi-account/control
+ -> P6 automation
+ -> P7 sub-agent
+ -> P8 advanced WhatsApp
+ -> P9 stable release
 ```
 
-M8 dapat berjalan paralel setelah native adapter dan agent core stabil. Fitur M8 yang berstatus deferred tidak memblokir v1.
+## Stop conditions
+
+Stop the current Part or rollout when:
+
+- tenant isolation fails;
+- canary account/path overlaps the old service;
+- a secret or raw identifier leaks;
+- a duplicate or ambiguous outbound action is replayed unsafely;
+- a queue/resource grows without bound;
+- permission trusts model-provided roles;
+- DB integrity/migration verification fails;
+- kill switch or rollback is not usable.

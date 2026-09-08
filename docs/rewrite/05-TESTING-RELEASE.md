@@ -1,234 +1,355 @@
 # Pengujian dan Release
 
-## Quality gates
+## Istilah
 
-Setiap perubahan Go menjalankan:
+- **Local verification:** test/build pada checkout lokal; tidak membuktikan WhatsApp atau deployment nyata.
+- **Real-device verification:** probe dengan dedicated WhatsApp test account.
+- **Production canary:** isolated process pada production host dengan account/path/port/allowlist terpisah.
+- **Stable release:** baru dapat diklaim setelah Part 9 gates lulus.
+
+Part 1 menargetkan production canary hari ini, bukan stable release.
+
+## Quality gates setiap Part
 
 ```text
-gofmt check
+gofmt -l .  # output wajib kosong
 go vet ./...
 go test ./...
 go test -race ./...
 go build ./cmd/...
+go mod verify
+govulncheck ./...
 ```
 
-Release CI menambah `govulncheck`, integration tests, real-device smoke, load/soak gates, dan build di target environment. `go-sqlite3` membutuhkan validasi CGO toolchain bila tetap dipilih.
+CI harus memakai tracked `go.sum`, pinned/resolvable dependencies, dan toolchain yang memenuhi minimum seluruh module graph. Release build memakai `CGO_ENABLED=0` selama modernc/Hypermeow native gates tetap lulus.
 
 ## Test pyramid
 
 ### Unit
 
-- config defaults, validation, reload, redaction;
-- tenant/path isolation;
-- canonical message/action/error validation;
-- message unwrap, mentions, quoted, location;
-- permissions, activation, moderation;
-- history formatting and hydration;
-- debounce, burst, stale, cancellation;
-- LLM schemas and output parsing;
-- action receipt state machine;
-- scheduler calculation and leases;
-- sub-agent transitions and file validation.
+- semantic ID and `SenderRef` validation;
+- account and action state transitions;
+- prompt command parsing/authorization/size limits;
+- Agent key/context-bounded constructor/config invariants;
+- AgentRegistry coalesced construction, independent waiter cancellation, pinning, bound, stale notification, and idle eviction;
+- Agent Config refresh/defensive snapshot/CAS/best-effort post-commit notification semantics;
+- Invocation digest, TurnStore lease, plan commit, and replay state transitions;
+- trigger rules and message bounds;
+- LLM request construction and output validation;
+- retry/error classification;
+- config validation and redaction;
+- per-Agent invocation serialization and cancellation.
 
-Gunakan fake clock, fake LLM provider, fake gateway, dan temporary data roots.
+Use fake clock, deterministic random source, fake LLM, fake sender, and temporary data roots.
 
-### Database
+### Store integration
 
-- fresh schema v1;
-- each migration created after v1;
-- checksum mismatch and interrupted migration;
-- NULL/default/time conversion;
-- concurrent readers/writers and busy timeout;
-- WAL checkpoint and crash recovery;
-- transaction rollback;
-- two-tenant isolation;
-- receipt/outbox/job/sub-agent durability;
-- backup/restore.
+- fresh embedded migration and checksum;
+- foreign keys, WAL, busy timeout, rollback;
+- `ClaimAndResolveSender` atomicity;
+- sender-ref collision retry and uniqueness;
+- prompt-override set/view/clear and isolation;
+- inbound dedup;
+- InvocationID/digest conflict and generation lease expiry;
+- atomic response/action plan transaction;
+- receipt conflict and unknown-outcome transitions;
+- reopen after forced process exit;
+- coordinated checkpoint/backup/restore;
+- two-tenant path/row isolation.
 
-### Message golden tests
+### Fake end-to-end
 
-Simpan sanitized native event fixtures untuk:
+```text
+fake source
+ -> real inbound claim/trigger/policy
+ -> real AgentRegistry
+ -> real Agent.Invoke with fake ModelInvoker
+ -> real TurnStore response/action commit
+ -> real durable ResponseDispatcher/outbox/worker
+ -> fake sender
+```
 
-- DM dan group text;
-- quoted/reply and mentions;
-- LID/phone JID forms;
-- image/video/audio/document/sticker;
-- view-once, ephemeral, edited wrappers;
-- reactions and group events;
-- malformed and unsupported payloads.
+Required Part 1 scenarios:
 
-Golden output menggunakan canonical Go message model baru, bukan legacy protocol frames.
+- eligible DM sends exactly one response;
+- group mention sends one response;
+- non-mention group/self/status/duplicate sends none;
+- owner `/prompt` operations bypass LLM and persist;
+- non-owner prompt mutation is denied;
+- unauthorized mutation never calls Agent Config methods;
+- same key returns one live Agent even during concurrent first access;
+- idle Agent recreation restores durable Config;
+- cancellation of one AgentFor waiter does not cancel another waiter's construction;
+- config update during Invoke does not alter the captured Config version;
+- failed Config CAS does not mutate memory or publish `ConfigChanged`;
+- Config conflict forces policy reload and reauthorization instead of blind retry;
+- dropped/reordered Config notification does not fail mutation or leave the next authorization stale;
+- same InvocationID/digest after planning skips the model and reuses one action;
+- same InvocationID with changed input digest fails closed;
+- handled model failure releases/terminates the generation lease; simulated crash requires lease expiry before retry;
+- provider error/timeout/cancellation does not create unsafe send;
+- duplicate action wake-up does not send twice;
+- same chat remains ordered while different chats progress concurrently;
+- graceful shutdown releases/cancels work predictably.
 
-### Agent replay
+### Real-device
 
-Corpus sintetis mencakup:
+Real-device tests use a dedicated account and recipient/chat allowlist. Tests must never target arbitrary contacts/groups.
 
-- group trigger modes;
-- bursts and stale payloads;
-- media and quoted media;
-- owner/admin/user permissions;
-- activation and mute states;
-- LLM primary failure/fallback/malformed tool call;
-- sub-agent active/steering/completion;
-- scheduled and direct invoke.
+Part 1 matrix:
 
-Bandingkan deterministic expected:
+| Capability | Part 1 gate |
+|---|---|
+| Fresh QR or pairing number | At least one flow passes |
+| Persistent session after restart | Required |
+| Incoming DM text | Required |
+| Outgoing DM text | Required |
+| Group mention detection/response | Required |
+| Duplicate replay probe | Required |
+| Network loss recovery | Smoke only; full matrix Part 2 |
+| Logout/device removal | Deferred to control operations |
+| Reaction/delete/read/presence | Deferred Part 3 |
+| Image/media | Deferred Part 4 |
 
-- history;
-- LLM requests/tools;
-- LLM1 decision;
-- action intents/order;
-- state writes;
-- stable errors and metrics.
+Record library commit, Go version, OS/arch, client type, test account, timestamp, result, and observed limitation. Never store phone/JID or secret in committed reports.
 
-### API/UI
+## Part 1 test inventory
 
-- initial token setup and fail-closed state;
-- login/auth rate limiting;
-- account pair/reconnect/logout/delete-data;
-- settings/memory/models/activation/moderation/stickers;
-- jobs and sub-agent admin;
-- secret masking;
-- audit, health, metrics, backup/restore;
-- invalid IDs, traversal, null bytes, oversized body, duplicate requests;
-- browser CSP and security headers.
+### SenderRef
 
-### Native WhatsApp integration
+- random generation produces allowed format;
+- collision is retried under unique constraint;
+- same participant/chat returns existing ref;
+- same provider participant in another chat has independent ref;
+- tenant A cannot resolve tenant B mapping;
+- reopen/restore keeps ref;
+- raw address does not appear in LLM request or normal logs;
+- ref cannot be accepted as role/owner evidence.
 
-Gunakan dedicated test accounts:
+### Prompt
 
-- QR dan pairing number;
-- session reconnect setelah process/host restart;
-- DM/group send and receive;
-- reply/quote/mention/reaction/delete/read/presence;
-- media and stickers;
-- participant role and kick;
-- interactive capabilities;
-- logout/device removal;
-- network partition, stream replacement, rate limit;
-- multiple active accounts.
+- exact `/prompt`, `/prompt view`, `/prompt set`, `/prompt clear` grammar;
+- malformed command deterministic error;
+- owner identity resolved by trusted mapping;
+- non-owner denial in the external application/policy handler;
+- Agent Config mutation methods accept no actor and perform no authorization;
+- an authorization decision is bound to the exact Config snapshot version passed to mutation;
+- `/prompt set|clear` mutates only per-chat `PromptOverride`;
+- base and non-overridable safety prompt remain unchanged;
+- UTF-8 and length boundaries;
+- versioned transactional CAS set/clear;
+- per-chat and per-tenant isolation;
+- prompt survives restart;
+- prompt content redacted from normal logs;
+- command never reaches LLM.
 
-Tests yang dapat mengirim pesan harus memakai explicit test allowlist agar tidak menyentuh chat nyata.
+### Agent contract
 
-### Fault injection
+- one `Agent` key contains tenant/account/chat and no raw provider identifier;
+- concurrent `AgentFor` calls construct one live instance;
+- registry hard limit and backpressure are deterministic;
+- in-flight Agent cannot be evicted;
+- eviction never deletes durable Config/action state;
+- Agent recreation reloads the latest Config version;
+- constructor I/O respects context timeout and retains no caller context;
+- same-Agent Invoke calls serialize;
+- different Agents progress concurrently within semaphore limits;
+- stale externally decided PolicyVersion fails before TurnStore claim/model invocation;
+- Config direct field mutation is impossible;
+- snapshots defensively copy pointer/slice/map members;
+- `ConfigChanged` is post-commit, non-sensitive, best effort, and not required for correctness;
+- notification reordering/loss is repaired by durable `Refresh()`;
+- `NotifyConfigChanged` never creates or evicts an Agent;
+- stored response plan replay skips ModelInvoker and keeps response/action IDs;
+- model cannot change Agent key/target;
+- current external policy is rechecked immediately before every send;
+- `Agent.Invoke()` returns succeeded/pending/unknown delivery accurately.
 
-Matikan process pada titik:
+### Inbound and action durability
 
-- setelah inbound dedup claim;
-- setelah action claim sebelum send;
-- setelah send sebelum receipt completion;
-- setelah webhook persisted sebelum response;
-- saat output partially written;
-- setelah job lease;
-- saat WAL active;
-- saat account catalog/config atomic write;
-- saat reconnect and outbox drain.
+- duplicate provider key returns duplicate claim;
+- crash after inbound claim can resume safely;
+- crash during LLM call may repeat model computation but not WhatsApp effect;
+- plan response and mark inbound planned are atomic;
+- same InvocationID/digest after plan returns/dispatches the stored plan without another LLM call;
+- action key/digest replay returns existing receipt;
+- conflicting digest fails closed;
+- crash before native send permits safe retry;
+- timeout/disconnect after send begins becomes `unknown_outcome` when provider evidence is insufficient;
+- unknown action is not auto-replayed.
 
-Expected state ditetapkan sebagai retry, no-retry, reconciliation, atau dead-letter.
+### Concurrency and bounds
 
-### Load dan soak
+- bounded inbound queue backpressure;
+- same-chat requests serialize;
+- cross-chat requests can execute concurrently;
+- Agent registry entries are safely idle-evicted after work/cancellation;
+- global LLM limit enforced;
+- DB/LLM/connect/send deadlines enforced;
+- oversized text/prompt/response rejected;
+- all goroutines stop under root cancellation;
+- race detector reports no shared-state race.
 
-- concurrent tenants and chats;
-- burst pada chat sama;
-- slow/failing LLM;
-- large and slow media;
-- reconnect storm;
-- large sub-agent outputs;
-- control-panel mutations saat agent aktif;
-- 24+ hour cache/goroutine/WAL/file growth test.
+### Security and privacy
 
-Track goroutines, heap, queue depth/age, DB busy, dropped events, action/LLM latency, reconnect count, dan disk growth.
+- LLM API key never appears in errors/logs;
+- message body and prompts are not logged by default;
+- raw JID/phone/provider payload does not cross adapter boundary;
+- canary allowlist is fail-closed when missing/invalid;
+- model response cannot choose tenant/chat/action ID/idempotency key;
+- no model tool calls or generic commands accepted;
+- HTTP health endpoint binds to configured safe address and exposes no secrets.
 
-## Security tests
-
-- auth fail-closed dan constant-time token comparison;
-- cryptographic token/activation generation;
-- SSRF blocking untuk loopback/private/link-local/metadata destinations;
-- DNS rebinding dan redirect revalidation;
-- path traversal, symlink/reparse escape;
-- MIME/content-size mismatch and decompression limits;
-- malicious HTML rendering input;
-- SQL parameterization;
-- prompt/context injection guard;
-- webhook replay/forgery;
-- secret redaction in logs/API/errors;
-- request/body/frame/file/concurrency limits;
-- permission recheck immediately before model-generated side effect.
-
-## Release stages
+## Part 1 canary stages
 
 ### Stage A — Local offline
 
-Fake gateway dan fake LLM. Seluruh unit/database/golden tests lulus.
+1. Run all quality gates.
+2. Run store/fake end-to-end/fault tests.
+3. Inspect config redaction and logs.
+4. Build the exact artifact intended for the host.
+5. Record source commit or working-tree digest, module sums, Go version, OS/arch, and artifact checksum.
 
-### Stage B — Dedicated WhatsApp account
+### Stage B — Isolated native smoke
 
-Fresh pair satu account test. Jalankan native capability matrix dan fault tests.
+1. Provision fresh dedicated data directory.
+2. Use dedicated WhatsApp test account.
+3. Keep LLM agent disabled.
+4. Pair account.
+5. Verify native connect, incoming text, and manual/fake fixed text send.
+6. Restart process and verify session reopen.
+7. Create first coordinated database backup.
 
-### Stage C — Multi-account test
+### Stage C — Allowlisted agent probe
 
-Fresh pair minimal dua accounts. Validasi isolation, concurrent traffic, and independent reconnect.
+1. Configure at least one DM and one group allowlist target.
+2. Verify missing/empty allowlist fails closed.
+3. Enable agent.
+4. Run one DM response.
+5. Run non-mentioned and mentioned group probes.
+6. Run `/prompt set`, `view`, and `clear` as owner.
+7. Verify non-owner denial.
+8. Restart and verify sender ref/prompt persistence.
+9. Replay a sanitized duplicate inbound event and inspect receipt count.
 
-### Stage D — Release candidate soak
+### Stage D — Production-host canary
 
-Jalankan full stack termasuk control panel, jobs, sub-agent, LLM sandbox, backup/restore, dan host restart.
+Deploy the same tested artifact using:
 
-### Stage E — New production deployment
+- separate service/process name;
+- separate port;
+- separate data root;
+- separate log destination;
+- dedicated WhatsApp account;
+- mandatory allowlist;
+- agent feature flag and one-step kill switch.
 
-Install ke data directory kosong, buat secrets baru, pair accounts baru, dan aktifkan feature flags bertahap.
+The old service remains running and untouched. Observe a bounded canary window and record:
 
-## Pre-release checklist
+- account state/reconnects;
+- inbound accepted/duplicate/rejected counts;
+- queue depth/oldest age;
+- LLM latency/error/timeout;
+- action succeeded/failed/unknown count;
+- DB busy/WAL size;
+- goroutine/heap trend.
 
-- [ ] Scope v1 frozen; deferred features terdokumentasi.
-- [ ] Source commit, module sums, toolchain, build image, dan checksums tercatat.
-- [ ] Unit, race, DB, native integration, security, and soak gates pass.
-- [ ] Dedicated test accounts lulus capability matrix.
-- [ ] Fresh data directory startup teruji.
-- [ ] Initial secret setup dan rotation workflow teruji.
-- [ ] Backup/restore and schema upgrade drill berhasil.
-- [ ] Resource limits and retention configured.
-- [ ] Logs, metrics, alerts, and operator access ready.
-- [ ] Test-recipient allowlist enabled selama verification.
-- [ ] Node/Python tidak diperlukan di release environment.
+Part 1 is complete only after Stage D probes and rollback test pass.
 
-## Deployment runbook
+## Part 1 pre-canary checklist
 
-1. Provision fresh data directory dan least-privilege service account.
-2. Install verified binary/artifact.
-3. Generate new control, webhook, direct-invoke, dan provider secrets.
-4. Start service dan verify liveness/readiness.
-5. Create tenant/account dari control panel/API.
-6. Pair WhatsApp account baru.
-7. Verify account status `open`.
-8. Run allowlisted DM/group/action/media probes.
-9. Enable agent, jobs, dan sub-agent features bertahap.
-10. Observe error, queue, DB, reconnect, and duplicate metrics.
-11. Take first consistent backup and test restore separately.
+- [ ] Scope/non-scope frozen.
+- [ ] Exact artifact and checksum recorded.
+- [ ] Format, vet, tests, race, module verify, vulnerability scan, and build pass.
+- [ ] Fake end-to-end/replay/crash-boundary tests pass.
+- [ ] Dedicated test account and allowlisted recipients/chats prepared.
+- [ ] Data root, port, process/service, and logs do not overlap old runtime.
+- [ ] LLM and application secrets supplied outside chat/log/CLI history.
+- [ ] Agent defaults disabled.
+- [ ] Kill switch tested.
+- [ ] Backup and rollback commands verified.
+- [ ] Health and account readiness observable.
+- [ ] Operator understands `unknown_outcome` and will not blindly replay it.
 
-## Release stop triggers
+## Canary stop triggers
 
-Stop rollout dan disable affected feature/account bila:
+Immediately disable the Go agent when:
 
-- cross-tenant state/path leak;
-- duplicate destructive action;
-- sustained incoming/outgoing loss;
-- database integrity failure;
-- uncontrolled reconnect/pair loop;
-- sub-agent completion loss;
-- auth/session corruption;
-- unbounded queue/disk/goroutine growth;
-- required security control unavailable.
+- any message reaches a non-allowlisted target;
+- old and new runtime touch the same WhatsApp account or data path;
+- duplicate visible response appears;
+- raw JID, phone, secret, prompt, or message body leaks to normal logs;
+- account enters uncontrolled reconnect/pair loop;
+- database integrity/migration fails;
+- queue, goroutine, WAL, disk, or memory growth is unbounded;
+- action remains ambiguous and is automatically resent;
+- kill switch or readiness monitoring is unavailable.
 
-Karena project baru, recovery dilakukan dengan memperbaiki atau menonaktifkan release baru dan memulihkan backup aplikasi baru. Tidak ada rollback ke database/auth/runtime project lama.
+## Canary rollback
 
-## Production acceptance
+1. Disable agent and stop only the Go canary process.
+2. Preserve both canary databases and logs for diagnosis.
+3. Record the last inbound ID, action ID, and receipt state without exposing raw address/content.
+4. Do not delete or mutate old runtime data.
+5. Logout only the dedicated test account if the native session itself must be invalidated.
+6. Restore canary database only into a separate verification directory.
 
-- Zero tenant isolation violation.
-- No unreconciled duplicate destructive action.
-- Incoming/outgoing reliability memenuhi SLO v1.
-- p95/p99 action dan agent latency memenuhi budget.
-- DB busy/WAL/disk growth stabil.
-- Scheduler lateness dalam tolerance.
-- Semua durable sub-agent completions delivered atau visible di retry/dead-letter.
-- Process dan host restart pulih tanpa manual DB repair.
-- Operators dapat backup, restore, inspect readiness, rotate secrets, dan disable fitur bermasalah.
+## Later-Part gates
+
+### Part 2
+
+- history/window/context golden tests;
+- history read/reset rejects a changed externally authorized Config version;
+- history append is idempotent by message/invocation identity and detects digest conflict;
+- batching/debounce with fake clock;
+- network partition, replay, process kill, and recovery;
+- backup/restore/retention;
+- concurrent-chat load.
+
+### Part 3
+
+- typed tool schema and permission matrix;
+- live role refresh;
+- destructive-action unknown outcomes;
+- prompt-injection attempts cannot gain authority.
+
+### Part 4
+
+- MIME/content mismatch, decompression, size/pixel limits;
+- SSRF/DNS/redirect policy;
+- path traversal/symlink/reparse escape;
+- real-client image/media matrix.
+
+### Part 5
+
+- multiple real account isolation;
+- noisy-neighbor budgets;
+- control API/browser auth, CSRF, rate limiting, and audit.
+
+### Parts 6–8
+
+- scheduler lease/timezone/restart tests;
+- direct invoke auth and live context refresh;
+- sub-agent callback/file/delivery state fault injection;
+- advanced feature capability and compatibility matrix.
+
+### Part 9 stable release
+
+- full security audit;
+- reproducible target artifacts/checksums;
+- fresh install, upgrade, backup, restore, and rollback drills;
+- 24+ hour soak;
+- bounded per-tenant resource growth;
+- operator runbook, alerting, and stable release sign-off.
+
+## Reporting rule
+
+Every status report states exactly which level passed:
+
+- local tests/build;
+- fake integration;
+- real-device smoke;
+- production-host canary;
+- stable release.
+
+Never infer a higher level from a lower one.

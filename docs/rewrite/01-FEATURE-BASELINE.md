@@ -1,198 +1,217 @@
 # Baseline Fitur
 
-Dokumen ini menginventaris fitur project referensi. Implementasi baru tidak wajib menyalin wire shape, schema database, internal IDs, atau struktur process lama.
+Dokumen ini memetakan fitur project referensi ke Part rewrite. Implementasi baru mempertahankan perilaku yang dipilih, bukan struktur, protocol, storage, atau auth state lama.
 
 ## Sumber referensi
 
-| Area | Sumber |
+| Area | Lokasi lama |
 |---|---|
-| Produk dan operasi | `../wazzapagents/wazzapagent/README.md:7-203` |
-| Event/action lama | `../wazzapagents/wazzapagent/src/account/actionDispatcher.ts:435-957` |
-| Message normalization | `../wazzapagents/wazzapagent/src/wa/inbound.ts:264-609` |
-| Account lifecycle | `../wazzapagents/wazzapagent/src/account/accountCatalog.ts:187-391` |
-| Commands | `../wazzapagents/wazzapagent/src/wa/commands/` |
-| Agent behavior | `../wazzapagents/wazzapagent/python/bridge/agent/batch_processor.py:276-1300` |
-| Control panel | `../wazzapagents/wazzapagent/src/controlPanel/server.ts:594-1517` |
-| Existing tests | `../wazzapagents/wazzapagent/tests/node`, `../wazzapagents/wazzapagent/python/tests` |
+| Startup dan account | `../wazzapagents/wazzapagent/src/index.ts`, `src/account` |
+| WhatsApp inbound/outbound | `../wazzapagents/wazzapagent/src/wa` |
+| Command | `../wazzapagents/wazzapagent/src/wa/command` |
+| Control panel | `../wazzapagents/wazzapagent/src/controlPanel` |
+| Agent/history/LLM | `../wazzapagents/wazzapagent/python/bridge` |
+| Existing behavior tests | `../wazzapagents/wazzapagent/tests/node`, `python/tests` |
 
-## Prioritas fitur
+Status:
 
-### P0 — Runtime inti
+- `part-1`: wajib untuk barebone canary hari ini;
+- `part-N`: direncanakan pada Part tersebut;
+- `rejected`: sengaja tidak dipertahankan;
+- `reference-only`: hanya sumber fixture/behavior comparison.
 
-- Fresh QR/pairing-code login dan persistent native session.
-- Reconnect, logout, device removal, graceful shutdown.
-- Multi-account dengan stable `TenantID` dan isolated state.
-- Incoming DM/group messages dan outgoing text.
-- Structured logging, liveness, readiness, config validation.
-- SQLite schema baru dan repositories baru.
+## Part 1 profile
 
-### P1 — Message dan action inti
+Part 1 hanya membuktikan text vertical slice:
 
-- Reply/quoted message.
-- Mentions, tag-all detection, LID/phone JID mapping.
-- Image, video, audio, document, dan sticker send/download.
-- Reactions, delete message, mark read, presence.
-- Group metadata, admin/superadmin roles, kick member.
-- Per-chat serialization dan idempotent action handling.
+```text
+WhatsApp text -> senderRef -> per-chat prompt -> text LLM -> WhatsApp text
+```
 
-### P2 — Agent
+Part 1 bukan stable v1.0 dan tidak menggantikan service lama. Label artifact/deployment adalah `v0.1-canary`.
 
-- Per-chat history dan context formatting.
-- Debounce default 5 detik dan burst cap default 20 detik.
-- Stale batch sebagai context-only.
-- LLM1 routing: respond, react, atau sticker.
-- LLM2 tools/actions, primary/fallback provider, retries, multimodal fallback.
-- Permission, activation, mute gate, idle trigger, reply dedup.
-- Durable action receipts dan history finalization.
+## Runtime dan account
 
-### P3 — Product features
+| Fitur | Part | Catatan |
+|---|---:|---|
+| Typed config, logging, health, graceful shutdown | 0/1 | Skeleton Part 0, production use Part 1. |
+| Fresh QR atau pairing-code login | 1 | Minimal satu flow wajib lulus real device. |
+| Persistent native session | 1 | Reconnect setelah process restart. |
+| Network-loss reconnect hardening | 2 | Part 1 hanya bounded reconnect minimum. |
+| Logout dan device removal operations | 5 | Kill switch Part 1 cukup stop/disable canary. |
+| One active account surface | 1 | Dedicated test account. |
+| Explicit `TenantID` everywhere | 1 | Wajib sejak schema/contract pertama. |
+| Multiple active accounts | 5 | Bukan alasan memakai globals sekarang. |
+| Control panel | 5 | Setelah application API stabil. |
+| Node/Python sidecar | rejected | Single Go binary. |
+| Import Baileys auth/data/config | rejected | Fresh state only. |
 
-- Settings, prompt, mode, trigger, model, memories.
-- Activation codes dan bot config.
-- Slash commands dari 41 source files lama; daftar final ditentukan dari command registry baru.
-- Sticker catalog dan conversion.
-- Quiz, buttons, carousel, copy-code, Lottie, dan HTML rendering bila native library mendukung.
-- Broadcast dan announcement.
+## Message dan identity
 
-### P4 — Background workflows
+| Fitur | Part | Catatan |
+|---|---:|---|
+| Incoming/outgoing text | 1 | DM dan group mention yang allowlisted. |
+| Ignore self/status/duplicate event | 1 | Single deterministic inbound pipeline. |
+| Opaque stable senderRef | 1 | Per tenant/chat/participant, durable, collision-safe. |
+| Raw JID hidden from model/log | 1 | JID hanya di adapter/mapping store. |
+| Persistent internal message ID | 1 | Dibutuhkan inbox/action causation. |
+| Conversation history | 2 | Tidak masuk Part 1 model context. |
+| Quoted-message lookup/reply | 2 | Stable mapping and hydration. |
+| Replied-to-bot trigger | 2 | Part 1 group trigger hanya mention. |
+| Batching/debounce/burst | 2 | Part 1 proses satu inbound turn. |
+| LID/phone mapping hardening | 4 | Minimum mapping boleh muncul di adapter Part 1. |
+| View-once/ephemeral/edited wrappers | 8 | Capability and privacy review required. |
 
-- One-shot scheduled tasks.
-- Daily tasks dengan timezone eksplisit.
-- Direct invoke API yang fail-closed.
-- Sub-agent submit, progress, steering, resumable upload, webhook, durable completion, output delivery, retry/dead-letter.
+## Prompt, agent, dan commands
 
-### P5 — Control panel dan operasi
+| Fitur | Part | Catatan |
+|---|---:|---|
+| Chat-scoped `Agent` aggregate | 1 | One live object per tenant/account/chat key. |
+| Lazy bounded `AgentRegistry` | 1 | Coalesced construction, pinning, idle eviction. |
+| `Agent.Invoke()` façade | 1 | Text-only Part 1, idempotent durable turn plan and dispatcher internally. |
+| Versioned `Agent.Config()` | 1 | Durable refresh, defensive snapshot, expected-version CAS mutation. |
+| Base system prompt | 1 | Trusted message terpisah dari user text. |
+| Per-chat prompt persistence | 1 | Stored within Agent Config; size bounded. |
+| `/prompt view|set|clear` | 1 | Owner authorization outside Agent method. |
+| Text-only OpenAI-compatible LLM | 1 | Single provider/model, non-streaming. |
+| Plain text response | 1 | Output bounded dan validated. |
+| `/help`, `/info`, `/reset` | 2 | Added after history/status contracts exist. |
+| `Agent.History().List/Append/Reset/Trim` | 2 | Durable history and golden serialization. |
+| LLM tools/typed actions | 3 | Model cannot run generic commands. |
+| Permission roles and command registry | 3 | Part 1 has only fixed owner rule for `/prompt`. |
+| Provider fallback/model selection | 3 | Part 1 intentionally one provider/model. |
+| LLM1 router | rejected | Deterministic application trigger. |
+| Auto/prefix/hybrid/idle routing | 3 or later | Only if measurement justifies them. |
+| Durable memory | later | Separate from rolling history and prompt. |
 
-- Auth dan rate limiting.
-- Account pairing/reconnect/logout.
-- Settings, model, memories, activation, bot config, sticker management.
-- Environment/config editor dengan secret masking.
-- Audit log, health, metrics, backup, restore, dan release status.
+## WhatsApp actions dan media
 
-## Canonical action model baru
+| Fitur | Part | Catatan |
+|---|---:|---|
+| `SendText` | 1 | Only model effect in Part 1. |
+| Reaction/delete/read/presence/chat context | 3 | Typed and permission checked. |
+| Group admin/kick/moderation | 8 | Destructive capability gate. |
+| Image receive/send/vision | 4 | Lazy materialization and strict limits. |
+| Document/audio/video | 4+ | One capability at a time. |
+| Sticker/buttons/carousel/quiz/copy-code | 8 | Capability-aware fallbacks. |
+| Lottie/HTML rendering | 8 | Security review mandatory. |
+| Generic model-driven `run_command` | rejected | Model gets explicit typed capabilities only. |
 
-Gunakan typed domain requests, bukan frame Node/Python lama:
+## Background workflows dan operations
 
-- `SendMessage`
-- `ReactMessage`
-- `DeleteMessage`
-- `KickMembers`
-- `MarkRead`
-- `SetPresence`
-- `RunCommand`
-- `GetChatContext`
-- `SendSticker`
-- `SendQuiz`
-- `SendButtons`
-- `SendCarousel`
-- `SendCopyCode`
-- `RenderHTML`
-- `DownloadMedia`
+| Fitur | Part | Catatan |
+|---|---:|---|
+| Inbox/outbound intent/receipt minimum | 1 | Prevent silent drop and unsafe replay. |
+| Full history/outbox reconciliation/retention | 2 | Includes crash/network fault matrix. |
+| Multi-account resource budgets | 5 | Per-tenant queue/semaphore/storage. |
+| Scheduler/daily task | 6 | Transactional lease and readiness gate. |
+| Direct invoke | 6 | Authenticated limited principal. |
+| Sub-agent | 7 | Durable job and content-addressed files. |
+| Advanced WhatsApp | 8 | Per-capability tests. |
+| Stable release hardening | 9 | Soak, scale, restore, artifacts, runbooks. |
+| Writable-Git self update | rejected | Deploy reproducible artifacts. |
 
-Setiap durable action memiliki tenant-scoped idempotency key, normalized result, stable error code, dan explicit timeout. Fire-and-forget hanya dipakai bila duplicate/loss aman.
+## Canonical Part 1 models
 
-## Incoming message model baru
+### Inbound message
 
-Minimal field:
+Minimum fields:
 
-- tenant/account identity;
-- chat/message identity dan timestamp;
-- private/group type dan chat name;
-- sender JID/ref/name/roles;
-- bot roles dan `fromMe`;
-- normalized text/message type;
-- quoted message;
-- mentions/tag-all/replied-to-bot;
-- attachments dan lazy materialization state;
-- location;
-- group event;
-- command parsing result.
+- `TenantID`, `ChatID`, `MessageID`, `ParticipantID`;
+- provider dedup identity stored only in adapter/store mapping;
+- private/group kind;
+- normalized text;
+- `MentionsBot` for group trigger;
+- sender display name and `SenderRef`;
+- verified `FromMe` and configured-owner match;
+- occurred/received timestamps;
+- structured provenance.
 
-Model tidak perlu mempertahankan six-digit `contextMsgId`. Pilih stable opaque ID dengan retention dan lookup semantics yang jelas.
+No raw protobuf, JID, provider DTO, local path, media bytes, quoted content, or role claimed by the model.
 
-## Native WhatsApp capability matrix
+### Agent
 
-Wajib diuji pada account baru:
+- key: `(TenantID, AccountID, ChatID)`;
+- obtained through lazy `AgentRegistry.AgentFor(...)`;
+- exposes `Key`, `Config`, and `Invoke` in Part 1;
+- adds `History` child capability in Part 2;
+- serializes invocation for its own chat while different Agents can run concurrently;
+- claims `(InvocationID, digest)`, reuses any stored response plan, and captures one refreshed immutable Config version only for new generation;
+- atomically stores response/action plan before calling a durable `ResponseDispatcher`; never calls Hypermeow directly;
+- performs domain validation but no actor authorization.
 
-- QR dan pairing number;
-- session reconnect setelah process/host restart;
-- private dan group text;
-- quoted/reply, mention, tag-all, reaction, delete;
-- image/video/audio/document/sticker;
-- view-once, ephemeral, edited, dan protocol wrappers;
-- LID/phone mapping dan participant roles;
-- kick member dan group metadata updates;
-- buttons, carousel, copy-code, quiz, Lottie;
-- reconnect setelah network loss, conflict, stream replacement, dan logout;
-- multiple accounts aktif bersamaan.
+Config stores credential-free `Model`, configurable base `Prompt`, optional durable per-chat `PromptOverride`, and immutable `Permission` policy reference/revision. `/prompt set|clear` changes only the override. External policy/application handlers refresh and authorize a snapshot before calling actor-free Config methods. A non-sensitive `ConfigChanged` notification is attempted only after durable compare-and-swap succeeds; notification loss never fails the committed mutation.
 
-Fitur native yang tidak didukung harus memiliki fallback atau dikeluarkan dari scope release secara eksplisit.
+### Text action
 
-## Agent semantics
+Part 1 has one action type:
 
-### Batching
+```text
+SendText {
+  ActionID, TenantID, ChatID,
+  CausationRef, CorrelationID,
+  IdempotencyKey, Deadline, Text
+}
+```
 
-- Messages serialized per chat; chat berbeda concurrent.
-- Debounce, burst limit, stale policy, dan cancellation memakai fake-clock tests.
-- Prefix message dapat membatalkan LLM1 yang sedang berjalan bila mode mengizinkan.
+The application creates IDs and idempotency key. The model returns text only and cannot choose tenant, chat, authority, or key.
 
-### LLM1
+### Sender ref
 
-- Primary/fallback provider.
-- Typed tool decision dan schema validation.
-- Endpoint kosong dapat memakai deterministic respond-default.
-- Timeout, retry, history limit, dan message truncation configurable.
+- scope: `(tenant_id, chat_id, participant_id)`;
+- unique display ref inside `(tenant_id, chat_id)`;
+- random and opaque rather than derived from phone/JID;
+- persisted before model invocation;
+- stable after process restart/backup restore;
+- never used as authorization evidence.
 
-### LLM2
+## Part 1 acceptance criteria
 
-- Primary/fallback dan bounded retry/backoff.
-- Typed tools dan result validator.
-- Vision input dengan text-only fallback.
-- Per-chat model override dan optional sub-agent tool.
-- Prompt ordering ditetapkan oleh golden tests baru.
+### Runtime
 
-### Jobs dan sub-agent
+- Invalid config fails before network startup.
+- Live/readiness and account readiness are distinct.
+- SIGTERM cancels workers and closes stores within timeout.
+- Dedicated account can pair and reconnect after process restart.
 
-- One-shot task tidak hilang saat shutdown.
-- Daily task menyimpan timezone dan next-fire semantics eksplisit.
-- Webhook completion diakui setelah durable storage.
-- Output delivery memakai per-part checkpoints agar restart tidak menggandakan attachment.
+### Message and senderRef
 
-## Data domain baru
+- Eligible allowlisted DM receives one text reply.
+- Allowlisted group mention receives one text reply.
+- Self/status/duplicate/non-trigger group events produce no reply.
+- Same participant keeps the same ref after restart.
+- Different tenant/chat scopes do not accidentally share mapping.
+- Model/log payload contains no raw JID/phone number.
 
-Schema v1 dirancang dari kebutuhan, bukan menyalin file database lama:
+### Prompt
 
-- tenants/accounts and device metadata;
-- chat settings and directory;
-- models/provider config;
-- activation and memories;
-- moderation;
-- stats;
-- stickers/media metadata;
-- scheduled/daily jobs;
-- action receipts/inbox/outbox;
-- sub-agent tasks/progress/outputs/delivery;
-- audit events;
-- `schema_migrations`.
+- Verified configured owner can set/view/clear prompt.
+- Non-owner receives deterministic denial and never reaches LLM.
+- Oversized/invalid prompt is rejected without mutation.
+- Prompt survives restart and is isolated per chat/tenant.
 
-## Control panel
+### Durability and concurrency
 
-Route baru boleh berbeda. Acceptance berdasarkan kemampuan:
+- Duplicate provider event produces at most one planned response.
+- Same idempotency key/fingerprint cannot send twice.
+- Same key with different fingerprint fails as conflict.
+- Ambiguous send outcome becomes `unknown_outcome` and is not auto-replayed.
+- Same chat serializes while different chats can progress concurrently.
+- Queue, LLM calls, timeouts, and response sizes are bounded.
 
-- secure login/token setup;
-- account lifecycle;
-- tenant-scoped settings and resources;
-- secret-safe config;
-- system health and logs;
-- sub-agent retry/dead-letter controls;
-- backup/restore and version visibility.
+### Canary
 
-## Baseline sign-off
+- Test account, data root, process/port, logs, and allowlist are isolated from the old service.
+- Agent is disabled until pair/connect/native send probes pass.
+- Kill switch and rollback are tested.
+- Deployment is reported as canary only.
 
-Baseline selesai bila:
+## Promotion rule
 
-- semua fitur di atas berstatus `required`, `deferred`, atau `rejected`;
-- setiap required feature memiliki acceptance criteria;
-- canonical Go domain types dan error codes disetujui;
-- native capability matrix memiliki test plan;
-- tidak ada requirement import atau compatibility dengan state lama.
+A feature moves earlier only when:
+
+1. Part 1 cannot work safely without it;
+2. its owner and interface are clear;
+3. it has acceptance and rollback tests;
+4. it does not expand the model's authority;
+5. it does not delay the barebone canary for convenience or polish.

@@ -2,77 +2,47 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
-	"os/signal"
-	"syscall"
+	"path/filepath"
+	"strconv"
+	"strings"
 
-	"github.com/mdp/qrterminal"
-	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
-	"github.com/polymorfa/hypermeow/types/events"
 	waLog "github.com/polymorfa/hypermeow/util/log"
-
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
-func eventHandler(evt any) {
-	switch v := evt.(type) {
-	case *events.Message:
-		fmt.Println("Received a message!", v.Message.GetConversation())
+const defaultBusyTimeoutMS = 5000
+
+func OpenDeviceStore(ctx context.Context, path string, logger waLog.Logger) (*sqlstore.Container, error) {
+	if strings.ContainsRune(path, '\x00') {
+		return nil, errors.New("device store path contains a null byte")
 	}
+	if strings.ContainsAny(path, "?#%") {
+		return nil, errors.New("device store path contains URI-reserved characters")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve device store path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
+		return nil, fmt.Errorf("create device store directory: %w", err)
+	}
+	container, err := sqlstore.New(ctx, "sqlite", deviceStoreDSN(absolute, defaultBusyTimeoutMS), logger)
+	if err != nil {
+		return nil, fmt.Errorf("open Hypermeow device store: %w", err)
+	}
+	return container, nil
 }
 
-func main() {
-	// |------------------------------------------------------------------------------------------------------|
-	// | NOTE: You must also import the appropriate DB connector, e.g. github.com/mattn/go-sqlite3 for SQLite |
-	// |------------------------------------------------------------------------------------------------------|
-
-	dbLog := waLog.Stdout("Database", "DEBUG", true)
-	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:examplestore.db?_foreign_keys=on", dbLog)
-	if err != nil {
-		panic(err)
-	}
-	// If you want multiple sessions, remember their JIDs and use .GetDevice(jid) or .GetAllDevices() instead.
-	deviceStore, err := container.GetFirstDevice(ctx)
-	if err != nil {
-		panic(err)
-	}
-	clientLog := waLog.Stdout("Client", "DEBUG", true)
-	client := whatsmeow.NewClient(deviceStore, clientLog)
-	client.AddEventHandler(eventHandler)
-
-	if client.Store.ID == nil {
-		// No ID stored, new login
-		qrChan, _ := client.GetQRChannel(context.Background())
-		err = client.Connect()
-		if err != nil {
-			panic(err)
-		}
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				// Render the QR code here
-				// e.g. qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				// or just manually `echo 2@... | qrencode -t ansiutf8` in a terminal
-				fmt.Println("QR code:", evt.Code)
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-			} else {
-				fmt.Println("Login event:", evt.Event)
-			}
-		}
-	} else {
-		// Already logged in, just connect
-		err = client.Connect()
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	// Listen to Ctrl+C (you can also do something else that prevents the program from exiting)
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	<-c
-
-	client.Disconnect()
+func deviceStoreDSN(path string, busyTimeoutMS int) string {
+	query := make(url.Values)
+	query.Set("_foreign_keys", "on")
+	query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMS))
+	query.Set("_journal_mode", "WAL")
+	query.Set("_synchronous", "NORMAL")
+	return "file:" + filepath.ToSlash(path) + "?" + query.Encode()
 }
