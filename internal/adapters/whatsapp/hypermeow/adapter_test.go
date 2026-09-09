@@ -80,6 +80,26 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 	}
 }
 
+func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	chat := types.NewJID("120363000000000009", types.GroupServer)
+	sender := types.NewJID("15550000003", types.DefaultUserServer)
+	adapter.allowlist[chat.String()] = struct{}{}
+	event := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
+			ID:            types.MessageID("reply-message"), Timestamp: time.Now().UTC(),
+		},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("reply"), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("quoted-provider-id")},
+		}},
+	}
+	candidate, ok := adapter.normalizeMessage(event)
+	if !ok || candidate.ProviderQuotedMessageID != "quoted-provider-id" {
+		t.Fatalf("quoted candidate = %#v, ok=%v", candidate, ok)
+	}
+}
+
 func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	info := types.MessageInfo{

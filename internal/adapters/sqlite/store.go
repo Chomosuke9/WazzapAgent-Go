@@ -49,11 +49,13 @@ type ConfigStore struct{ *Store }
 type TurnStore struct{ *Store }
 type ActionStore struct{ *Store }
 type InboundStore struct{ *Store }
+type HistoryStore struct{ *Store }
 
 func (store *Store) Configs() *ConfigStore  { return &ConfigStore{Store: store} }
 func (store *Store) Turns() *TurnStore      { return &TurnStore{Store: store} }
 func (store *Store) Actions() *ActionStore  { return &ActionStore{Store: store} }
 func (store *Store) Inbound() *InboundStore { return &InboundStore{Store: store} }
+func (store *Store) History() *HistoryStore { return &HistoryStore{Store: store} }
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	return OpenWithOptions(ctx, path, Options{})
@@ -72,7 +74,7 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		return nil, agent.NewError(agent.ErrorStorageFailure, "open application store", err)
 	}
 	// A single writer connection makes transaction ordering deterministic for
-	// the embedded Part 1 deployment. WAL still permits the separate Hypermeow
+	// the embedded conversation deployment. WAL still permits the separate Hypermeow
 	// database and external backup/checkpoint operations to progress safely.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)

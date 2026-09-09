@@ -52,7 +52,7 @@ type healthResponse struct {
 	ErrorCode    string `json:"error_code,omitempty"`
 }
 
-type part1Runtime struct {
+type conversationRuntime struct {
 	store           *appsqlite.Store
 	registry        *agent.Registry
 	account         *account.Runtime
@@ -76,12 +76,12 @@ func (application *Application) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var runtime *part1Runtime
+	var runtime *conversationRuntime
 	var err error
 	if application.config.WhatsAppEnabled() {
-		runtime, err = application.composePart1(runCtx)
+		runtime, err = application.composeRuntime(runCtx)
 		if err != nil {
-			return fmt.Errorf("compose Part 1 runtime: %w", err)
+			return fmt.Errorf("compose conversation runtime: %w", err)
 		}
 		application.accountState.Store(runtime.account)
 		application.adapterState.Store(runtime.adapter)
@@ -123,7 +123,7 @@ func (application *Application) Run(ctx context.Context) error {
 	case err := <-runtimeErrors:
 		runtimeFinished = true
 		if err != nil {
-			result = fmt.Errorf("run Part 1 runtime: %w", err)
+			result = fmt.Errorf("run conversation runtime: %w", err)
 		}
 	case <-ctx.Done():
 	}
@@ -143,11 +143,11 @@ func (application *Application) Run(ctx context.Context) error {
 			select {
 			case err := <-runtimeErrors:
 				if err != nil && result == nil {
-					result = fmt.Errorf("stop Part 1 runtime: %w", err)
+					result = fmt.Errorf("stop conversation runtime: %w", err)
 				}
 			case <-shutdownCtx.Done():
 				if result == nil {
-					result = fmt.Errorf("stop Part 1 runtime: %w", shutdownCtx.Err())
+					result = fmt.Errorf("stop conversation runtime: %w", shutdownCtx.Err())
 				}
 			}
 		}
@@ -161,7 +161,7 @@ func (application *Application) Run(ctx context.Context) error {
 	return result
 }
 
-func (application *Application) composePart1(ctx context.Context) (_ *part1Runtime, resultErr error) {
+func (application *Application) composeRuntime(ctx context.Context) (_ *conversationRuntime, resultErr error) {
 	if err := prepareDataDir(application.config.TenantDataDir()); err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "prepare tenant data directory", err)
 	}
@@ -169,6 +169,10 @@ func (application *Application) composePart1(ctx context.Context) (_ *part1Runti
 		GenerationLeaseTTL: application.config.LLMTimeout() + generationLeaseMargin,
 		ActionLeaseTTL:     application.config.SendTimeout() + actionLeaseMargin,
 	})
+	if err != nil {
+		return nil, err
+	}
+	contextBuilder, err := agent.NewDeterministicContextBuilder(application.config.MaxContextBytes())
 	if err != nil {
 		return nil, err
 	}
@@ -262,13 +266,16 @@ func (application *Application) composePart1(ctx context.Context) (_ *part1Runti
 	}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
-			Defaults:    defaults,
-			ConfigStore: store.Configs(),
-			Turns:       store.Turns(),
-			Model:       model,
-			Responses:   dispatcher,
-			Events:      events,
-			Clock:       agent.SystemClock{},
+			Defaults:      defaults,
+			ConfigStore:   store.Configs(),
+			HistoryStore:  store.History(),
+			Turns:         store.Turns(),
+			Context:       contextBuilder,
+			HistoryWindow: application.config.HistoryWindow(),
+			Model:         model,
+			Responses:     dispatcher,
+			Events:        events,
+			Clock:         agent.SystemClock{},
 		})
 	})
 	registry, err = agent.NewRegistry(ctx, factory, agent.RegistryLimits{
@@ -284,7 +291,14 @@ func (application *Application) composePart1(ctx context.Context) (_ *part1Runti
 	if err != nil {
 		return nil, err
 	}
-	inboundHandler, err := inbound.NewHandler(store.Inbound(), registry, gate, commandResponses, application.metrics)
+	inboundHandler, err := inbound.NewHandlerWithBatching(
+		store.Inbound(), registry, gate, commandResponses, application.metrics,
+		inbound.BatchOptions{
+			Debounce: application.config.MessageDebounce(),
+			BurstCap: application.config.MessageBurstCap(),
+			Clock:    agent.SystemClock{},
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -297,9 +311,13 @@ func (application *Application) composePart1(ctx context.Context) (_ *part1Runti
 	if err != nil {
 		return nil, err
 	}
-	maintenanceWorker, err := maintenance.NewWorker(
+	maintenanceWorker, err := maintenance.NewWorkerWithHistory(
 		application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval,
 		terminalContentAge, terminalRetentionAge, 500,
+		agent.RetentionPolicy{
+			KeepLatest: application.config.HistoryKeepLatest(),
+			MaxAge:     application.config.HistoryMaxAge(),
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -314,13 +332,13 @@ func (application *Application) composePart1(ctx context.Context) (_ *part1Runti
 		return nil, err
 	}
 	adapterOwned = false
-	return &part1Runtime{
+	return &conversationRuntime{
 		store: store, registry: registry, account: accountRuntime, adapter: waAdapter,
 		recovery: recovery, inboundRecovery: inboundRecovery, maintenance: maintenanceWorker,
 	}, nil
 }
 
-func (runtime *part1Runtime) run(ctx context.Context) error {
+func (runtime *conversationRuntime) run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runners := []func(context.Context) error{
@@ -342,7 +360,7 @@ func (runtime *part1Runtime) run(ctx context.Context) error {
 	return joined
 }
 
-func (runtime *part1Runtime) close(ctx context.Context) error {
+func (runtime *conversationRuntime) close(ctx context.Context) error {
 	var joined error
 	if runtime.adapter != nil {
 		joined = errors.Join(joined, runtime.adapter.Stop(ctx))
@@ -405,6 +423,12 @@ wazzap_inbound_claimed_total %d
 wazzap_inbound_duplicate_total %d
 # TYPE wazzap_inbound_ignored_total counter
 wazzap_inbound_ignored_total %d
+# TYPE wazzap_inbound_batches_total counter
+wazzap_inbound_batches_total %d
+# TYPE wazzap_inbound_batched_messages_total counter
+wazzap_inbound_batched_messages_total %d
+# TYPE wazzap_history_resets_total counter
+wazzap_history_resets_total %d
 # TYPE wazzap_model_calls_total counter
 wazzap_model_calls_total %d
 # TYPE wazzap_model_failures_total counter
@@ -432,6 +456,7 @@ wazzap_inbound_queue_capacity %d
 # TYPE wazzap_process_goroutines gauge
 wazzap_process_goroutines %d
 `, snapshot.InboundClaimed, snapshot.InboundDuplicates, snapshot.InboundIgnored,
+			snapshot.InboundBatches, snapshot.InboundBatchedMessages, snapshot.HistoryResets,
 			snapshot.ModelCalls, snapshot.ModelFailures, snapshot.ModelTimeouts,
 			float64(snapshot.ModelDurationNS)/float64(time.Second), snapshot.DeliveryDispatch,
 			snapshot.DeliveryPending, snapshot.DeliverySucceeded, snapshot.DeliveryFailed,

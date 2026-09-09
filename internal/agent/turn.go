@@ -39,9 +39,10 @@ type ClaimTurnRequest struct {
 }
 
 type TurnClaim struct {
-	State TurnState
-	Lease TurnLease
-	Plan  *StoredPlan
+	State     TurnState
+	Lease     TurnLease
+	MessageID identity.MessageID
+	Plan      *StoredPlan
 }
 
 type CommitPlanRequest struct {
@@ -72,12 +73,14 @@ type StoredPlan struct {
 	ResponseID    identity.MessageID
 	ActionID      identity.ActionID
 	Text          string
+	CreatedAt     time.Time
 	Dispatch      DispatchRef
 }
 
 type TurnRecord struct {
 	Key          Key
 	InvocationID identity.InvocationID
+	MessageID    identity.MessageID
 	Digest       InvocationDigest
 	State        TurnState
 	Plan         *StoredPlan

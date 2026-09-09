@@ -16,7 +16,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-func TestGenerateKeepsSafetyPromptMetadataAndUserContentSeparate(t *testing.T) {
+func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	secret := "test-secret-never-log"
 	requests := make(chan completionRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -41,7 +41,10 @@ func TestGenerateKeepsSafetyPromptMetadataAndUserContentSeparate(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 	request := modelRequest(t, providerID)
-	request.Override = &agent.PromptOverride{Mode: agent.PromptAppend, Text: "chat override"}
+	request.Messages = append(request.Messages[:1],
+		agent.ModelMessage{Role: agent.ModelSystem, Provenance: agent.ProvenancePromptOverride, Content: "chat override"},
+		request.Messages[1],
+	)
 	result, err := client.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -50,22 +53,21 @@ func TestGenerateKeepsSafetyPromptMetadataAndUserContentSeparate(t *testing.T) {
 		t.Fatalf("result = %q", result.Text)
 	}
 	encoded := <-requests
-	if encoded.Stream || encoded.MaxTokens != request.Model.MaxOutputTokens || len(encoded.Messages) != 5 {
+	if encoded.Stream || encoded.MaxTokens != request.Model.MaxOutputTokens || len(encoded.Messages) != 4 {
 		t.Fatalf("request envelope = %#v", encoded)
 	}
-	wantRoles := []string{"system", "system", "system", "system", "user"}
+	wantRoles := []string{"system", "system", "system", "user"}
 	for index, role := range wantRoles {
 		if encoded.Messages[index].Role != role {
 			t.Fatalf("message %d role = %q, want %q", index, encoded.Messages[index].Role, role)
 		}
 	}
-	if encoded.Messages[0].Content != "NON OVERRIDABLE" || encoded.Messages[1].Content != request.Prompt ||
-		encoded.Messages[2].Content != request.Override.Text || encoded.Messages[4].Content != "hello from user" {
+	if encoded.Messages[0].Content != "NON OVERRIDABLE" || encoded.Messages[1].Content != "base prompt" ||
+		encoded.Messages[2].Content != "chat override" || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
-	metadata := encoded.Messages[3].Content
-	if !strings.Contains(metadata, request.Sender.Ref.String()) || strings.Contains(metadata, request.Sender.ParticipantID.String()) {
-		t.Fatalf("trusted metadata leaked entity ID or omitted sender ref: %q", metadata)
+	if !strings.Contains(encoded.Messages[3].Content, "sender_ref") || strings.Contains(encoded.Messages[3].Content, "participant") {
+		t.Fatalf("user envelope leaked internal identity or omitted sender ref: %q", encoded.Messages[3].Content)
 	}
 }
 
@@ -81,16 +83,20 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
 	request := modelRequest(t, providerID)
-	request.Override = &agent.PromptOverride{Mode: agent.PromptReplace, Text: "replacement"}
+	current := request.Messages[len(request.Messages)-1]
+	request.Messages = []agent.ModelMessage{
+		{Role: agent.ModelSystem, Provenance: agent.ProvenancePromptOverride, Content: "replacement"},
+		current,
+	}
 	if _, err := client.Generate(context.Background(), request); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	encoded := <-requestChannel
-	if len(encoded.Messages) != 4 || encoded.Messages[0].Content != "SAFETY" || encoded.Messages[1].Content != "replacement" {
+	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "SAFETY" || encoded.Messages[1].Content != "replacement" {
 		t.Fatalf("replace message sequence = %#v", encoded.Messages)
 	}
 	for _, message := range encoded.Messages {
-		if message.Content == request.Prompt {
+		if message.Content == "base prompt" {
 			t.Fatal("replace mode retained configurable base prompt")
 		}
 	}
@@ -283,7 +289,6 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 	accountID, _ := identity.NewAccountID()
 	chatID, _ := identity.NewChatID()
 	invocationID, _ := identity.NewInvocationID()
-	participantID, _ := identity.NewParticipantID()
 	senderRef, _ := identity.NewSenderRef()
 	capabilities, _ := agent.NewCapabilitySet()
 	return agent.ModelRequest{
@@ -291,9 +296,11 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 		InvocationID:  invocationID,
 		ConfigVersion: 1,
 		Model:         agent.ModelConfig{ProviderID: providerID, Model: "test-model", MaxOutputTokens: 128},
-		Prompt:        "base prompt",
-		Sender:        &agent.SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Test User"},
-		Input:         []agent.ContentPart{agent.TextPart{Text: "hello from user"}},
-		Capabilities:  capabilities,
+		Messages: []agent.ModelMessage{
+			{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "base prompt"},
+			{Role: agent.ModelUser, Provenance: agent.ProvenanceCurrentUser,
+				Content: "Untrusted chat data (JSON):\n{\"sender_ref\":\"" + senderRef.String() + "\",\"text\":\"hello from user\"}"},
+		},
+		Capabilities: capabilities,
 	}
 }

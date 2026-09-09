@@ -22,20 +22,21 @@ const (
 // IncomingCandidate is the narrow trusted boundary between a provider adapter
 // and durable intake. Provider addresses must not be logged or sent to a model.
 type IncomingCandidate struct {
-	TenantID              identity.TenantID
-	AccountID             identity.AccountID
-	ProviderMessageID     string
-	ProviderChatAddress   string
-	ProviderSenderAddress string
-	SenderName            string
-	ChatKind              ChatKind
-	Text                  string
-	MentionsBot           bool
-	FromMe                bool
-	Owner                 bool
-	Allowlisted           bool
-	OccurredAt            time.Time
-	ReceivedAt            time.Time
+	TenantID                identity.TenantID
+	AccountID               identity.AccountID
+	ProviderMessageID       string
+	ProviderQuotedMessageID string
+	ProviderChatAddress     string
+	ProviderSenderAddress   string
+	SenderName              string
+	ChatKind                ChatKind
+	Text                    string
+	MentionsBot             bool
+	FromMe                  bool
+	Owner                   bool
+	Allowlisted             bool
+	OccurredAt              time.Time
+	ReceivedAt              time.Time
 }
 
 func (candidate IncomingCandidate) Validate() error {
@@ -44,6 +45,9 @@ func (candidate IncomingCandidate) Validate() error {
 	}
 	if strings.TrimSpace(candidate.ProviderMessageID) == "" || len(candidate.ProviderMessageID) > 512 {
 		return fmt.Errorf("provider message ID is invalid")
+	}
+	if len(candidate.ProviderQuotedMessageID) > 512 {
+		return fmt.Errorf("provider quoted message ID is invalid")
 	}
 	if strings.TrimSpace(candidate.ProviderChatAddress) == "" || len(candidate.ProviderChatAddress) > 512 {
 		return fmt.Errorf("provider chat address is invalid")
@@ -66,6 +70,20 @@ func (candidate IncomingCandidate) Validate() error {
 	return nil
 }
 
+type QuoteRole uint8
+
+const (
+	QuoteUser QuoteRole = iota + 1
+	QuoteAssistant
+)
+
+type QuotedMessage struct {
+	ID        identity.MessageID
+	Role      QuoteRole
+	SenderRef identity.SenderRef
+	Text      string
+}
+
 type IncomingMessage struct {
 	ID           identity.MessageID
 	InvocationID identity.InvocationID
@@ -78,6 +96,8 @@ type IncomingMessage struct {
 	SenderName   string
 	ChatKind     ChatKind
 	Text         string
+	Quote        *QuotedMessage
+	RepliedToBot bool
 	MentionsBot  bool
 	FromMe       bool
 	Owner        bool
@@ -100,6 +120,21 @@ func (message IncomingMessage) Validate() error {
 	}
 	if !utf8.ValidString(message.SenderName) || len(message.SenderName) > 512 {
 		return fmt.Errorf("sender name is invalid")
+	}
+	if message.Quote != nil {
+		if message.Quote.ID.IsZero() || (message.Quote.Role != QuoteUser && message.Quote.Role != QuoteAssistant) ||
+			message.Quote.Text == "" || !utf8.ValidString(message.Quote.Text) || len(message.Quote.Text) > MaxTextBytes {
+			return fmt.Errorf("quoted message is invalid")
+		}
+		if message.Quote.Role == QuoteUser && message.Quote.SenderRef.IsZero() {
+			return fmt.Errorf("quoted user sender ref is required")
+		}
+		if message.Quote.Role == QuoteAssistant && !message.Quote.SenderRef.IsZero() {
+			return fmt.Errorf("quoted assistant must not have a sender ref")
+		}
+	}
+	if message.RepliedToBot != (message.Quote != nil && message.Quote.Role == QuoteAssistant) {
+		return fmt.Errorf("replied-to-bot marker does not match quote")
 	}
 	if message.OccurredAt.IsZero() || message.ReceivedAt.IsZero() {
 		return fmt.Errorf("timestamps are required")

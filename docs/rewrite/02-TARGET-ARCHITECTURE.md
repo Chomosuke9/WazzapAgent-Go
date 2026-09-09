@@ -450,6 +450,8 @@ agent_configs
 inbound_events
 outbound_actions
 action_receipts
+history_entries
+history_resets
 ```
 
 Rules:

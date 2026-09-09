@@ -129,7 +129,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 			return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", sendErr)
 		}
 		// Once native send has begun, an unclassified provider failure is also
-		// ambiguous. Part 1 never guesses by automatically sending it again.
+		// ambiguous. The conversation core never guesses by sending it again.
 		_ = dispatcher.markUnknown(action, code)
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", sendErr)
 	}

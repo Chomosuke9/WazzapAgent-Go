@@ -264,6 +264,24 @@ Part 1 is complete only after Stage D probes and rollback test pass.
 - Real Windows process dengan kedua feature flag disabled: `/health/live`, `/health/ready`, dan `/metrics` pass.
 - Tidak ada real-device pairing/message atau production-host deployment pada evidence ini.
 
+### Current Part 2 local evidence — 2026-09-09
+
+- Pada Go 1.27.0 Windows amd64, `gofmt -l .`, `go mod tidy -diff`, `go mod verify`, `go vet ./...`, `go test -count=1 ./...`, `go test -race -count=1 ./...`, dan `go build ./cmd/...` lulus.
+- Stress regression batching/order/retry dijalankan 50 kali per package dan lulus. Store tests juga mencakup migration 1 ke 2, durable history reopen, corrupted-history rejection, reset race, active-generation recovery, exact plan/history timestamp replay, action unknown outcome, serta backup/verify/restore ke directory baru.
+- `CGO_ENABLED=0` build lulus untuk Windows amd64, Linux amd64, Linux arm64, dan Android arm64. Artifact tersebut hanya quality-gate sementara, bukan artifact canary yang ditandatangani atau dideploy.
+- `govulncheck@v1.8.0` dengan database 2026-09-02 melaporkan zero reachable vulnerabilities; satu advisory module-only tidak berada pada package/call graph yang dipakai.
+- Belum ada real-device Part 2 matrix, forced OS process-kill, observasi network-loss nyata, restore drill dengan Hypermeow session, production-host canary, atau soak. Karena itu evidence ini hanya membuktikan local implementation/fake integration.
+
+## Part 2 pre-canary checklist
+
+- [x] Durable history/context, batching, quote, reply trigger, reset, retention, metrics, dan backup/restore implementation tersedia.
+- [x] Format, tidy/verify, vet, full tests, race detector, host build, vulnerability scan, serta empat cross-build target lulus lokal.
+- [x] Schema upgrade dan invocation digest kompatibilitas Part 1 diuji.
+- [x] Generation/action lease recovery, replay, unknown-outcome, reset race, dan same-chat ordering memiliki deterministic regression tests.
+- [ ] Exact canary artifact/commit dan checksum dicatat setelah konfigurasi operator siap.
+- [ ] Dedicated device/account, isolated data root/port/process/log, owner, serta allowlist disiapkan.
+- [ ] Real-device matrix, forced kill/network-loss observation, backup/restore drill, dan rollback lulus.
+
 ## Part 1 pre-canary checklist
 
 - [x] Scope/non-scope frozen.

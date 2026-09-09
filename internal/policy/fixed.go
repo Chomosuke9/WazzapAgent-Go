@@ -18,7 +18,7 @@ type ChatAccess interface {
 	IsChatAllowlisted(context.Context, agent.Key) (bool, error)
 }
 
-// FixedGate is the deliberately narrow Part 1 external policy. It never
+// FixedGate is the deliberately narrow text-conversation policy. It never
 // delegates authority to senderRef, prompt content, or model output.
 type FixedGate struct {
 	policyID identity.PolicyID
@@ -42,7 +42,7 @@ func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
 func (gate *FixedGate) AuthorizeInvocation(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
 	if !gate.enabled.Load() || !message.Allowlisted || message.FromMe || message.ChatKind == conversation.ChatStatus ||
-		(message.ChatKind == conversation.ChatGroup && !message.MentionsBot) {
+		(message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", fmt.Errorf("message is not eligible"))
 	}
 	return gate.requirePolicy(permission)
@@ -51,6 +51,13 @@ func (gate *FixedGate) AuthorizeInvocation(_ context.Context, message conversati
 func (gate *FixedGate) AuthorizePrompt(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
 	if !gate.enabled.Load() || !message.Allowlisted || !message.Owner || message.FromMe || message.ChatKind == conversation.ChatStatus {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize prompt command", fmt.Errorf("configured owner is required"))
+	}
+	return gate.requirePolicy(permission)
+}
+
+func (gate *FixedGate) AuthorizeHistoryReset(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
+	if !gate.enabled.Load() || !message.Allowlisted || !message.Owner || message.FromMe || message.ChatKind == conversation.ChatStatus {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize history reset", fmt.Errorf("configured owner is required"))
 	}
 	return gate.requirePolicy(permission)
 }

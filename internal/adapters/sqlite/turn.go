@@ -42,7 +42,11 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if err := tx.Commit(); err != nil {
 			return agent.TurnClaim{}, storageError("commit turn claim", err)
 		}
-		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(row.generationLease.String)}, nil
+		messageID, parseErr := identity.ParseMessageID(row.messageID)
+		if parseErr != nil {
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn message ID", parseErr)
+		}
+		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(row.generationLease.String), MessageID: messageID}, nil
 	}
 	if err != nil {
 		return agent.TurnClaim{}, storageError("load turn claim", err)
@@ -74,7 +78,11 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if err := tx.Commit(); err != nil {
 			return agent.TurnClaim{}, storageError("commit received turn claim", err)
 		}
-		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease)}, nil
+		messageID, parseErr := identity.ParseMessageID(row.messageID)
+		if parseErr != nil {
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode received message ID", parseErr)
+		}
+		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease), MessageID: messageID}, nil
 	}
 	if len(row.digest.Bytes) != sha256.Size || !equalDigest(row.digest.Bytes, request.Digest) {
 		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim turn", fmt.Errorf("invocation ID is bound to different input"))
@@ -87,7 +95,11 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if err := tx.Commit(); err != nil {
 			return agent.TurnClaim{}, storageError("commit replay lookup", err)
 		}
-		return agent.TurnClaim{State: agent.TurnState(row.state), Plan: &plan}, nil
+		messageID, parseErr := identity.ParseMessageID(row.messageID)
+		if parseErr != nil {
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode replay message ID", parseErr)
+		}
+		return agent.TurnClaim{State: agent.TurnState(row.state), MessageID: messageID, Plan: &plan}, nil
 	}
 
 	nowMS := request.Now.UnixMilli()
@@ -150,7 +162,11 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	if err := tx.Commit(); err != nil {
 		return agent.TurnClaim{}, storageError("commit renewed turn claim", err)
 	}
-	return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease)}, nil
+	messageID, parseErr := identity.ParseMessageID(row.messageID)
+	if parseErr != nil {
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode renewed message ID", parseErr)
+	}
+	return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease), MessageID: messageID}, nil
 }
 
 func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlanRequest) (agent.StoredPlan, error) {
@@ -185,7 +201,8 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		}
 		return plan, nil
 	}
-	nowMS := store.clock.Now().UnixMilli()
+	nowMS := store.clock.Now().UTC().UnixMilli()
+	createdAt := time.UnixMilli(nowMS).UTC()
 	if agent.TurnState(row.state) != agent.TurnGenerating ||
 		!row.generationLease.Valid || row.generationLease.String != string(request.Lease) ||
 		!row.generationLeaseUntil.Valid || row.generationLeaseUntil.Int64 <= nowMS {
@@ -203,6 +220,20 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorInternal, "create action ID", err)
 	}
 	payloadDigest := digestAction(request.Key, actionID, request.ResponseText)
+	causationID, err := identity.ParseCausationID(row.causationID)
+	if err != nil {
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response causation", err)
+	}
+	historyEntry := agent.HistoryEntry{
+		MessageID: responseID, InvocationID: request.InvocationID,
+		Causation: agent.CausationRef{Kind: agent.CausationKind(row.causationKind), ID: causationID},
+		Role:      agent.HistoryAssistant, Content: []agent.ContentPart{agent.TextPart{Text: request.ResponseText}},
+		Delivery: agent.DeliveryPending, CreatedAt: createdAt,
+	}
+	historyDigest, err := agent.DigestHistoryEntry(historyEntry)
+	if err != nil {
+		return agent.StoredPlan{}, err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbound_actions(
         tenant_id, account_id, chat_id, action_id, invocation_id, response_id,
         payload_digest, text, state, created_at_ms, updated_at_ms
@@ -222,6 +253,19 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	)
 	if err != nil {
 		return agent.StoredPlan{}, storageError("insert action receipt", err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO history_entries(
+        tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
+        causation_id, role, sender_name, content_text, content_digest,
+        delivery_status, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
+		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
+		responseID.String(), request.InvocationID.String(), uint8(row.causationKind), row.causationID,
+		uint8(agent.HistoryAssistant), request.ResponseText, historyDigest[:], uint8(agent.DeliveryPending),
+		createdAt.UnixMilli(), nowMS,
+	)
+	if err != nil {
+		return agent.StoredPlan{}, storageError("insert pending assistant history", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
         config_version = ?, turn_state = ?, response_id = ?, action_id = ?, response_text = ?,
@@ -248,6 +292,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		ResponseID:    responseID,
 		ActionID:      actionID,
 		Text:          request.ResponseText,
+		CreatedAt:     createdAt,
 		Dispatch:      agent.DispatchRef{Key: request.Key, ActionID: actionID},
 	}, nil
 }
@@ -312,6 +357,11 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 		Delivery:     agent.DeliveryStatus(row.deliveryStatus),
 		UpdatedAt:    time.UnixMilli(row.updatedAt).UTC(),
 	}
+	messageID, parseErr := identity.ParseMessageID(row.messageID)
+	if parseErr != nil {
+		return agent.TurnRecord{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn message ID", parseErr)
+	}
+	record.MessageID = messageID
 	if row.actionID.Valid {
 		plan, err := row.plan(key, invocationID)
 		if err != nil {
@@ -325,7 +375,10 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 type turnRow struct {
 	state                int64
 	digest               nullableBytes
+	messageID            string
 	providerMessageID    sql.NullString
+	invocationCause      int64
+	causationKind        int64
 	causationID          string
 	participantID        sql.NullString
 	senderRef            sql.NullString
@@ -342,6 +395,7 @@ type turnRow struct {
 	responseText         sql.NullString
 	deliveryStatus       int64
 	updatedAt            int64
+	responseCreatedAt    sql.NullInt64
 }
 
 // nullableBytes distinguishes a SQL NULL digest from an empty/corrupt digest.
@@ -372,15 +426,19 @@ type turnQuerier interface {
 func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocationID identity.InvocationID) (turnRow, error) {
 	var row turnRow
 	var digest nullableBytes
-	err := query.QueryRowContext(ctx, `SELECT turn_state, invocation_digest, provider_message_id,
-        causation_id, participant_id, sender_ref, sender_name, input_text, occurred_at_ms, generation_lease,
-        generation_lease_until_ms, retry_after_ms, generation_attempts, config_version, response_id, action_id,
-        response_text, delivery_status, updated_at_ms
-      FROM inbound_events WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+	err := query.QueryRowContext(ctx, `SELECT i.turn_state, i.invocation_digest, i.message_id, i.provider_message_id,
+        i.invocation_cause, i.causation_kind, i.causation_id, i.participant_id, i.sender_ref, i.sender_name, i.input_text, i.occurred_at_ms, i.generation_lease,
+        i.generation_lease_until_ms, i.retry_after_ms, i.generation_attempts, i.config_version, i.response_id, i.action_id,
+        i.response_text, i.delivery_status, i.updated_at_ms, a.created_at_ms
+      FROM inbound_events i
+      LEFT JOIN outbound_actions a ON a.tenant_id = i.tenant_id AND a.account_id = i.account_id
+        AND a.chat_id = i.chat_id AND a.action_id = i.action_id
+      WHERE i.tenant_id = ? AND i.account_id = ? AND i.chat_id = ? AND i.invocation_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(),
-	).Scan(&row.state, &digest, &row.providerMessageID, &row.causationID, &row.participantID, &row.senderRef,
+	).Scan(&row.state, &digest, &row.messageID, &row.providerMessageID, &row.invocationCause, &row.causationKind,
+		&row.causationID, &row.participantID, &row.senderRef,
 		&row.senderName, &row.inputText, &row.occurredAt, &row.generationLease, &row.generationLeaseUntil, &row.retryAfter, &row.generationAttempts,
-		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.deliveryStatus, &row.updatedAt)
+		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.deliveryStatus, &row.updatedAt, &row.responseCreatedAt)
 	row.digest = digest
 	return row, err
 }
@@ -388,6 +446,7 @@ func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocati
 func matchesPreclaimedInbound(row turnRow, request agent.ClaimTurnRequest) bool {
 	invocation := request.Invocation
 	if !row.providerMessageID.Valid || invocation.Cause != agent.CauseInboundMessage ||
+		int64(invocation.Cause) != row.invocationCause || int64(invocation.Causation.Kind) != row.causationKind ||
 		invocation.Causation.Kind != agent.CausationMessage || row.causationID != invocation.Causation.ID.String() ||
 		invocation.Sender == nil || !row.participantID.Valid || !row.senderRef.Valid ||
 		row.participantID.String != invocation.Sender.ParticipantID.String() ||
@@ -420,13 +479,13 @@ func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRe
 		senderName = request.Invocation.Sender.DisplayName
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO inbound_events(
-        tenant_id, account_id, chat_id, invocation_id, message_id, causation_id,
+        tenant_id, account_id, chat_id, invocation_id, message_id, invocation_cause, causation_kind, causation_id,
         participant_id, sender_ref, sender_name, input_text, occurred_at_ms, received_at_ms,
         invocation_digest, config_version, turn_state, generation_lease,
         generation_lease_until_ms, generation_attempts, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
-		request.Invocation.ID.String(), messageID.String(), request.Invocation.Causation.ID.String(),
+		request.Invocation.ID.String(), messageID.String(), uint8(request.Invocation.Cause), uint8(request.Invocation.Causation.Kind), request.Invocation.Causation.ID.String(),
 		participant, senderRef, senderName, inputText, request.Invocation.RequestedAt.UnixMilli(), request.Now.UnixMilli(),
 		request.Digest[:], uint64(request.Invocation.PolicyVersion), uint8(agent.TurnGenerating), lease,
 		request.Now.Add(ttl).UnixMilli(), request.Now.UnixMilli(),
@@ -434,7 +493,9 @@ func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRe
 	if err != nil {
 		return turnRow{}, storageError("insert turn claim", err)
 	}
-	return turnRow{generationLease: sql.NullString{String: lease, Valid: true}}, nil
+	return turnRow{messageID: messageID.String(), invocationCause: int64(request.Invocation.Cause),
+		causationKind: int64(request.Invocation.Causation.Kind), causationID: request.Invocation.Causation.ID.String(),
+		generationLease: sql.NullString{String: lease, Valid: true}}, nil
 }
 
 func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender agent.SenderContext, nowMS int64) error {
@@ -454,11 +515,22 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 	); err != nil {
 		return storageError("ensure invocation sender ref", err)
 	}
+	var storedRef string
+	err := tx.QueryRowContext(ctx, `SELECT sender_ref FROM sender_refs
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND participant_id = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), sender.ParticipantID.String(),
+	).Scan(&storedRef)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && storedRef != sender.Ref.String()) {
+		return agent.NewError(agent.ErrorConflict, "ensure invocation sender ref", fmt.Errorf("participant and sender ref are bound to different identities"))
+	}
+	if err != nil {
+		return storageError("verify invocation sender ref", err)
+	}
 	return nil
 }
 
 func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agent.StoredPlan, error) {
-	if !row.configVersion.Valid || !row.responseID.Valid || !row.actionID.Valid || !row.responseText.Valid {
+	if !row.configVersion.Valid || !row.responseID.Valid || !row.actionID.Valid || !row.responseText.Valid || !row.responseCreatedAt.Valid {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", fmt.Errorf("partial response plan"))
 	}
 	responseID, err := identity.ParseMessageID(row.responseID.String)
@@ -475,6 +547,7 @@ func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agen
 		ResponseID:    responseID,
 		ActionID:      actionID,
 		Text:          row.responseText.String,
+		CreatedAt:     time.UnixMilli(row.responseCreatedAt.Int64).UTC(),
 		Dispatch:      agent.DispatchRef{Key: key, ActionID: actionID},
 	}, nil
 }

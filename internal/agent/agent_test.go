@@ -62,7 +62,9 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 		result <- err
 	}()
 	request := <-model.started
-	if request.ConfigVersion != agent.InitialConfigVersion || request.Prompt != "base prompt" {
+	if request.ConfigVersion != agent.InitialConfigVersion || len(request.Messages) < 2 ||
+		request.Messages[0].Content != "base prompt" ||
+		request.Messages[len(request.Messages)-1].Provenance != agent.ProvenanceCurrentUser {
 		t.Fatalf("captured model request = %#v", request)
 	}
 	snapshot := current.Config().Snapshot()
@@ -97,6 +99,34 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	returned.PromptOverride.Text = "mutated by caller"
 	if current.Config().Snapshot().PromptOverride.Text != "new override" {
 		t.Fatal("Config snapshot did not defensively copy prompt override")
+	}
+}
+
+func TestHistoryResetSharesExclusiveGateWithInvoke(t *testing.T) {
+	store := openStore(t)
+	model := &blockingModel{started: make(chan agent.ModelRequest, 1), release: make(chan struct{})}
+	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
+	invokeDone := make(chan error, 1)
+	go func() {
+		_, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "in flight"))
+		invokeDone <- err
+	}()
+	<-model.started
+	resetCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := current.History().Reset(resetCtx, agent.InitialConfigVersion); !agent.IsCode(err, agent.ErrorTimeout) {
+		t.Fatalf("reset while invoke is active = %v, want timeout", err)
+	}
+	close(model.release)
+	if err := <-invokeDone; err != nil {
+		t.Fatalf("finish invoke: %v", err)
+	}
+	if err := current.History().Reset(context.Background(), agent.InitialConfigVersion); err != nil {
+		t.Fatalf("reset after invoke: %v", err)
+	}
+	page, err := current.History().List(context.Background(), agent.InitialConfigVersion, agent.HistoryQuery{Limit: 10})
+	if err != nil || len(page.Entries) != 0 {
+		t.Fatalf("history after reset = %#v, err=%v", page, err)
 	}
 }
 
@@ -320,18 +350,22 @@ func newAgent(
 func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher agent.ResponseDispatcher, events agent.ConfigEventSink) agent.Dependencies {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part1-chat-gate.v1")
+	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes)
 	return agent.Dependencies{
 		Defaults: agent.ConfigValues{
 			Model:      agent.ModelConfig{ProviderID: providerID, Model: "test-model", MaxOutputTokens: 256},
 			Prompt:     "base prompt",
 			Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
 		},
-		ConfigStore: store.Configs(),
-		Turns:       store.Turns(),
-		Model:       model,
-		Responses:   dispatcher,
-		Events:      events,
-		Clock:       agent.SystemClock{},
+		ConfigStore:   store.Configs(),
+		HistoryStore:  store.History(),
+		Turns:         store.Turns(),
+		Context:       contextBuilder,
+		HistoryWindow: agent.DefaultHistoryWindow,
+		Model:         model,
+		Responses:     dispatcher,
+		Events:        events,
+		Clock:         agent.SystemClock{},
 	}
 }
 

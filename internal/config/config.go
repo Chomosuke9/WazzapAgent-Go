@@ -27,6 +27,12 @@ const (
 	defaultConstructionTimeout = 10 * time.Second
 	defaultInboundQueue        = 512
 	defaultInboundWorkers      = 4
+	defaultMessageDebounce     = 350 * time.Millisecond
+	defaultMessageBurstCap     = 8
+	defaultHistoryWindow       = 64
+	defaultMaxContextBytes     = 64 * 1024
+	defaultHistoryKeepLatest   = 256
+	defaultHistoryMaxAge       = 30 * 24 * time.Hour
 	defaultLLMConcurrency      = 4
 	defaultRegistryMaxLive     = 256
 	defaultMaxOutputTokens     = 1024
@@ -67,6 +73,12 @@ type Snapshot struct {
 	policyRevision      uint64
 	inboundQueue        uint32
 	inboundWorkers      uint32
+	messageDebounce     time.Duration
+	messageBurstCap     uint32
+	historyWindow       uint32
+	maxContextBytes     uint32
+	historyKeepLatest   uint32
+	historyMaxAge       time.Duration
 	registryMaxLive     uint32
 	registryIdleTTL     time.Duration
 	constructionTimeout time.Duration
@@ -101,6 +113,21 @@ func LoadRuntime(lookup LookupEnv) (Snapshot, error) {
 	snapshot.tenantID = tenantID
 	snapshot.accountID = accountID
 	return snapshot, nil
+}
+
+// LoadDataDirRuntime resolves only the offline data-root setting. Backup must
+// remain usable when an unrelated live-runtime setting (for example an LLM
+// credential or endpoint) is missing or invalid.
+func LoadDataDirRuntime(lookup LookupEnv) (string, error) {
+	mergedLookup, err := lookupWithDotEnv(lookup)
+	if err != nil {
+		return "", err
+	}
+	dataDir, err := resolveDataDir(valueOrDefault(mergedLookup, "WAZZAP_DATA_DIR", defaultDataDir))
+	if err != nil {
+		return "", fmt.Errorf("WAZZAP_DATA_DIR: %w", err)
+	}
+	return dataDir, nil
 }
 
 func Load(lookup LookupEnv) (Snapshot, error) {
@@ -183,6 +210,30 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	messageDebounce, err := parseDuration(lookup, "WAZZAP_MESSAGE_DEBOUNCE", defaultMessageDebounce, time.Minute)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	messageBurstCap, err := parseUint(lookup, "WAZZAP_MESSAGE_BURST_CAP", defaultMessageBurstCap, 1, 256)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	historyWindow, err := parseUint(lookup, "WAZZAP_HISTORY_WINDOW", defaultHistoryWindow, 1, 256)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	maxContextBytes, err := parseUint(lookup, "WAZZAP_MAX_CONTEXT_BYTES", defaultMaxContextBytes, 1, 1024*1024)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	historyKeepLatest, err := parseUint(lookup, "WAZZAP_HISTORY_KEEP_LATEST", defaultHistoryKeepLatest, 1, 1_000_000)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	historyMaxAge, err := parseDuration(lookup, "WAZZAP_HISTORY_MAX_AGE", defaultHistoryMaxAge, 10*365*24*time.Hour)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	llmConcurrency, err := parseUint(lookup, "WAZZAP_LLM_CONCURRENCY", defaultLLMConcurrency, 1, 256)
 	if err != nil {
 		return Snapshot{}, err
@@ -225,6 +276,12 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		policyRevision:      policyRevision,
 		inboundQueue:        uint32(inboundQueue),
 		inboundWorkers:      uint32(inboundWorkers),
+		messageDebounce:     messageDebounce,
+		messageBurstCap:     uint32(messageBurstCap),
+		historyWindow:       uint32(historyWindow),
+		maxContextBytes:     uint32(maxContextBytes),
+		historyKeepLatest:   uint32(historyKeepLatest),
+		historyMaxAge:       historyMaxAge,
 		registryMaxLive:     uint32(registryMaxLive),
 		registryIdleTTL:     registryIdleTTL,
 		constructionTimeout: constructionTimeout,
@@ -323,6 +380,12 @@ func (snapshot Snapshot) PolicyID() identity.PolicyID        { return snapshot.p
 func (snapshot Snapshot) PolicyRevision() uint64             { return snapshot.policyRevision }
 func (snapshot Snapshot) InboundQueue() uint32               { return snapshot.inboundQueue }
 func (snapshot Snapshot) InboundWorkers() uint32             { return snapshot.inboundWorkers }
+func (snapshot Snapshot) MessageDebounce() time.Duration     { return snapshot.messageDebounce }
+func (snapshot Snapshot) MessageBurstCap() uint32            { return snapshot.messageBurstCap }
+func (snapshot Snapshot) HistoryWindow() uint32              { return snapshot.historyWindow }
+func (snapshot Snapshot) MaxContextBytes() uint32            { return snapshot.maxContextBytes }
+func (snapshot Snapshot) HistoryKeepLatest() uint32          { return snapshot.historyKeepLatest }
+func (snapshot Snapshot) HistoryMaxAge() time.Duration       { return snapshot.historyMaxAge }
 func (snapshot Snapshot) RegistryMaxLive() uint32            { return snapshot.registryMaxLive }
 func (snapshot Snapshot) RegistryIdleTTL() time.Duration     { return snapshot.registryIdleTTL }
 func (snapshot Snapshot) ConstructionTimeout() time.Duration { return snapshot.constructionTimeout }
@@ -368,6 +431,12 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"max_response_bytes":      snapshot.maxResponseBytes,
 		"inbound_queue":           snapshot.inboundQueue,
 		"inbound_workers":         snapshot.inboundWorkers,
+		"message_debounce":        snapshot.messageDebounce.String(),
+		"message_burst_cap":       snapshot.messageBurstCap,
+		"history_window":          snapshot.historyWindow,
+		"max_context_bytes":       snapshot.maxContextBytes,
+		"history_keep_latest":     snapshot.historyKeepLatest,
+		"history_max_age":         snapshot.historyMaxAge.String(),
 		"pairing_output":          snapshot.pairingOutput,
 	}
 }

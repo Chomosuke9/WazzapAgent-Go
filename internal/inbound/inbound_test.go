@@ -2,6 +2,7 @@ package inbound_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,189 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	}
 	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
 		t.Fatalf("mentioned group model/sender calls = %d/%d", fixture.model.calls.Load(), fixture.sender.count())
+	}
+}
+
+func TestRapidMessagesAreDurablyDebouncedIntoOneBoundedBatch(t *testing.T) {
+	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 8)
+	chat := "15550000012@s.whatsapp.net"
+	first := fixture.candidate("batch-1", chat, conversation.ChatDirect, "first")
+	second := fixture.candidate("batch-2", chat, conversation.ChatDirect, "second")
+	second.OccurredAt = first.OccurredAt.Add(time.Millisecond)
+	second.ReceivedAt = first.ReceivedAt.Add(time.Millisecond)
+	var wait sync.WaitGroup
+	errors := make(chan error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		errors <- fixture.handler.Handle(context.Background(), first)
+	}()
+	time.Sleep(5 * time.Millisecond)
+	go func() {
+		defer wait.Done()
+		errors <- fixture.handler.Handle(context.Background(), second)
+	}()
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("handle batch: %v", err)
+		}
+	}
+	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
+		t.Fatalf("batched model/sender calls = %d/%d, want 1/1", fixture.model.calls.Load(), fixture.sender.count())
+	}
+	if err := fixture.handler.Handle(context.Background(), first); err != nil {
+		t.Fatalf("replay non-anchor batch member: %v", err)
+	}
+	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
+		t.Fatal("replayed non-anchor batch member produced another effect")
+	}
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), second)
+	if err != nil {
+		t.Fatalf("reload batch anchor: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	current, err := fixture.registry.AgentFor(context.Background(), key)
+	if err != nil {
+		t.Fatalf("load batch agent: %v", err)
+	}
+	snapshot, _ := current.Config().Refresh(context.Background())
+	page, err := current.History().List(context.Background(), snapshot.Version, agent.HistoryQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list batch history: %v", err)
+	}
+	if len(page.Entries) != 3 || page.Entries[0].Role != agent.HistoryUser ||
+		page.Entries[1].Role != agent.HistoryUser || page.Entries[2].Role != agent.HistoryAssistant {
+		t.Fatalf("batched history = %#v", page.Entries)
+	}
+}
+
+func TestMessageBurstCapSplitsOversizedBurstWithoutLosingRemainder(t *testing.T) {
+	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 2)
+	chat := "15550000014@s.whatsapp.net"
+	var wait sync.WaitGroup
+	errors := make(chan error, 3)
+	for index := 0; index < 3; index++ {
+		candidate := fixture.candidate(fmt.Sprintf("burst-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
+		candidate.OccurredAt = candidate.OccurredAt.Add(time.Duration(index) * time.Millisecond)
+		candidate.ReceivedAt = candidate.ReceivedAt.Add(time.Duration(index) * time.Millisecond)
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			errors <- fixture.handler.Handle(context.Background(), candidate)
+		}()
+		time.Sleep(2 * time.Millisecond)
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("handle bounded burst: %v", err)
+		}
+	}
+	if fixture.model.calls.Load() != 2 || fixture.sender.count() != 2 {
+		t.Fatalf("bounded burst model/sender calls = %d/%d, want 2/2", fixture.model.calls.Load(), fixture.sender.count())
+	}
+}
+
+func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
+	fixture := newFixture(t)
+	chat := "120363000000000012@g.us"
+	first := fixture.candidate("quote-source", chat, conversation.ChatGroup, "first")
+	first.MentionsBot = true
+	if err := fixture.handler.Handle(context.Background(), first); err != nil {
+		t.Fatalf("handle quoted source: %v", err)
+	}
+	receipt := "provider-" + fixture.sender.last().ActionID.String()
+	reply := fixture.candidate("quote-reply", chat, conversation.ChatGroup, "reply without mention")
+	reply.ProviderQuotedMessageID = receipt
+	if err := fixture.handler.Handle(context.Background(), reply); err != nil {
+		t.Fatalf("handle reply to bot: %v", err)
+	}
+	if fixture.model.calls.Load() != 2 || fixture.sender.count() != 2 {
+		t.Fatalf("reply trigger calls = %d/%d", fixture.model.calls.Load(), fixture.sender.count())
+	}
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), reply)
+	if err != nil {
+		t.Fatalf("reload reply: %v", err)
+	}
+	if !claimed.Message.RepliedToBot || claimed.Message.Quote == nil ||
+		claimed.Message.Quote.Role != conversation.QuoteAssistant || claimed.Message.Quote.ID.IsZero() {
+		t.Fatalf("canonical reply quote = %#v", claimed.Message)
+	}
+}
+
+func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restart-history.db")
+	tenantID, _ := identity.NewTenantID()
+	accountID, _ := identity.NewAccountID()
+	firstRuntime := newFixtureAtPath(t, path, tenantID, accountID, 0, 1)
+	chat := "15550000016@s.whatsapp.net"
+	first := firstRuntime.candidate("restart-context-1", chat, conversation.ChatDirect, "remember blue")
+	if err := firstRuntime.handler.Handle(context.Background(), first); err != nil {
+		t.Fatalf("handle first message: %v", err)
+	}
+	if err := firstRuntime.registry.Close(context.Background()); err != nil {
+		t.Fatalf("close first registry: %v", err)
+	}
+	if err := firstRuntime.store.Close(); err != nil {
+		t.Fatalf("close first store: %v", err)
+	}
+
+	secondRuntime := newFixtureAtPath(t, path, tenantID, accountID, 0, 1)
+	followup := secondRuntime.candidate("restart-context-2", chat, conversation.ChatDirect, "what color?")
+	if err := secondRuntime.handler.Handle(context.Background(), followup); err != nil {
+		t.Fatalf("handle follow-up after restart: %v", err)
+	}
+	request := secondRuntime.model.lastRequest()
+	if len(request.Messages) != 4 ||
+		!strings.Contains(request.Messages[1].Content, "remember blue") ||
+		!strings.Contains(request.Messages[2].Content, "reply: remember blue") ||
+		!strings.Contains(request.Messages[3].Content, "what color?") {
+		t.Fatalf("recreated model context = %#v", request.Messages)
+	}
+}
+
+func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
+	fixture := newFixture(t)
+	chat := "15550000013@s.whatsapp.net"
+	if err := fixture.handler.Handle(context.Background(), fixture.candidate("control-history", chat, conversation.ChatDirect, "remember")); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+	help := fixture.candidate("control-help", chat, conversation.ChatDirect, "/help")
+	if err := fixture.handler.Handle(context.Background(), help); err != nil {
+		t.Fatalf("help: %v", err)
+	}
+	if !strings.Contains(fixture.sender.last().Text, "/reset") {
+		t.Fatalf("help response = %q", fixture.sender.last().Text)
+	}
+	info := fixture.candidate("control-info", chat, conversation.ChatDirect, "/info")
+	if err := fixture.handler.Handle(context.Background(), info); err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	if !strings.Contains(fixture.sender.last().Text, "History: aktif") {
+		t.Fatalf("info response = %q", fixture.sender.last().Text)
+	}
+	denied := fixture.candidate("control-reset-denied", chat, conversation.ChatDirect, "/reset")
+	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
+		t.Fatalf("denied reset: %v", err)
+	}
+	if !strings.Contains(fixture.sender.last().Text, "hanya dapat digunakan oleh owner") {
+		t.Fatalf("reset denial = %q", fixture.sender.last().Text)
+	}
+	reset := fixture.candidate("control-reset", chat, conversation.ChatDirect, "/reset")
+	reset.Owner = true
+	if err := fixture.handler.Handle(context.Background(), reset); err != nil {
+		t.Fatalf("owner reset: %v", err)
+	}
+	claimed, _ := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), reset)
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	current, _ := fixture.registry.AgentFor(context.Background(), key)
+	snapshot, _ := current.Config().Refresh(context.Background())
+	page, err := current.History().List(context.Background(), snapshot.Version, agent.HistoryQuery{Limit: 10})
+	if err != nil || len(page.Entries) != 0 {
+		t.Fatalf("history after owner reset = %#v, err=%v", page, err)
 	}
 }
 
@@ -308,12 +492,28 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
+	return newFixtureWithBatching(t, 0, 1)
+}
+
+func newFixtureWithBatching(t *testing.T, debounce time.Duration, burstCap uint32) *fixture {
 	t.Helper()
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
+	return newFixtureAtPath(t, filepath.Join(t.TempDir(), "app.db"), tenantID, accountID, debounce, burstCap)
+}
+
+func newFixtureAtPath(
+	t *testing.T,
+	path string,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	debounce time.Duration,
+	burstCap uint32,
+) *fixture {
+	t.Helper()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part1-chat-gate.v1")
-	store, err := appsqlite.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))
+	store, err := appsqlite.Open(context.Background(), path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -333,9 +533,11 @@ func newFixture(t *testing.T) *fixture {
 		Prompt:     "base prompt",
 		Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
 	}
+	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes)
 	factory := agent.FactoryFunc(func(ctx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(ctx, key, agent.Dependencies{
-			Defaults: defaults, ConfigStore: store.Configs(), Turns: store.Turns(), Model: model,
+			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
+			Context: contextBuilder, HistoryWindow: agent.DefaultHistoryWindow, Model: model,
 			Responses: dispatcher, Events: agent.DiscardConfigEvents{}, Clock: agent.SystemClock{},
 		})
 	})
@@ -347,7 +549,10 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("create command responder: %v", err)
 	}
-	handler, err := inbound.NewHandler(store.Inbound(), registry, gate, responder, inbound.DiscardObserver{})
+	handler, err := inbound.NewHandlerWithBatching(
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
+		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
+	)
 	if err != nil {
 		t.Fatalf("create inbound handler: %v", err)
 	}
@@ -372,15 +577,42 @@ func (fixture *fixture) candidate(id, chat string, kind conversation.ChatKind, t
 	}
 }
 
-type echoModel struct{ calls atomic.Int32 }
+type echoModel struct {
+	calls atomic.Int32
+	mu    sync.Mutex
+	seen  []agent.ModelRequest
+}
 
 func (model *echoModel) Generate(_ context.Context, request agent.ModelRequest) (agent.ModelResult, error) {
 	model.calls.Add(1)
-	text, ok := request.Input[0].(agent.TextPart)
-	if !ok {
-		return agent.ModelResult{}, fmt.Errorf("not text")
+	request.Messages = append([]agent.ModelMessage(nil), request.Messages...)
+	model.mu.Lock()
+	model.seen = append(model.seen, request)
+	model.mu.Unlock()
+	if len(request.Messages) == 0 {
+		return agent.ModelResult{}, fmt.Errorf("missing model messages")
 	}
-	return agent.ModelResult{Text: "reply: " + text.Text}, nil
+	content := request.Messages[len(request.Messages)-1].Content
+	_, encoded, ok := strings.Cut(content, "\n")
+	if !ok {
+		return agent.ModelResult{}, fmt.Errorf("invalid user envelope")
+	}
+	var envelope struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil {
+		return agent.ModelResult{}, err
+	}
+	return agent.ModelResult{Text: "reply: " + envelope.Text}, nil
+}
+
+func (model *echoModel) lastRequest() agent.ModelRequest {
+	model.mu.Lock()
+	defer model.mu.Unlock()
+	if len(model.seen) == 0 {
+		return agent.ModelRequest{}
+	}
+	return model.seen[len(model.seen)-1]
 }
 
 type recordingSender struct {

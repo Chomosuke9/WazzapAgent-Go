@@ -13,11 +13,16 @@ func TestMetricsRecordsOnlyBoundedNonSensitiveOutcomes(t *testing.T) {
 	metrics.ObserveInboundClaimed()
 	metrics.ObserveInboundDuplicate()
 	metrics.ObserveInboundIgnored()
+	metrics.ObserveInboundBatch(3)
+	metrics.ObserveHistoryReset()
 	metrics.ObserveModel(25*time.Millisecond, agent.ErrorTimeout)
 	metrics.ObserveDelivery(agent.DeliveryUnknownOutcome, agent.ErrorUnknownOutcome)
 	snapshot := metrics.Snapshot()
 	if snapshot.InboundClaimed != 1 || snapshot.InboundDuplicates != 1 || snapshot.InboundIgnored != 1 {
 		t.Fatalf("inbound metrics = %#v", snapshot)
+	}
+	if snapshot.InboundBatches != 1 || snapshot.InboundBatchedMessages != 3 || snapshot.HistoryResets != 1 {
+		t.Fatalf("conversation metrics = %#v", snapshot)
 	}
 	if snapshot.ModelCalls != 1 || snapshot.ModelFailures != 1 || snapshot.ModelTimeouts != 1 || snapshot.ModelDurationNS == 0 {
 		t.Fatalf("model metrics = %#v", snapshot)

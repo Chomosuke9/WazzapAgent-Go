@@ -478,24 +478,29 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 		}
 	}
 	mentioned := false
+	quotedMessageID := ""
+	if extended != nil && extended.GetContextInfo() != nil {
+		quotedMessageID = extended.GetContextInfo().GetStanzaID()
+	}
 	if chatKind == conversation.ChatGroup && extended != nil {
 		mentioned = adapter.mentionsOwnAccount(extended.GetContextInfo().GetMentionedJID())
 	}
 	return conversation.IncomingCandidate{
-		TenantID:              adapter.tenantID,
-		AccountID:             adapter.accountID,
-		ProviderMessageID:     string(event.Info.ID),
-		ProviderChatAddress:   chatAddress,
-		ProviderSenderAddress: sender.String(),
-		SenderName:            event.Info.PushName,
-		ChatKind:              chatKind,
-		Text:                  text,
-		MentionsBot:           mentioned,
-		FromMe:                event.Info.IsFromMe,
-		Owner:                 adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
-		Allowlisted:           allowlisted,
-		OccurredAt:            event.Info.Timestamp.UTC(),
-		ReceivedAt:            time.Now().UTC(),
+		TenantID:                adapter.tenantID,
+		AccountID:               adapter.accountID,
+		ProviderMessageID:       string(event.Info.ID),
+		ProviderQuotedMessageID: quotedMessageID,
+		ProviderChatAddress:     chatAddress,
+		ProviderSenderAddress:   sender.String(),
+		SenderName:              event.Info.PushName,
+		ChatKind:                chatKind,
+		Text:                    text,
+		MentionsBot:             mentioned,
+		FromMe:                  event.Info.IsFromMe,
+		Owner:                   adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
+		Allowlisted:             allowlisted,
+		OccurredAt:              event.Info.Timestamp.UTC(),
+		ReceivedAt:              time.Now().UTC(),
 	}, true
 }
 

@@ -29,13 +29,13 @@ AccountRuntime
 AgentRegistry
   +-- Agent(Tenant A, Account A, Chat 1)
   |     +-- Config
-  |     +-- History             # mulai Part 2
+  |     +-- History             # durable sejak Part 2
   |     +-- ModelInvoker
   |     +-- ResponseDispatcher
   |
   +-- Agent(Tenant A, Account A, Chat 2)
         +-- Config
-        +-- History             # mulai Part 2
+        +-- History             # durable sejak Part 2
         +-- ModelInvoker
         +-- ResponseDispatcher
 ```
@@ -119,7 +119,7 @@ func (a *Agent) Config() *Config
 func (a *Agent) Invoke(context.Context, Invocation) (InvokeResult, error)
 ```
 
-`History()` mulai diimplementasikan pada Part 2. Jangan menyediakan fake/no-op history pada Part 1 hanya untuk memenuhi target contract.
+`History()` diimplementasikan pada Part 2 sebagai child object durable. Blok "Part 1 contract subset" di atas dipertahankan sebagai catatan kontrak historis, bukan status implementasi saat ini.
 
 Agent tidak mengekspos mutable fields berikut:
 
@@ -147,16 +147,16 @@ if err == nil {
 
 ```go
 type Dependencies struct {
-    Defaults    ConfigValues
-    ConfigStore ConfigStore
-    Turns       TurnStore
-    Model       ModelInvoker
-    Responses   ResponseDispatcher
-    Events      ConfigEventSink
-    Clock       Clock
-
-    // Added in Part 2:
-    HistoryStore HistoryStore
+    Defaults      ConfigValues
+    ConfigStore   ConfigStore
+    HistoryStore  HistoryStore
+    Turns         TurnStore
+    Context       ContextBuilder
+    HistoryWindow uint32
+    Model         ModelInvoker
+    Responses     ResponseDispatcher
+    Events        ConfigEventSink
+    Clock         Clock
 }
 
 func New(ctx context.Context, key Key, deps Dependencies) (*Agent, error)
@@ -174,7 +174,7 @@ Constructor wajib:
 
 `New` tidak menerima actor atau permission claim. Constructor tidak menyimpan `ctx`; context tersebut hanya membatasi initialization I/O.
 
-All Part 1 dependencies are required, including a non-blocking `ConfigEventSink`; deployments with no listeners inject an explicit no-op sink instead of using nil behavior.
+Semua dependency Part 2 wajib tersedia. `HistoryWindow` harus berada dalam batas page history. Deployment tanpa listener tetap menginjeksi explicit no-op `ConfigEventSink`, bukan memakai perilaku nil.
 
 ## Invocation contract
 
@@ -186,6 +186,7 @@ type Invocation struct {
     Causation     CausationRef
     Cause         InvocationCause
     Sender        *SenderContext
+    Quote         *QuoteContext
     Input         []ContentPart
     Capabilities  CapabilitySet
     PolicyVersion ConfigVersion
@@ -221,6 +222,13 @@ type SenderContext struct {
     DisplayName   string
 }
 
+type QuoteContext struct {
+    MessageID identity.MessageID
+    Role      HistoryRole
+    SenderRef identity.SenderRef
+    Text      string
+}
+
 type Capability string
 
 type CapabilitySet struct {
@@ -236,13 +244,13 @@ func (s CapabilitySet) Values() []Capability
 
 Inbound-message invocation requires non-nil `Sender`; scheduled and system-owned invocation requires nil `Sender`; authenticated direct invocation may include a trusted sender only when the application boundary can bind it to a real participant. Empty/mismatched sender data is `invalid_argument`.
 
-`CausationRef` memakai internal opaque ID, bukan provider message ID. `Cause` dan `Causation.Kind` harus merupakan pasangan yang valid. Part 1 hanya memakai inbound message; bentuk lain sudah dicadangkan agar scheduler, direct invoke, dan sub-agent tidak memerlukan breaking change pada `Invocation`.
+`CausationRef` memakai internal opaque ID, bukan provider message ID. `Cause` dan `Causation.Kind` harus merupakan pasangan yang valid. Part 2 hanya memakai inbound message; bentuk lain sudah dicadangkan agar scheduler, direct invoke, dan sub-agent tidak memerlukan breaking change pada `Invocation`.
 
-`CapabilitySet` adalah immutable value object dengan private storage dan defensive-copy constructor/accessor. Ia dihitung policy layer di luar Agent. Agent hanya memakai set tersebut untuk membatasi capability yang ditawarkan ke model. Action executor tetap melakukan authorization recheck sebelum side effect. Part 1 selalu memakai empty set.
+`CapabilitySet` adalah immutable value object dengan private storage dan defensive-copy constructor/accessor. Ia dihitung policy layer di luar Agent. Agent hanya memakai set tersebut untuk membatasi capability yang ditawarkan ke model. Action executor tetap melakukan authorization recheck sebelum side effect. Part 2 masih selalu memakai empty set.
 
 `PolicyVersion` is the Agent Config version used by the external policy decision. For a new generation, Agent refreshes Config and requires an exact match before claiming the turn. This is a stale-decision consistency check, not actor authorization. A mismatch returns `conflict` so the application can refresh and re-run policy. Stored-plan replay keeps its original Config version and relies on the executor's current policy recheck before delivery.
 
-Part 1 hanya menerima text content:
+Part 2 hanya menerima text content dan meneruskan model context melalui role serta provenance yang bertipe:
 
 ```go
 type ContentPart interface {
@@ -255,15 +263,47 @@ type TextPart struct {
 
 func (TextPart) isContentPart() {}
 
+type ModelRole uint8
+
+const (
+    ModelSystem ModelRole = iota + 1
+    ModelUser
+    ModelAssistant
+)
+
+type ModelProvenance uint8
+
+const (
+    ProvenanceBasePrompt ModelProvenance = iota + 1
+    ProvenancePromptOverride
+    ProvenanceHistoryUser
+    ProvenanceHistoryAssistant
+    ProvenanceHistorySystem
+    ProvenanceCurrentUser
+)
+
+type ModelMessage struct {
+    Role       ModelRole
+    Provenance ModelProvenance
+    Content    string
+}
+
+type ContextBuildRequest struct {
+    Config              ConfigSnapshot
+    History             []HistoryEntry
+    CurrentInvocationID identity.InvocationID
+}
+
+type ContextBuilder interface {
+    Build(ContextBuildRequest) ([]ModelMessage, error)
+}
+
 type ModelRequest struct {
     Key           Key
     InvocationID  identity.InvocationID
     ConfigVersion ConfigVersion
     Model         ModelConfig
-    Prompt        string
-    Override      *PromptOverride
-    Sender        *SenderContext
-    Input         []ContentPart
+    Messages      []ModelMessage
     Capabilities  CapabilitySet
 }
 
@@ -280,11 +320,13 @@ Part berikutnya dapat menambah `ImagePart`, `FilePart`, atau `SubagentResultPart
 
 Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-selected target.
 
-The Part 1 `ModelInvoker` is constructed with the non-overridable application safety/system policy and provider credentials. It serializes that policy before configurable `Prompt`/`Override` as separate instruction messages. Neither secrets nor the safety policy are fields that Agent Config or model output can replace. `ModelResult` contains candidate content only—never target, actor, action ID, or authorization data.
+`ContextBuilder` mengubah Config dan bounded durable history menjadi `[]ModelMessage`. Base prompt dan prompt override tetap menjadi system messages dengan provenance terpisah; sender name, message text, dan canonical quote diserialisasi sebagai JSON di dalam user message dan diberi label untrusted. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan current user message wajib berada paling akhir.
+
+`ModelInvoker` dibangun dengan non-overridable application safety/system policy dan provider credentials. Adapter selalu menaruh policy tersebut sebelum seluruh `ModelMessage`, lalu memvalidasi pasangan role/provenance. Config, history, atau output model tidak dapat mengganti policy itu. `ModelResult` hanya berisi candidate content—tidak pernah target, actor, action ID, atau authorization data.
 
 ### Invocation identity and durable replay
 
-`Invocation.ID` adalah idempotency identity untuk satu logical turn. Agent menghitung canonical SHA-256 `InvocationDigest` dari Agent key, cause/causation, trusted sender identity, ordered content parts, dan sorted capability IDs. Encoding is versioned and length-delimited; it never relies on map iteration or ambiguous string concatenation. Valid UTF-8 user text is hashed as exact bytes, without lossy normalization. `PolicyVersion`, `RequestedAt`, deadline, trace ID, serta retry-attempt metadata tidak masuk digest.
+`Invocation.ID` adalah idempotency identity untuk satu logical turn. Agent menghitung canonical SHA-256 `InvocationDigest` dari Agent key, cause/causation, trusted sender identity, optional canonical quote, ordered content parts, dan sorted capability IDs. Encoding is versioned and length-delimited; it never relies on map iteration or ambiguous string concatenation. Valid UTF-8 user text is hashed as exact bytes, without lossy normalization. Invocation tanpa quote mempertahankan encoding v1 agar turn Part 1 tetap replayable setelah upgrade; invocation ber-quote memakai encoding v2. `PolicyVersion`, `RequestedAt`, deadline, trace ID, serta retry-attempt metadata tidak masuk digest.
 
 ```go
 type InvocationDigest [32]byte
@@ -320,9 +362,10 @@ type ClaimTurnRequest struct {
 }
 
 type TurnClaim struct {
-    State TurnState
-    Lease TurnLease
-    Plan  *StoredPlan
+    State     TurnState
+    Lease     TurnLease
+    MessageID identity.MessageID
+    Plan      *StoredPlan
 }
 
 type CommitPlanRequest struct {
@@ -353,12 +396,14 @@ type StoredPlan struct {
     ResponseID    identity.MessageID
     ActionID      identity.ActionID
     Text          string
+    CreatedAt     time.Time
     Dispatch      DispatchRef
 }
 
 type TurnRecord struct {
     Key          Key
     InvocationID identity.InvocationID
+    MessageID    identity.MessageID
     Digest       InvocationDigest
     State        TurnState
     Plan         *StoredPlan
@@ -410,23 +455,23 @@ type InvokeResult struct {
 ```text
 acquire Agent invocation gate
   -> validate + digest
-  -> Config.Refresh + verify external PolicyVersion for new work
+  -> load existing durable turn and replay immutable plan when present
+  -> Config.Refresh + verify external PolicyVersion for genuinely new work
   -> durable TurnStore.Claim
   -> return/resume stored result when already planned
-  -> refresh and capture ConfigSnapshot
-  -> load History window                    # Part 2
-  -> append durable incoming history        # Part 2
+  -> append durable incoming history
+  -> load bounded History window
   -> build typed model request
   -> invoke model
   -> validate response
-  -> TurnStore.CommitPlan                   # response + action + pending history atomically
+  -> TurnStore.CommitPlan                   # response + action + pending assistant history atomically
   -> ResponseDispatcher.Dispatch stored DispatchRef
   -> wait/observe receipt within context
-  -> finalize assistant history             # Part 2
+  -> action transaction finalizes receipt, turn, and assistant history delivery
   -> release gate
 ```
 
-Part 1 uses inbound/action tables without conversation history, but the dispatch contract is identical.
+Part 1 historically used inbound/action tables without conversation history. Part 2 preserves the dispatch contract and adds history within the existing claim/plan transactions.
 
 Semantics:
 
@@ -623,7 +668,7 @@ This explicit event is the Go equivalent of an `onChange` hook. Direct field ass
 
 ## History child object
 
-History begins in Part 2:
+History diimplementasikan mulai Part 2:
 
 ```go
 type History struct {
@@ -644,6 +689,7 @@ type HistoryEntry struct {
     Causation    CausationRef
     Role         HistoryRole
     Sender       *SenderContext
+    Quote        *QuoteContext
     Content      []ContentPart
     Delivery     DeliveryStatus
     CreatedAt    time.Time
@@ -718,9 +764,13 @@ Rules:
 - `List` and `Reset` receive the exact Config version whose Permission reference was externally authorized;
 - their store transaction verifies that `agent_configs.version` still matches before reading/resetting history, otherwise returns `conflict`;
 - `Append` is normally used only by Agent invocation/recovery internals;
+- Part 2 accepts exactly one valid UTF-8 `TextPart` per history entry; later media parts require an explicit schema/contract extension;
 - `Append` is idempotent by message/invocation identity and rejects conflicting content digests;
-- `Reset` coordinates with the Agent invocation gate and writes a reset tombstone;
-- `Trim` is called by retention workflow and preserves required receipts/tombstones;
+- `List` recomputes the immutable identity/content digest for every row and returns `integrity_failure` on corruption;
+- `Reset` coordinates with the Agent invocation gate, writes a reset tombstone, dan membatalkan pre-reset staged/generating inbound work;
+- staging batching memeriksa tombstone yang sama agar pesan lama tidak dapat masuk lagi setelah race dengan reset;
+- an older received/generating/retryable/planned turn blocks a newer conversation batch; order uses the durable SQLite intake sequence rather than timestamp/UUID coincidence, recovery reuses the original durable batch anchor, and a pre-Part-2 turn without an anchor is recovered as a one-message batch;
+- `Trim` is called by retention workflow and pins pending history only. Unknown history is terminal and may age out; the independent turn/action receipt remains the anti-resend tombstone;
 - methods do not accept actor or evaluate permission;
 - application handlers authorize read/reset/import before calling the core method;
 - permission policy revisions are immutable; changing policy rules creates a new revision and updates Agent Config, so a Config-version guard cannot silently authorize against replaced rules;
@@ -976,9 +1026,9 @@ const (
 
 Agent core itself should not normally create `permission_denied`; it propagates it only when an external collaborator such as the response policy/executor returns it.
 
-## Part 1 implementation subset
+## Implementation subsets
 
-Part 1 implements:
+Part 1 historically implemented:
 
 - lazy `AgentRegistry` keyed by tenant/account/chat;
 - `Agent.Key`, `Agent.Config`, and text-only `Agent.Invoke`;
@@ -1001,6 +1051,20 @@ Part 1 does not implement:
 - media input/output;
 - model-selected destination;
 - Agent-owned authorization.
+
+Part 2 implements:
+
+- durable `Agent.History().List/Append/Reset/Trim` with immutable paging, reset tombstone, and retention;
+- atomic user-history intake and assistant-history creation/finalization around the existing durable turn/action lifecycle;
+- deterministic bounded context builder with typed role/provenance and non-overridable adapter policy;
+- canonical internal quote resolution and group reply-to-bot trigger;
+- durable per-chat debounce/batching with bounded burst draining and restart recovery;
+- `/help`, `/info`, and externally owner-authorized `/reset`;
+- migration from the Part 1 schema and invocation-digest compatibility for unquoted stored turns;
+- full-data offline backup, manifest verification, and restore into a new directory;
+- history/batch metrics and retention maintenance.
+
+Part 2 tetap tidak mengimplementasikan model tools, generic model commands, media, scheduler, sub-agent, model-selected destination, atau Agent-owned authorization.
 
 ## Contract tests
 
@@ -1038,7 +1102,19 @@ Required before Part 1 canary:
 - `NotifyConfigChanged` never creates/evicts an Agent and next operation refreshes durable Config;
 - registry close cancels owned work without leaking goroutines.
 
-Part 2 adds History list/append/reset/trim, authorized-version conflict, reset-vs-invoke, retention, idempotent append, and restart tests.
+Required Part 2 additions:
+
+- history pagination, defensive copies, idempotent append, digest collision, version guard, reset, and retention;
+- reset-vs-invoke exclusion and reset-vs-debounce race handling;
+- deterministic context golden serialization, injection-as-data, context bound, stale-order rejection, and exclusion of undelivered assistant output;
+- Part 1 digest compatibility plus quote-aware digest distinction;
+- canonical quote lookup and group reply-to-bot behavior;
+- debounce coalescing, burst splitting without remainder loss, active-generation/pre-batch restart recovery, and same-chat ordering;
+- replayed response plan and assistant history use one normalized durable creation timestamp;
+- successful/failed/unknown action delivery reflected atomically in assistant history;
+- owner-only reset and command idempotency;
+- schema upgrade from Part 1, backup checksum/tamper detection, restore, and history survival;
+- full test suite, race detector, vet, module verification, vulnerability scan, and supported target builds before canary.
 
 ## Rejected contracts
 

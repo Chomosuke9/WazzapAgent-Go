@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -23,6 +25,7 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	defer store.Close()
 	assertSQLitePragma(t, store.db, "foreign_keys", "1")
 	assertSQLitePragma(t, store.db, "journal_mode", "wal")
 	assertSQLitePragma(t, store.db, "integrity_check", "ok")
@@ -30,8 +33,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 1 {
-		t.Fatalf("migration count = %d, want 1", migrations)
+	if migrations != 2 {
+		t.Fatalf("migration count = %d, want 2", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -42,6 +45,59 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatalf("close reopened store: %v", err)
+	}
+}
+
+func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS))
+	if err != nil {
+		t.Fatalf("open raw Part 1 database: %v", err)
+	}
+	part1, err := migrationFiles.ReadFile("migrations/001_part1.sql")
+	if err != nil {
+		t.Fatalf("read Part 1 migration: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        checksum TEXT NOT NULL,
+        applied_at_ms INTEGER NOT NULL
+    ) STRICT`); err != nil {
+		t.Fatalf("create migration ledger: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, string(part1)); err != nil {
+		t.Fatalf("apply Part 1 schema: %v", err)
+	}
+	digest := sha256.Sum256(part1)
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO schema_migrations(version, name, checksum, applied_at_ms) VALUES (1, ?, ?, ?)",
+		"001_part1.sql", hex.EncodeToString(digest[:]), time.Now().UTC().UnixMilli(),
+	); err != nil {
+		t.Fatalf("record Part 1 migration: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw Part 1 database: %v", err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrade database: %v", err)
+	}
+	defer store.Close()
+	var migrations int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
+		t.Fatalf("count upgraded migrations: %v", err)
+	}
+	if migrations != 2 {
+		t.Fatalf("upgraded migration count = %d, want 2", migrations)
+	}
+	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
+		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "SELECT sequence FROM history_entries LIMIT 0"); err != nil {
+		t.Fatalf("Part 2 history table is unavailable: %v", err)
 	}
 }
 
@@ -300,6 +356,252 @@ func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T)
 	}
 }
 
+func TestClaimedBatchSurvivesReopenAndRecoversThroughItsAnchor(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	path := filepath.Join(root, "app.db")
+	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	store, err := OpenWithOptions(ctx, path, Options{Clock: clock})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	firstCandidate := testCandidate(t, "batch-restart-1", "15550000044@s.whatsapp.net")
+	firstCandidate.OccurredAt = clock.now.Add(-time.Second)
+	firstCandidate.ReceivedAt = clock.now
+	secondCandidate := testCandidate(t, "batch-restart-2", "15550000044@s.whatsapp.net")
+	secondCandidate.TenantID = firstCandidate.TenantID
+	secondCandidate.AccountID = firstCandidate.AccountID
+	secondCandidate.OccurredAt = firstCandidate.OccurredAt
+	secondCandidate.ReceivedAt = firstCandidate.ReceivedAt
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, firstCandidate)
+	if err != nil {
+		t.Fatalf("claim first: %v", err)
+	}
+	second, err := store.Inbound().ClaimAndResolveSender(ctx, secondCandidate)
+	if err != nil {
+		t.Fatalf("claim second: %v", err)
+	}
+	// Make lexical InvocationID order the opposite of durable intake order.
+	// Batching must use the SQLite intake sequence, not a random UUID tie-break.
+	firstID, _ := identity.ParseInvocationID("ffffffff-ffff-7fff-bfff-ffffffffffff")
+	secondID, _ := identity.ParseInvocationID("00000000-0000-7000-8000-000000000001")
+	for _, replacement := range []struct {
+		providerID string
+		value      identity.InvocationID
+	}{
+		{providerID: firstCandidate.ProviderMessageID, value: firstID},
+		{providerID: secondCandidate.ProviderMessageID, value: secondID},
+	} {
+		if _, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET invocation_id = ?
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_message_id = ?`,
+			replacement.value.String(), first.Message.TenantID.String(), first.Message.AccountID.String(),
+			first.Message.ChatID.String(), replacement.providerID,
+		); err != nil {
+			t.Fatalf("replace invocation ID: %v", err)
+		}
+	}
+	first.Message.InvocationID = firstID
+	second.Message.InvocationID = secondID
+	readyAt := clock.now.Add(time.Second)
+	firstStage, err := store.Inbound().StageBatch(ctx, first.Message, readyAt)
+	if err != nil {
+		t.Fatalf("stage first: %v", err)
+	}
+	secondStage, err := store.Inbound().StageBatch(ctx, second.Message, readyAt)
+	if err != nil {
+		t.Fatalf("stage second: %v", err)
+	}
+	if !firstStage.Wait || secondStage.Wait {
+		t.Fatalf("batch waiter election = first:%v second:%v", firstStage.Wait, secondStage.Wait)
+	}
+	clock.now = readyAt
+	batch, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
+	if err != nil || len(batch.Messages) != 2 ||
+		batch.Messages[1].InvocationID != second.Message.InvocationID {
+		t.Fatalf("claim batch = %#v, err=%v", batch, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close before restart: %v", err)
+	}
+	reopened, err := OpenWithOptions(ctx, path, Options{Clock: clock})
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer reopened.Close()
+	clock.now = clock.now.Add(10 * time.Second)
+	recoverable, err := reopened.Inbound().ListRecoverableInbound(
+		ctx, first.Message.TenantID, clock.now, clock.now.Add(-time.Second), 10,
+	)
+	if err != nil || len(recoverable) != 1 ||
+		recoverable[0].InvocationID != second.Message.InvocationID {
+		t.Fatalf("recoverable anchors = %#v, err=%v", recoverable, err)
+	}
+	recoveredBatch, err := reopened.Inbound().ClaimBatch(ctx, recoverable[0], clock.now, 8)
+	if err != nil || len(recoveredBatch.Messages) != 2 {
+		t.Fatalf("recovered batch = %#v, err=%v", recoveredBatch, err)
+	}
+}
+
+func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) {
+	ctx := context.Background()
+	clock := &testClock{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
+	store := openTestStoreWithClock(t, clock)
+	firstCandidate := testCandidate(t, "batch-retry-1", "15550000046@s.whatsapp.net")
+	firstCandidate.ReceivedAt = clock.now
+	firstCandidate.OccurredAt = clock.now.Add(-time.Second)
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, firstCandidate)
+	if err != nil {
+		t.Fatalf("claim first: %v", err)
+	}
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	stage, err := store.Inbound().StageBatch(ctx, first.Message, clock.now)
+	if err != nil || !stage.Wait {
+		t.Fatalf("stage first = %#v, err=%v", stage, err)
+	}
+	batch, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
+	if err != nil || len(batch.Messages) != 1 {
+		t.Fatalf("claim first batch = %#v, err=%v", batch, err)
+	}
+	capabilities, _ := agent.NewCapabilitySet()
+	invocation := agent.Invocation{
+		ID: first.Message.InvocationID, Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: first.Message.CausationID},
+		Cause:  agent.CauseInboundMessage,
+		Sender: &agent.SenderContext{ParticipantID: first.Message.SenderID, Ref: first.Message.SenderRef, DisplayName: first.Message.SenderName},
+		Input:  []agent.ContentPart{agent.TextPart{Text: first.Message.Text}}, Capabilities: capabilities,
+		PolicyVersion: snapshot.Version, RequestedAt: first.Message.OccurredAt,
+	}
+	digest, err := agent.DigestInvocation(key, invocation)
+	if err != nil {
+		t.Fatalf("digest first: %v", err)
+	}
+	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	if err != nil {
+		t.Fatalf("claim first turn: %v", err)
+	}
+	if err := store.Turns().FailGeneration(ctx, agent.FailGenerationRequest{
+		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, Code: agent.ErrorUnavailable,
+		Retryable: true, RetryAfter: clock.now,
+	}); err != nil {
+		t.Fatalf("mark first retryable: %v", err)
+	}
+
+	clock.now = clock.now.Add(time.Millisecond)
+	secondCandidate := firstCandidate
+	secondCandidate.ProviderMessageID = "batch-retry-2"
+	secondCandidate.OccurredAt = clock.now
+	secondCandidate.ReceivedAt = clock.now
+	second, err := store.Inbound().ClaimAndResolveSender(ctx, secondCandidate)
+	if err != nil {
+		t.Fatalf("claim second: %v", err)
+	}
+	secondStage, err := store.Inbound().StageBatch(ctx, second.Message, clock.now)
+	if err != nil {
+		t.Fatalf("stage second: %v", err)
+	}
+	if secondStage.Wait || secondStage.Handled {
+		t.Fatalf("newer message bypassed retryable anchor: %#v", secondStage)
+	}
+
+	recoveryStage, err := store.Inbound().StageBatch(ctx, first.Message, clock.now)
+	if err != nil || !recoveryStage.Wait || recoveryStage.Handled {
+		t.Fatalf("stage retry recovery = %#v, err=%v", recoveryStage, err)
+	}
+	recovered, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
+	if err != nil || len(recovered.Messages) != 1 || recovered.Messages[0].InvocationID != first.Message.InvocationID {
+		t.Fatalf("recover retryable batch = %#v, err=%v", recovered, err)
+	}
+}
+
+func TestPreBatchRetryableTurnRecoversAsSingleton(t *testing.T) {
+	ctx := context.Background()
+	clock := &testClock{now: time.Date(2026, 9, 8, 0, 30, 0, 0, time.UTC)}
+	store := openTestStoreWithClock(t, clock)
+	candidate := testCandidate(t, "pre-batch-retry", "15550000047@s.whatsapp.net")
+	candidate.ReceivedAt = clock.now
+	candidate.OccurredAt = clock.now.Add(-time.Second)
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
+	if err != nil {
+		t.Fatalf("claim inbound: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	capabilities, _ := agent.NewCapabilitySet()
+	invocation := agent.Invocation{
+		ID: claimed.Message.InvocationID, Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: claimed.Message.CausationID},
+		Cause:  agent.CauseInboundMessage,
+		Sender: &agent.SenderContext{ParticipantID: claimed.Message.SenderID, Ref: claimed.Message.SenderRef, DisplayName: claimed.Message.SenderName},
+		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
+		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
+	}
+	digest, err := agent.DigestInvocation(key, invocation)
+	if err != nil {
+		t.Fatalf("digest invocation: %v", err)
+	}
+	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	if err != nil {
+		t.Fatalf("claim turn: %v", err)
+	}
+	if err := store.Turns().FailGeneration(ctx, agent.FailGenerationRequest{
+		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, Code: agent.ErrorUnavailable,
+		Retryable: true, RetryAfter: clock.now,
+	}); err != nil {
+		t.Fatalf("mark turn retryable: %v", err)
+	}
+	stage, err := store.Inbound().StageBatch(ctx, claimed.Message, clock.now)
+	if err != nil || !stage.Wait || stage.Handled {
+		t.Fatalf("stage pre-batch recovery = %#v, err=%v", stage, err)
+	}
+	batch, err := store.Inbound().ClaimBatch(ctx, claimed.Message, clock.now, 8)
+	if err != nil || len(batch.Messages) != 1 || batch.Messages[0].InvocationID != invocation.ID {
+		t.Fatalf("pre-batch recovery = %#v, err=%v", batch, err)
+	}
+}
+
+func TestMessageCannotEnterBatchAfterAConcurrentHistoryReset(t *testing.T) {
+	ctx := context.Background()
+	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	store := openTestStoreWithClock(t, clock)
+	candidate := testCandidate(t, "batch-reset-race", "15550000045@s.whatsapp.net")
+	candidate.OccurredAt = clock.now.Add(-time.Second)
+	candidate.ReceivedAt = clock.now
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
+	if err != nil {
+		t.Fatalf("claim message before reset: %v", err)
+	}
+	key := agent.Key{
+		TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID,
+	}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	clock.now = clock.now.Add(time.Second)
+	if err := store.History().ResetIfConfigVersion(ctx, key, snapshot.Version, clock.now); err != nil {
+		t.Fatalf("reset history: %v", err)
+	}
+	stage, err := store.Inbound().StageBatch(ctx, claimed.Message, clock.now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("stage pre-reset message: %v", err)
+	}
+	if !stage.Handled {
+		t.Fatal("pre-reset message entered a post-reset batch")
+	}
+	batch, err := store.Inbound().ClaimBatch(ctx, claimed.Message, clock.now, 8)
+	if err != nil {
+		t.Fatalf("observe discarded message: %v", err)
+	}
+	if !batch.Handled || len(batch.Messages) != 0 {
+		t.Fatalf("discarded batch = %#v", batch)
+	}
+}
+
 func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
@@ -398,6 +700,14 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if record.State != agent.TurnSucceeded || record.Delivery != agent.DeliverySucceeded || record.Plan.ActionID != plan.ActionID {
 		t.Fatalf("completed turn = %#v", record)
 	}
+	historyPage, err := store.History().ListIfConfigVersion(
+		context.Background(), key, configSnapshot.Version, agent.HistoryQuery{Limit: 10},
+	)
+	if err != nil || len(historyPage.Entries) != 1 ||
+		historyPage.Entries[0].Role != agent.HistoryAssistant ||
+		historyPage.Entries[0].Delivery != agent.DeliverySucceeded {
+		t.Fatalf("completed assistant history = %#v, err=%v", historyPage, err)
+	}
 	observed, err := actions.Claim(context.Background(), plan.Dispatch, clock.now)
 	if err != nil || observed.State != action.StateSucceeded {
 		t.Fatalf("observe completed action = %#v, err=%v", observed, err)
@@ -429,6 +739,59 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err := store.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM outbound_actions
       WHERE tenant_id = ? AND action_id = ?`, key.TenantID.String(), plan.ActionID.String()).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("cascaded terminal action count = %d, err=%v", remaining, err)
+	}
+}
+
+func TestPlanReplayUsesTheExactAssistantHistoryTimestamp(t *testing.T) {
+	ctx := context.Background()
+	clock := &testClock{now: time.Date(2026, 9, 8, 1, 30, 0, 999_500_000, time.UTC)}
+	store := openTestStoreWithClock(t, clock)
+	candidate := testCandidate(t, "history-timestamp-replay", "15550000048@s.whatsapp.net")
+	candidate.ReceivedAt = clock.now
+	candidate.OccurredAt = clock.now.Add(-time.Second)
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
+	if err != nil {
+		t.Fatalf("claim inbound: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	capabilities, _ := agent.NewCapabilitySet()
+	invocation := agent.Invocation{
+		ID: claimed.Message.InvocationID, Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: claimed.Message.CausationID},
+		Cause:  agent.CauseInboundMessage,
+		Sender: &agent.SenderContext{ParticipantID: claimed.Message.SenderID, Ref: claimed.Message.SenderRef, DisplayName: claimed.Message.SenderName},
+		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
+		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
+	}
+	digest, err := agent.DigestInvocation(key, invocation)
+	if err != nil {
+		t.Fatalf("digest invocation: %v", err)
+	}
+	claim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	if err != nil {
+		t.Fatalf("claim turn: %v", err)
+	}
+	clock.step = time.Millisecond
+	plan, err := store.Turns().CommitPlan(ctx, agent.CommitPlanRequest{
+		Key: key, InvocationID: invocation.ID, Lease: claim.Lease,
+		ConfigVersion: snapshot.Version, ResponseText: "same timestamp",
+	})
+	if err != nil {
+		t.Fatalf("commit plan: %v", err)
+	}
+	replayed, err := store.Turns().Load(ctx, key, invocation.ID)
+	if err != nil || replayed.Plan == nil || !replayed.Plan.CreatedAt.Equal(plan.CreatedAt) {
+		t.Fatalf("replayed plan = %#v, original = %#v, err=%v", replayed.Plan, plan, err)
+	}
+	if err := store.History().Append(ctx, key, agent.HistoryEntry{
+		MessageID: plan.ResponseID, InvocationID: invocation.ID, Causation: invocation.Causation,
+		Role: agent.HistoryAssistant, Content: []agent.ContentPart{agent.TextPart{Text: plan.Text}},
+		Delivery: agent.DeliveryPending, CreatedAt: replayed.Plan.CreatedAt,
+	}); err != nil {
+		t.Fatalf("idempotent assistant history replay: %v", err)
 	}
 }
 
@@ -633,6 +996,14 @@ func TestExpiredExecutingActionBecomesUnknownAndCannotBeReclaimed(t *testing.T) 
 	if err != nil || record.State != agent.TurnUnknownOutcome || record.Delivery != agent.DeliveryUnknownOutcome {
 		t.Fatalf("unknown turn receipt = %#v, err=%v", record, err)
 	}
+	history, err := store.History().ListIfConfigVersion(
+		context.Background(), key, snapshot.Version, agent.HistoryQuery{Limit: 10},
+	)
+	if err != nil || len(history.Entries) != 1 ||
+		history.Entries[0].Role != agent.HistoryAssistant ||
+		history.Entries[0].Delivery != agent.DeliveryUnknownOutcome {
+		t.Fatalf("unknown assistant history = %#v, err=%v", history, err)
+	}
 }
 
 func openTestStore(t *testing.T) *Store {
@@ -699,9 +1070,16 @@ func testCandidate(t *testing.T, providerMessageID, chat string) conversation.In
 	}
 }
 
-type testClock struct{ now time.Time }
+type testClock struct {
+	now  time.Time
+	step time.Duration
+}
 
-func (clock *testClock) Now() time.Time { return clock.now }
+func (clock *testClock) Now() time.Time {
+	value := clock.now
+	clock.now = clock.now.Add(clock.step)
+	return value
+}
 
 func assertSQLitePragma(t *testing.T, db *sql.DB, name, want string) {
 	t.Helper()

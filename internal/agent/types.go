@@ -101,10 +101,43 @@ type Invocation struct {
 	Causation     CausationRef
 	Cause         InvocationCause
 	Sender        *SenderContext
+	Quote         *QuoteContext
 	Input         []ContentPart
 	Capabilities  CapabilitySet
 	PolicyVersion ConfigVersion
 	RequestedAt   time.Time
+}
+
+type QuoteContext struct {
+	MessageID identity.MessageID
+	Role      HistoryRole
+	SenderRef identity.SenderRef
+	Text      string
+}
+
+type ModelRole uint8
+
+const (
+	ModelSystem ModelRole = iota + 1
+	ModelUser
+	ModelAssistant
+)
+
+type ModelProvenance uint8
+
+const (
+	ProvenanceBasePrompt ModelProvenance = iota + 1
+	ProvenancePromptOverride
+	ProvenanceHistoryUser
+	ProvenanceHistoryAssistant
+	ProvenanceHistorySystem
+	ProvenanceCurrentUser
+)
+
+type ModelMessage struct {
+	Role       ModelRole
+	Provenance ModelProvenance
+	Content    string
 }
 
 type ModelRequest struct {
@@ -112,10 +145,7 @@ type ModelRequest struct {
 	InvocationID  identity.InvocationID
 	ConfigVersion ConfigVersion
 	Model         ModelConfig
-	Prompt        string
-	Override      *PromptOverride
-	Sender        *SenderContext
-	Input         []ContentPart
+	Messages      []ModelMessage
 	Capabilities  CapabilitySet
 }
 
@@ -132,7 +162,14 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 		return InvocationDigest{}, err
 	}
 	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.invocation.v1")
+	// Preserve the exact Part 1 digest for invocations without a quote so
+	// durable turns remain replayable after upgrading. Quote-aware invocations
+	// use a new canonical version instead of silently changing v1.
+	if invocation.Quote == nil {
+		canonical.WriteString("wazzapagent.invocation.v1")
+	} else {
+		canonical.WriteString("wazzapagent.invocation.v2")
+	}
 	writeField(&canonical, key.TenantID.String())
 	writeField(&canonical, key.AccountID.String())
 	writeField(&canonical, key.ChatID.String())
@@ -146,6 +183,12 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 		writeField(&canonical, invocation.Sender.ParticipantID.String())
 		writeField(&canonical, invocation.Sender.Ref.String())
 		writeField(&canonical, invocation.Sender.DisplayName)
+	}
+	if invocation.Quote != nil {
+		writeField(&canonical, invocation.Quote.MessageID.String())
+		canonical.WriteByte(byte(invocation.Quote.Role))
+		writeField(&canonical, invocation.Quote.SenderRef.String())
+		writeField(&canonical, invocation.Quote.Text)
 	}
 	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Input)))
 	for _, part := range invocation.Input {
@@ -193,6 +236,9 @@ func validateInvocation(key Key, invocation Invocation) error {
 	if invocation.Sender != nil && (!utf8.ValidString(invocation.Sender.DisplayName) || len(invocation.Sender.DisplayName) > MaxDisplayNameBytes) {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("invalid sender display name"))
 	}
+	if err := validateQuoteContext(invocation.Quote); err != nil {
+		return err
+	}
 	if len(invocation.Input) == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("input is required"))
 	}
@@ -200,7 +246,7 @@ func validateInvocation(key Key, invocation Invocation) error {
 	for _, part := range invocation.Input {
 		text, ok := part.(TextPart)
 		if !ok {
-			return NewError(ErrorUnsupported, "validate invocation", fmt.Errorf("Part 1 accepts text only"))
+			return NewError(ErrorUnsupported, "validate invocation", fmt.Errorf("Part 2 accepts text only"))
 		}
 		if text.Text == "" || !utf8.ValidString(text.Text) {
 			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("text must be non-empty valid UTF-8"))
@@ -225,6 +271,14 @@ func cloneSender(sender *SenderContext) *SenderContext {
 	}
 	copySender := *sender
 	return &copySender
+}
+
+func cloneQuote(quote *QuoteContext) *QuoteContext {
+	if quote == nil {
+		return nil
+	}
+	copyQuote := *quote
+	return &copyQuote
 }
 
 func cloneContent(parts []ContentPart) []ContentPart {

@@ -18,6 +18,7 @@ Rewrite bersifat greenfield:
 - **Part** adalah increment produk yang deployable, bukan layer teknis.
 - **Part 0** hanya persiapan, eksplorasi, keputusan, spike, dan rencana.
 - **Part 1** adalah barebone production canary, target hari ini.
+- **Part 2** adalah reliable conversation core; implementasi lokal selesai 2026-09-09 dan real-device canary masih harus dibuktikan.
 - Lulus Part 1 tidak berarti stable release. Artifact diberi label `v0.1-canary`.
 - Stable release baru ditetapkan setelah reliability, security, recovery, dan soak gate pada Part 9 lulus.
 - Setiap Part memiliki scope, non-scope, exit gate, kill switch, dan rollback sendiri.

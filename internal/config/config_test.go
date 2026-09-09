@@ -106,6 +106,26 @@ func TestLoadRuntimeAllowsMissingDefaultDotEnv(t *testing.T) {
 	}
 }
 
+func TestLoadDataDirRuntimeIgnoresInvalidLiveRuntimeSettings(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	dataDir := filepath.Join(directory, "offline-data")
+	if err := os.WriteFile(filepath.Join(directory, defaultDotEnvPath), []byte(strings.Join([]string{
+		"WAZZAP_DATA_DIR=" + dataDir,
+		"WAZZAP_LLM_ENDPOINT=not-a-url",
+		"WAZZAP_LLM_API_KEY=",
+	}, "\n")), 0o600); err != nil {
+		t.Fatalf("write dotenv: %v", err)
+	}
+	got, err := LoadDataDirRuntime(mapLookup(nil))
+	if err != nil {
+		t.Fatalf("load offline data directory: %v", err)
+	}
+	if got != filepath.Clean(dataDir) {
+		t.Fatalf("offline data directory = %q, want %q", got, filepath.Clean(dataDir))
+	}
+}
+
 func TestLoadRuntimeGeneratesAndReusesStableIdentity(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dataDir := filepath.Join(t.TempDir(), "runtime-data")

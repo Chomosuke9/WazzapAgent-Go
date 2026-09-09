@@ -207,6 +207,13 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 - Same-chat ordering dan cross-chat concurrency lulus under load.
 - Network-loss/process-kill/replay tests tidak membuat silent loss atau duplicate visible response.
 
+### Status implementasi 2026-09-09
+
+- Durable history child, version-guarded reset/read, retention, canonical quote, replied-to-bot, context builder, provenance boundary, batching/debounce/burst cap, dan control commands telah diimplementasikan.
+- Action/inbound recovery tetap memakai durable lease/outbox; expired executing send menjadi `unknown_outcome` dan tidak di-resend secara buta.
+- Offline full-data backup, checksum verification, restore-to-new-directory, conversation metrics, dan local fault/replay tests tersedia.
+- Real-device DM/group reply, reconnect, forced process kill, network-loss observation, restore drill, dan soak masih pending; Part 2 belum boleh disebut production-complete atau stable.
+
 ## Part 3 — Permission, commands, dan typed actions
 
 ### Work items

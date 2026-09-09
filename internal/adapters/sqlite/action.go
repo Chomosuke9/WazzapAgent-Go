@@ -412,6 +412,17 @@ func updateReceiptAndTurn(
 	if err := requireOne(turnResult, err, "update turn delivery"); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE history_entries SET
+        delivery_status = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
+        AND message_id = (SELECT response_id FROM outbound_actions
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?)`,
+		uint8(delivery), updatedAtMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
+	); err != nil {
+		return storageError("update assistant history delivery", err)
+	}
 	return nil
 }
 

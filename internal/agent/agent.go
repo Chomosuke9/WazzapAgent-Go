@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -12,33 +11,42 @@ import (
 )
 
 type Dependencies struct {
-	Defaults    ConfigValues
-	ConfigStore ConfigStore
-	Turns       TurnStore
-	Model       ModelInvoker
-	Responses   ResponseDispatcher
-	Events      ConfigEventSink
-	Clock       Clock
+	Defaults      ConfigValues
+	ConfigStore   ConfigStore
+	HistoryStore  HistoryStore
+	Turns         TurnStore
+	Context       ContextBuilder
+	HistoryWindow uint32
+	Model         ModelInvoker
+	Responses     ResponseDispatcher
+	Events        ConfigEventSink
+	Clock         Clock
 }
 
 type Agent struct {
-	key       Key
-	config    *Config
-	turns     TurnStore
-	model     ModelInvoker
-	responses ResponseDispatcher
-	clock     Clock
-	gate      chan struct{}
-	inFlight  atomic.Int64
+	key           Key
+	config        *Config
+	history       *History
+	turns         TurnStore
+	model         ModelInvoker
+	context       ContextBuilder
+	historyWindow uint32
+	responses     ResponseDispatcher
+	clock         Clock
+	gate          *operationGate
 }
 
 func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error) {
 	if err := key.Validate(); err != nil {
 		return nil, err
 	}
-	if dependencies.ConfigStore == nil || dependencies.Turns == nil || dependencies.Model == nil ||
+	if dependencies.ConfigStore == nil || dependencies.HistoryStore == nil || dependencies.Turns == nil ||
+		dependencies.Context == nil || dependencies.Model == nil ||
 		dependencies.Responses == nil || dependencies.Events == nil || dependencies.Clock == nil {
-		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("all Part 1 dependencies are required"))
+		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("all Part 2 dependencies are required"))
+	}
+	if dependencies.HistoryWindow == 0 || dependencies.HistoryWindow > MaxHistoryPageSize {
+		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("history window must be between 1 and %d", MaxHistoryPageSize))
 	}
 	config, err := newConfig(
 		ctx,
@@ -51,27 +59,35 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 	if err != nil {
 		return nil, err
 	}
-	agent := &Agent{
-		key:       key,
-		config:    config,
-		turns:     dependencies.Turns,
-		model:     dependencies.Model,
-		responses: dependencies.Responses,
-		clock:     dependencies.Clock,
-		gate:      make(chan struct{}, 1),
+	gate := newOperationGate()
+	history, err := newHistory(key, dependencies.HistoryStore, gate, dependencies.Clock)
+	if err != nil {
+		return nil, err
 	}
-	agent.gate <- struct{}{}
+	agent := &Agent{
+		key:           key,
+		config:        config,
+		history:       history,
+		turns:         dependencies.Turns,
+		model:         dependencies.Model,
+		context:       dependencies.Context,
+		historyWindow: dependencies.HistoryWindow,
+		responses:     dependencies.Responses,
+		clock:         dependencies.Clock,
+		gate:          gate,
+	}
 	return agent, nil
 }
 
-func (agent *Agent) Key() Key        { return agent.key }
-func (agent *Agent) Config() *Config { return agent.config }
+func (agent *Agent) Key() Key          { return agent.key }
+func (agent *Agent) Config() *Config   { return agent.config }
+func (agent *Agent) History() *History { return agent.history }
 
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
-	if err := agent.acquire(ctx); err != nil {
+	if err := agent.gate.acquire(ctx); err != nil {
 		return InvokeResult{}, err
 	}
-	defer agent.release()
+	defer agent.gate.release()
 
 	digest, err := DigestInvocation(agent.key, invocation)
 	if err != nil {
@@ -88,6 +104,9 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 			return InvokeResult{}, NewError(ErrorConflict, "invoke agent", fmt.Errorf("invocation ID is bound to different input"))
 		}
 		if record.Plan != nil {
+			if err := agent.ensureInvocationHistory(ctx, record.MessageID, invocation, record.Plan, record.Delivery); err != nil {
+				return InvokeResult{}, err
+			}
 			return agent.dispatchPlan(ctx, *record.Plan)
 		}
 		if record.State == TurnFailedTerminal {
@@ -117,10 +136,32 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		return InvokeResult{}, err
 	}
 	if claim.Plan != nil {
+		if err := agent.ensureInvocationHistory(ctx, claim.MessageID, invocation, claim.Plan, deliveryForTurnState(claim.State)); err != nil {
+			return InvokeResult{}, err
+		}
 		return agent.dispatchPlan(ctx, *claim.Plan)
 	}
 	if claim.State != TurnGenerating || claim.Lease == "" {
 		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", fmt.Errorf("turn store returned invalid generation claim"))
+	}
+	if claim.MessageID.IsZero() {
+		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", fmt.Errorf("turn store returned an empty message ID"))
+	}
+	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(claim.MessageID, invocation)); err != nil {
+		agent.failGeneration(invocation.ID, claim.Lease, err)
+		return InvokeResult{}, err
+	}
+	page, err := agent.history.List(ctx, snapshot.Version, HistoryQuery{Limit: agent.historyWindow})
+	if err != nil {
+		agent.failGeneration(invocation.ID, claim.Lease, err)
+		return InvokeResult{}, err
+	}
+	messages, err := agent.context.Build(ContextBuildRequest{
+		Config: snapshot, History: page.Entries, CurrentInvocationID: invocation.ID,
+	})
+	if err != nil {
+		agent.failGeneration(invocation.ID, claim.Lease, err)
+		return InvokeResult{}, err
 	}
 
 	request := ModelRequest{
@@ -128,10 +169,7 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		InvocationID:  invocation.ID,
 		ConfigVersion: snapshot.Version,
 		Model:         snapshot.Model,
-		Prompt:        snapshot.Prompt,
-		Override:      clonePromptOverride(snapshot.PromptOverride),
-		Sender:        cloneSender(invocation.Sender),
-		Input:         cloneContent(invocation.Input),
+		Messages:      messages,
 		Capabilities:  CapabilitySet{values: invocation.Capabilities.Values()},
 	}
 	generated, err := agent.model.Generate(ctx, request)
@@ -155,6 +193,55 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		return InvokeResult{}, err
 	}
 	return agent.dispatchPlan(ctx, plan)
+}
+
+func userHistoryEntry(messageID identity.MessageID, invocation Invocation) HistoryEntry {
+	return HistoryEntry{
+		MessageID: messageID, InvocationID: invocation.ID, Causation: invocation.Causation,
+		Role: HistoryUser, Sender: cloneSender(invocation.Sender), Quote: cloneQuote(invocation.Quote),
+		Content: cloneContent(invocation.Input), Delivery: DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
+	}
+}
+
+func (agent *Agent) ensureInvocationHistory(
+	ctx context.Context,
+	messageID identity.MessageID,
+	invocation Invocation,
+	plan *StoredPlan,
+	delivery DeliveryStatus,
+) error {
+	if messageID.IsZero() {
+		return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("turn message ID is missing"))
+	}
+	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(messageID, invocation)); err != nil {
+		return err
+	}
+	if plan == nil {
+		return nil
+	}
+	if strings.TrimSpace(plan.Text) == "" {
+		// Terminal plan content may already have been scrubbed while its
+		// independently retained history/receipt tombstones remain valid.
+		return nil
+	}
+	return agent.history.appendWithinGate(ctx, HistoryEntry{
+		MessageID: plan.ResponseID, InvocationID: invocation.ID, Causation: invocation.Causation,
+		Role: HistoryAssistant, Content: []ContentPart{TextPart{Text: plan.Text}},
+		Delivery: delivery, CreatedAt: plan.CreatedAt,
+	})
+}
+
+func deliveryForTurnState(state TurnState) DeliveryStatus {
+	switch state {
+	case TurnSucceeded:
+		return DeliverySucceeded
+	case TurnFailedTerminal:
+		return DeliveryFailedTerminal
+	case TurnUnknownOutcome:
+		return DeliveryUnknownOutcome
+	default:
+		return DeliveryPending
+	}
 }
 
 func (agent *Agent) dispatchPlan(ctx context.Context, plan StoredPlan) (InvokeResult, error) {
@@ -201,22 +288,7 @@ func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease Tur
 	_ = agent.turns.FailGeneration(cleanupCtx, request)
 }
 
-func (agent *Agent) acquire(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return contextError("wait for agent invocation gate", ctx.Err())
-	case <-agent.gate:
-		agent.inFlight.Add(1)
-		return nil
-	}
-}
-
-func (agent *Agent) release() {
-	agent.inFlight.Add(-1)
-	agent.gate <- struct{}{}
-}
-
-func (agent *Agent) isInFlight() bool { return agent.inFlight.Load() > 0 }
+func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
 func validateModelResult(result ModelResult) error {
 	if strings.TrimSpace(result.Text) == "" || !utf8.ValidString(result.Text) {
@@ -230,6 +302,7 @@ func validateModelResult(result ModelResult) error {
 
 func cloneInvocation(invocation Invocation) Invocation {
 	invocation.Sender = cloneSender(invocation.Sender)
+	invocation.Quote = cloneQuote(invocation.Quote)
 	invocation.Input = cloneContent(invocation.Input)
 	invocation.Capabilities = CapabilitySet{values: invocation.Capabilities.Values()}
 	return invocation
