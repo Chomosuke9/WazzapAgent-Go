@@ -356,7 +356,7 @@ Prompt sources:
 4. trusted current sender/chat metadata;
 5. exact current user text.
 
-These remain separate model messages/data structures until the provider adapter. Do not concatenate a custom plaintext transcript that mixes trusted metadata and user content.
+These remain separate typed model messages/data structures until the provider adapter. History entries may use the compact legacy transcript renderer to keep token cost low, but trusted safety instructions must never be concatenated with raw chat content into one untyped system prompt.
 
 Part 1 command grammar is intentionally closed:
 

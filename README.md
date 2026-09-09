@@ -45,7 +45,7 @@ Termasuk:
 
 Belum termasuk media, tool calling, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
-Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai representasi JSON terstruktur (bukan renderer pretty-print seperti format transcript lama).
+Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact kompatibel format lama (`【#id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) agar hemat token. Metadata durable tetap disimpan terstruktur di SQLite.
 
 ## Mulai
 

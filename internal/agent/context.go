@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
@@ -123,58 +120,13 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 	text := flattenContent(entry.Content)
 	switch entry.Role {
 	case HistoryUser:
-		type quoteEnvelope struct {
-			Sequence  uint64 `json:"sequence,omitempty"`
-			MessageID string `json:"message_id"`
-			Role      string `json:"role"`
-			SenderRef string `json:"sender_ref,omitempty"`
-			Text      string `json:"text"`
-		}
-		type userEnvelope struct {
-			Type        string         `json:"type"`
-			Sequence    uint64         `json:"sequence,omitempty"`
-			CreatedAt   string         `json:"created_at"`
-			MessageID   string         `json:"message_id"`
-			SenderRef   string         `json:"sender_ref"`
-			DisplayName string         `json:"display_name,omitempty"`
-			Text        string         `json:"text"`
-			Quote       *quoteEnvelope `json:"quote,omitempty"`
-		}
-		envelope := userEnvelope{
-			Type: "chat_message", Sequence: entry.Sequence, CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339), MessageID: entry.MessageID.String(),
-			SenderRef: entry.Sender.Ref.String(), DisplayName: entry.Sender.DisplayName, Text: text,
-		}
-		if entry.Quote != nil {
-			role := "user"
-			if entry.Quote.Role == HistoryAssistant {
-				role = "assistant"
-			}
-			envelope.Quote = &quoteEnvelope{
-				Sequence: entry.Quote.Sequence, MessageID: entry.Quote.MessageID.String(), Role: role,
-				SenderRef: entry.Quote.SenderRef.String(), Text: entry.Quote.Text,
-			}
-		}
-		encoded, err := marshalContextJSON(envelope)
-		if err != nil {
-			return ModelMessage{}, err
-		}
 		provenance := ProvenanceHistoryUser
 		if current {
 			provenance = ProvenanceCurrentUser
 		}
-		return ModelMessage{Role: ModelUser, Provenance: provenance, Content: "Untrusted chat data (JSON):\n" + encoded}, nil
+		return ModelMessage{Role: ModelUser, Provenance: provenance, Content: formatLegacyHistoryEntry(entry, text)}, nil
 	case HistoryAssistant:
-		encoded, err := marshalContextJSON(struct {
-			Type      string `json:"type"`
-			Sequence  uint64 `json:"sequence,omitempty"`
-			CreatedAt string `json:"created_at"`
-			MessageID string `json:"message_id"`
-			Text      string `json:"text"`
-		}{Type: "assistant_message", Sequence: entry.Sequence, CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339), MessageID: entry.MessageID.String(), Text: text})
-		if err != nil {
-			return ModelMessage{}, err
-		}
-		return ModelMessage{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: encoded}, nil
+		return ModelMessage{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: formatLegacyHistoryEntry(entry, text)}, nil
 	case HistorySystem:
 		return ModelMessage{Role: ModelSystem, Provenance: ProvenanceHistorySystem, Content: text}, nil
 	default:
@@ -182,14 +134,59 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 	}
 }
 
-func marshalContextJSON(value any) (string, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return "", NewError(ErrorInternal, "serialize model context", err)
+// formatLegacyHistoryEntry deliberately keeps the compact transcript grammar
+// used by the original WazzapAgent. Durable storage still keeps structured
+// identity, quote, delivery, and timestamp fields; this is only the view sent
+// to the model. Keeping the view compact matters because it is repeated on
+// every invocation.
+//
+// Example:
+//
+//	【#000040】 12:56
+//	REPLYING TO 【#000038】
+//	Alice 【u_01234567】: lanjutkan
+func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
+	timestamp := entry.CreatedAt.UTC().Format("15:04")
+	if entry.Role == HistorySystem {
+		return fmt.Sprintf("【#system】 %s\nSYSTEM: %s", timestamp, text)
 	}
-	return strings.TrimSuffix(buffer.String(), "\n"), nil
+
+	contextID := formatLegacyContextID(entry.Sequence)
+	if entry.Role == HistoryAssistant && entry.Delivery != DeliverySucceeded {
+		// Pending/unknown assistant output is normally omitted from model
+		// context. Keep this marker for callers that render an entry directly,
+		// matching the legacy transcript while delivery is unresolved.
+		contextID = "pending"
+	}
+	lines := []string{fmt.Sprintf("【#%s】 %s", contextID, timestamp)}
+	if entry.Quote != nil {
+		lines = append(lines, fmt.Sprintf("REPLYING TO 【#%s】", formatLegacyContextID(entry.Quote.Sequence)))
+	}
+
+	if entry.Role == HistoryAssistant {
+		lines = append(lines, fmt.Sprintf("You 【You】: %s", text))
+		return strings.Join(lines, "\n")
+	}
+
+	displayName := "unknown"
+	senderRef := "unknown"
+	if entry.Sender != nil {
+		if trimmed := strings.TrimSpace(entry.Sender.DisplayName); trimmed != "" {
+			displayName = trimmed
+		}
+		if value := entry.Sender.Ref.String(); value != "" {
+			senderRef = value
+		}
+	}
+	lines = append(lines, fmt.Sprintf("%s 【%s】: %s", displayName, senderRef, text))
+	return strings.Join(lines, "\n")
+}
+
+// Legacy context IDs are six decimal digits and wrap at 999999. The durable
+// sequence remains the source of truth for ordering and lookup; this modulo
+// only preserves the old compact display representation.
+func formatLegacyContextID(sequence uint64) string {
+	return fmt.Sprintf("%06d", sequence%1_000_000)
 }
 
 func flattenContent(parts []ContentPart) string {

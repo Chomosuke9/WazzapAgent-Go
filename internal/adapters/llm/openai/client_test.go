@@ -66,8 +66,8 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 		encoded.Messages[2].Content != "chat override" || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
-	if !strings.Contains(encoded.Messages[3].Content, "sender_ref") || strings.Contains(encoded.Messages[3].Content, "participant") {
-		t.Fatalf("user envelope leaked internal identity or omitted sender ref: %q", encoded.Messages[3].Content)
+	if !strings.Contains(encoded.Messages[3].Content, "【u_") || strings.Contains(encoded.Messages[3].Content, "participant") {
+		t.Fatalf("compact user context leaked internal identity or omitted sender ref: %q", encoded.Messages[3].Content)
 	}
 }
 
@@ -299,7 +299,7 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 		Messages: []agent.ModelMessage{
 			{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "base prompt"},
 			{Role: agent.ModelUser, Provenance: agent.ProvenanceCurrentUser,
-				Content: "Untrusted chat data (JSON):\n{\"sender_ref\":\"" + senderRef.String() + "\",\"text\":\"hello from user\"}"},
+				Content: "【#000001】 00:00\nAlice 【" + senderRef.String() + "】: hello from user"},
 		},
 		Capabilities: capabilities,
 	}

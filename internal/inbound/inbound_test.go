@@ -2,7 +2,6 @@ package inbound_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -641,17 +640,15 @@ func (model *echoModel) Generate(_ context.Context, request agent.ModelRequest) 
 		return agent.ModelResult{}, fmt.Errorf("missing model messages")
 	}
 	content := request.Messages[len(request.Messages)-1].Content
-	_, encoded, ok := strings.Cut(content, "\n")
+	lastLine := content
+	if index := strings.LastIndexByte(content, '\n'); index >= 0 {
+		lastLine = content[index+1:]
+	}
+	_, text, ok := strings.Cut(lastLine, ": ")
 	if !ok {
-		return agent.ModelResult{}, fmt.Errorf("invalid user envelope")
+		return agent.ModelResult{}, fmt.Errorf("invalid compact user transcript")
 	}
-	var envelope struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil {
-		return agent.ModelResult{}, err
-	}
-	return agent.ModelResult{Text: "reply: " + envelope.Text}, nil
+	return agent.ModelResult{Text: "reply: " + text}, nil
 }
 
 func (model *echoModel) lastRequest() agent.ModelRequest {

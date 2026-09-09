@@ -8,7 +8,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-func TestDeterministicContextBuilderGoldenSerialization(t *testing.T) {
+func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
 	builder, err := NewDeterministicContextBuilder(DefaultMaxContextBytes)
 	if err != nil {
 		t.Fatalf("create builder: %v", err)
@@ -27,22 +27,22 @@ func TestDeterministicContextBuilderGoldenSerialization(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	history := []HistoryEntry{
 		{
-			MessageID: userMessage, InvocationID: previousInvocation,
+			Sequence: 4, MessageID: userMessage, InvocationID: previousInvocation,
 			Causation: CausationRef{Kind: CausationMessage, ID: firstCause},
 			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice"},
 			Content: []ContentPart{TextPart{Text: "halo"}}, CreatedAt: now,
 		},
 		{
-			MessageID: assistantMessage, InvocationID: previousInvocation,
+			Sequence: 5, MessageID: assistantMessage, InvocationID: previousInvocation,
 			Causation: CausationRef{Kind: CausationMessage, ID: firstCause},
 			Role:      HistoryAssistant, Content: []ContentPart{TextPart{Text: "Hai!"}},
 			Delivery: DeliverySucceeded, CreatedAt: now.Add(time.Second),
 		},
 		{
-			MessageID: currentMessage, InvocationID: currentInvocation,
+			Sequence: 6, MessageID: currentMessage, InvocationID: currentInvocation,
 			Causation: CausationRef{Kind: CausationMessage, ID: currentCause},
 			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice"},
-			Quote:   &QuoteContext{MessageID: assistantMessage, Role: HistoryAssistant, Text: "Hai!"},
+			Quote:   &QuoteContext{Sequence: 5, MessageID: assistantMessage, Role: HistoryAssistant, Text: "Hai!"},
 			Content: []ContentPart{TextPart{Text: "lanjutkan"}}, CreatedAt: now.Add(2 * time.Second),
 		},
 	}
@@ -61,9 +61,9 @@ func TestDeterministicContextBuilderGoldenSerialization(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
 		{Role: ModelSystem, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"created_at\":\"2023-11-14T22:13:20Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000004\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"halo\"}"},
-		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "{\"type\":\"assistant_message\",\"created_at\":\"2023-11-14T22:13:21Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"text\":\"Hai!\"}"},
-		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"created_at\":\"2023-11-14T22:13:22Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000006\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"lanjutkan\",\"quote\":{\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"role\":\"assistant\",\"text\":\"Hai!\"}}"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "【#000004】 22:13\nAlice 【u_01234567】: halo"},
+		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "【#000005】 22:13\nYou 【You】: Hai!"},
+		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "【#000006】 22:13\nREPLYING TO 【#000005】\nAlice 【u_01234567】: lanjutkan"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)
