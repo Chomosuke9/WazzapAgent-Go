@@ -48,12 +48,14 @@ type Store struct {
 type ConfigStore struct{ *Store }
 type TurnStore struct{ *Store }
 type ActionStore struct{ *Store }
+type EffectStore struct{ *Store }
 type InboundStore struct{ *Store }
 type HistoryStore struct{ *Store }
 
 func (store *Store) Configs() *ConfigStore  { return &ConfigStore{Store: store} }
 func (store *Store) Turns() *TurnStore      { return &TurnStore{Store: store} }
 func (store *Store) Actions() *ActionStore  { return &ActionStore{Store: store} }
+func (store *Store) Effects() *EffectStore  { return &EffectStore{Store: store} }
 func (store *Store) Inbound() *InboundStore { return &InboundStore{Store: store} }
 func (store *Store) History() *HistoryStore { return &HistoryStore{Store: store} }
 

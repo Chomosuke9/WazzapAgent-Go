@@ -33,8 +33,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 4 {
-		t.Fatalf("migration count = %d, want 4", migrations)
+	if migrations != 5 {
+		t.Fatalf("migration count = %d, want 5", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -90,14 +90,38 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 4 {
-		t.Fatalf("upgraded migration count = %d, want 4", migrations)
+	if migrations != 5 {
+		t.Fatalf("upgraded migration count = %d, want 5", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT sequence FROM history_entries LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 history table is unavailable: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "SELECT effect_id FROM typed_effects LIMIT 0"); err != nil {
+		t.Fatalf("typed effects table is unavailable: %v", err)
+	}
+}
+
+func TestResolveMessageTargetKeepsProviderFieldsAtAdapterEdge(t *testing.T) {
+	store := openTestStore(t)
+	candidate := testCandidate(t, "provider-effect-target", "15550000042@s.whatsapp.net")
+	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("claim message target: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	chat, providerMessage, sender, occurredAt, err := store.Inbound().ResolveMessageTarget(context.Background(), key, claimed.Message.ID)
+	if err != nil {
+		t.Fatalf("resolve message target: %v", err)
+	}
+	if chat != candidate.ProviderChatAddress || providerMessage != candidate.ProviderMessageID || sender != candidate.SenderLID.String() || occurredAt.IsZero() {
+		t.Fatalf("resolved provider target = %q/%q/%q/%v", chat, providerMessage, sender, occurredAt)
+	}
+	otherKey := testKey(t)
+	if _, _, _, _, err := store.Inbound().ResolveMessageTarget(context.Background(), otherKey, claimed.Message.ID); !agent.IsCode(err, agent.ErrorNotFound) {
+		t.Fatalf("cross-chat provider target = %v, want not found", err)
 	}
 }
 

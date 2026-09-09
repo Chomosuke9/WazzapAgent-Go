@@ -304,6 +304,52 @@ func (store *InboundStore) ResolveChatAddress(ctx context.Context, key agent.Key
 	return address.String, nil
 }
 
+// ResolveMessageTarget is an adapter-edge lookup. Its raw provider values
+// never enter the Agent, policy, effect, or model contracts.
+func (store *InboundStore) ResolveMessageTarget(
+	ctx context.Context,
+	key agent.Key,
+	targetID identity.MessageID,
+) (chatAddress, providerMessageID, senderAddress string, occurredAt time.Time, resultErr error) {
+	if err := key.Validate(); err != nil || targetID.IsZero() {
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorInvalidArgument, "resolve message target", fmt.Errorf("key and target message are required"))
+	}
+	var occurredAtMS int64
+	err := store.db.QueryRowContext(ctx, `SELECT c.provider_address, e.provider_message_id, p.lid, e.occurred_at_ms
+      FROM inbound_events e
+      JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
+      JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
+      WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.message_id = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
+	).Scan(&chatAddress, &providerMessageID, &senderAddress, &occurredAtMS)
+	if err == nil {
+		if chatAddress == "" || providerMessageID == "" || senderAddress == "" || occurredAtMS <= 0 {
+			return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", fmt.Errorf("incoming target mapping is incomplete"))
+		}
+		return chatAddress, providerMessageID, senderAddress, time.UnixMilli(occurredAtMS).UTC(), nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", time.Time{}, storageError("resolve incoming message target", err)
+	}
+	err = store.db.QueryRowContext(ctx, `SELECT c.provider_address, a.provider_receipt, a.completed_at_ms
+      FROM outbound_actions a
+      JOIN chats c ON c.tenant_id = a.tenant_id AND c.account_id = a.account_id AND c.id = a.chat_id
+      WHERE a.tenant_id = ? AND a.account_id = ? AND a.chat_id = ? AND a.response_id = ?
+        AND a.provider_receipt IS NOT NULL AND a.completed_at_ms IS NOT NULL`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
+	).Scan(&chatAddress, &providerMessageID, &occurredAtMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorNotFound, "resolve message target", fmt.Errorf("target message is not natively addressable"))
+	}
+	if err != nil {
+		return "", "", "", time.Time{}, storageError("resolve assistant message target", err)
+	}
+	if chatAddress == "" || providerMessageID == "" || occurredAtMS <= 0 {
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", fmt.Errorf("assistant target mapping is incomplete"))
+	}
+	return chatAddress, providerMessageID, "", time.UnixMilli(occurredAtMS).UTC(), nil
+}
+
 // ReadHumanAccess resolves current command authority with the composite
 // participant-ID/LID identity. The LID predicate is deliberately redundant:
 // it prevents a stale internal surrogate from becoming sufficient authority.

@@ -21,6 +21,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
@@ -217,6 +218,21 @@ func TestGroupSenderUsesLIDIdentityAndPhoneAliasForOwner(t *testing.T) {
 	}
 }
 
+func TestReadDirectChatAuthorityDoesNotTrustMessageFlags(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	chatID, _ := identity.NewChatID()
+	adapter.targets = staticTargets{chatAddress: "15550000077@s.whatsapp.net"}
+	adapter.ready.Store(true)
+	principal, err := policy.SystemPrincipal(agent.Key{TenantID: adapter.tenantID, AccountID: adapter.accountID, ChatID: chatID})
+	if err != nil {
+		t.Fatalf("create system principal: %v", err)
+	}
+	authority, err := adapter.ReadChatAuthority(context.Background(), principal)
+	if err != nil || authority.ChatKind != conversation.ChatDirect || authority.ActorIsAdmin || authority.BotIsAdmin || authority.ObservedAt <= 0 {
+		t.Fatalf("direct authority = %#v, %v", authority, err)
+	}
+}
+
 func TestTerminalPairingSinkIsExplicitOutput(t *testing.T) {
 	var output bytes.Buffer
 	sink := &TerminalPairingSink{Writer: &output}
@@ -338,6 +354,20 @@ func TestConnectionLifecycleLogsDoNotExposePairingIdentity(t *testing.T) {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+type staticTargets struct{ chatAddress string }
+
+func (targets staticTargets) ResolveChatAddress(context.Context, agent.Key) (string, error) {
+	return targets.chatAddress, nil
+}
+
+func (staticTargets) ResolveMessageTarget(context.Context, agent.Key, identity.MessageID) (string, string, string, time.Time, error) {
+	return "", "", "", time.Time{}, io.EOF
+}
+
+func (staticTargets) ReconcileAccountPolicy(context.Context, identity.TenantID, identity.AccountID, string, []string) error {
+	return nil
+}
 
 func normalizationAdapter(t *testing.T) (*Adapter, types.JID) {
 	t.Helper()

@@ -27,7 +27,9 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 const sendStripeCount = 64
@@ -38,6 +40,7 @@ type CandidateHandler interface {
 
 type TargetStore interface {
 	ResolveChatAddress(context.Context, agent.Key) (string, error)
+	ResolveMessageTarget(context.Context, agent.Key, identity.MessageID) (chatAddress, providerMessageID, senderAddress string, occurredAt time.Time, err error)
 	ReconcileAccountPolicy(context.Context, identity.TenantID, identity.AccountID, string, []string) error
 }
 
@@ -330,6 +333,173 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", fmt.Errorf("native send failed"))
 	}
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
+}
+
+// ExecuteEffect is the native edge for a typed effect. The effect package
+// carries only internal IDs; provider message IDs and JIDs are resolved here,
+// after the dispatcher has completed its policy recheck.
+func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored) (string, error) {
+	if !adapter.ready.Load() {
+		return "", agent.NewError(agent.ErrorNotReady, "execute WhatsApp effect", fmt.Errorf("account is not connected"))
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	switch typed := stored.Request.Effect.(type) {
+	case effect.SetChatPresence:
+		target, err := adapter.resolveChatTarget(requestCtx, stored.Request.Ref.Key)
+		if err != nil {
+			return "", err
+		}
+		state := types.ChatPresenceComposing
+		if typed.State == effect.PresencePaused {
+			state = types.ChatPresencePaused
+		}
+		if err := adapter.client.SendChatPresence(requestCtx, target, state, types.ChatPresenceMediaText); err != nil {
+			return "", nativeEffectError(requestCtx, "send WhatsApp presence", err)
+		}
+		return "ephemeral-presence", nil
+	case effect.React, effect.DeleteMessage, effect.MarkRead:
+		chat, messageID, sender, occurredAt, err := adapter.resolveEffectTarget(requestCtx, stored.Request.Ref.Key, targetMessageID(typed))
+		if err != nil {
+			return "", err
+		}
+		stripe := adapter.sendStripe(stored.Request.Ref.Key.ChatID.String())
+		stripe.Lock()
+		defer stripe.Unlock()
+		switch value := typed.(type) {
+		case effect.React:
+			response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildReaction(chat, sender, messageID, value.Emoji))
+			if sendErr != nil {
+				return "", nativeEffectError(requestCtx, "send WhatsApp reaction", sendErr)
+			}
+			return string(response.ID), nil
+		case effect.DeleteMessage:
+			response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
+			if sendErr != nil {
+				return "", nativeEffectError(requestCtx, "send WhatsApp revoke", sendErr)
+			}
+			return string(response.ID), nil
+		case effect.MarkRead:
+			if sendErr := adapter.client.MarkRead(requestCtx, []types.MessageID{messageID}, occurredAt, chat, sender); sendErr != nil {
+				return "", nativeEffectError(requestCtx, "send WhatsApp read receipt", sendErr)
+			}
+			return "ephemeral-read", nil
+		}
+	}
+	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", fmt.Errorf("effect type is invalid"))
+}
+
+// ReadChatAuthority obtains a fresh provider observation for policy. It does
+// not expose WhatsApp group DTOs across the adapter boundary and does not turn
+// a model principal into a group participant.
+func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.Principal) (policy.ChatAuthority, error) {
+	if err := principal.Validate(); err != nil {
+		return policy.ChatAuthority{}, err
+	}
+	if !adapter.ready.Load() {
+		return policy.ChatAuthority{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat authority", fmt.Errorf("account is not connected"))
+	}
+	chat, err := adapter.resolveChatTarget(ctx, principal.Key())
+	if err != nil {
+		return policy.ChatAuthority{}, err
+	}
+	observedAt := time.Now().UTC().UnixMilli()
+	if chat.Server != types.GroupServer {
+		return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: observedAt}, nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	info, err := adapter.client.GetGroupInfo(readCtx, chat)
+	if err != nil {
+		return policy.ChatAuthority{}, nativeEffectError(readCtx, "read WhatsApp group authority", err)
+	}
+	actorLID := types.EmptyJID
+	if principal.Kind == policy.PrincipalHuman {
+		actorLID, err = types.ParseJID(principal.LID.String())
+		if err != nil || actorLID.IsEmpty() {
+			return policy.ChatAuthority{}, agent.NewError(agent.ErrorIntegrityFailure, "read WhatsApp group authority", fmt.Errorf("principal LID is invalid"))
+		}
+	}
+	botLID := adapter.client.Store.GetLID().ToNonAD()
+	botPhone := adapter.client.Store.GetJID().ToNonAD()
+	authority := policy.ChatAuthority{ChatKind: conversation.ChatGroup, ObservedAt: observedAt}
+	for _, participant := range info.Participants {
+		isAdmin := participant.IsAdmin || participant.IsSuperAdmin
+		if !actorLID.IsEmpty() && participantMatches(participant, actorLID) {
+			authority.ActorIsAdmin = isAdmin
+		}
+		if participantMatches(participant, botLID) || participantMatches(participant, botPhone) {
+			authority.BotIsAdmin = isAdmin
+		}
+	}
+	return authority, authority.Validate()
+}
+
+func participantMatches(participant types.GroupParticipant, wanted types.JID) bool {
+	if wanted.IsEmpty() {
+		return false
+	}
+	wanted = wanted.ToNonAD()
+	for _, candidate := range []types.JID{participant.JID, participant.LID, participant.PhoneNumber} {
+		if !candidate.IsEmpty() && candidate.ToNonAD() == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func targetMessageID(value effect.Effect) identity.MessageID {
+	switch typed := value.(type) {
+	case effect.React:
+		return typed.TargetMessageID
+	case effect.DeleteMessage:
+		return typed.TargetMessageID
+	case effect.MarkRead:
+		return typed.TargetMessageID
+	default:
+		return identity.MessageID{}
+	}
+}
+
+func (adapter *Adapter) resolveChatTarget(ctx context.Context, key agent.Key) (types.JID, error) {
+	address, err := adapter.targets.ResolveChatAddress(ctx, key)
+	if err != nil {
+		return types.EmptyJID, err
+	}
+	target, err := types.ParseJID(address)
+	if err != nil || target.IsEmpty() {
+		return types.EmptyJID, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", fmt.Errorf("stored target is invalid"))
+	}
+	return target.ToNonAD(), nil
+}
+
+func (adapter *Adapter) resolveEffectTarget(ctx context.Context, key agent.Key, targetID identity.MessageID) (types.JID, types.MessageID, types.JID, time.Time, error) {
+	address, providerMessageID, senderAddress, occurredAt, err := adapter.targets.ResolveMessageTarget(ctx, key, targetID)
+	if err != nil {
+		return types.EmptyJID, "", types.EmptyJID, time.Time{}, err
+	}
+	chat, err := types.ParseJID(address)
+	if err != nil || chat.IsEmpty() || providerMessageID == "" || occurredAt.IsZero() {
+		return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", fmt.Errorf("stored message target is invalid"))
+	}
+	sender := types.EmptyJID
+	if senderAddress != "" {
+		sender, err = types.ParseJID(senderAddress)
+		if err != nil || sender.IsEmpty() {
+			return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", fmt.Errorf("stored message sender is invalid"))
+		}
+	}
+	return chat.ToNonAD(), types.MessageID(providerMessageID), sender.ToNonAD(), occurredAt.UTC(), nil
+}
+
+func nativeEffectError(ctx context.Context, operation string, err error) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		return agent.NewError(agent.ErrorTimeout, operation, ctx.Err())
+	}
+	if ctx.Err() == context.Canceled {
+		return agent.NewError(agent.ErrorCancelled, operation, ctx.Err())
+	}
+	return agent.NewError(agent.ErrorProviderFailure, operation, fmt.Errorf("native operation failed"))
 }
 
 func (adapter *Adapter) handleEvent(event any) {

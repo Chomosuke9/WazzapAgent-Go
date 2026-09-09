@@ -19,6 +19,7 @@ type ChatID struct{ value string }
 type ParticipantID struct{ value string }
 type MessageID struct{ value string }
 type ActionID struct{ value string }
+type EffectID struct{ value string }
 type InvocationID struct{ value string }
 type CausationID struct{ value string }
 type SenderRef struct{ value string }
@@ -61,6 +62,11 @@ func ParseMessageID(value string) (MessageID, error) {
 func ParseActionID(value string) (ActionID, error) {
 	value, err := parseUUID("action ID", value)
 	return ActionID{value: value}, err
+}
+
+func ParseEffectID(value string) (EffectID, error) {
+	value, err := parseUUID("effect ID", value)
+	return EffectID{value: value}, err
 }
 
 func ParseInvocationID(value string) (InvocationID, error) {
@@ -106,6 +112,7 @@ func NewParticipantID() (ParticipantID, error) {
 }
 func NewMessageID() (MessageID, error) { value, err := newUUIDv7(); return MessageID{value}, err }
 func NewActionID() (ActionID, error)   { value, err := newUUIDv7(); return ActionID{value}, err }
+func NewEffectID() (EffectID, error)   { value, err := newUUIDv7(); return EffectID{value}, err }
 func NewInvocationID() (InvocationID, error) {
 	value, err := newUUIDv7()
 	return InvocationID{value}, err
@@ -126,6 +133,7 @@ func (id ChatID) String() string        { return id.value }
 func (id ParticipantID) String() string { return id.value }
 func (id MessageID) String() string     { return id.value }
 func (id ActionID) String() string      { return id.value }
+func (id EffectID) String() string      { return id.value }
 func (id InvocationID) String() string  { return id.value }
 func (id CausationID) String() string   { return id.value }
 func (id SenderRef) String() string     { return id.value }
@@ -139,6 +147,7 @@ func (id ChatID) IsZero() bool        { return id.value == "" }
 func (id ParticipantID) IsZero() bool { return id.value == "" }
 func (id MessageID) IsZero() bool     { return id.value == "" }
 func (id ActionID) IsZero() bool      { return id.value == "" }
+func (id EffectID) IsZero() bool      { return id.value == "" }
 func (id InvocationID) IsZero() bool  { return id.value == "" }
 func (id CausationID) IsZero() bool   { return id.value == "" }
 func (id SenderRef) IsZero() bool     { return id.value == "" }
