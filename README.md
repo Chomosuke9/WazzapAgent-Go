@@ -46,7 +46,7 @@ go test ./...
 go build ./cmd/wazzapagent
 ```
 
-`.env` tidak dibaca otomatis oleh binary. Ikuti [runbook Part 1](docs/rewrite/07-PART1-RUNBOOK.md) untuk mengisi dan memuat environment dengan aman, melakukan pairing dalam keadaan agent mati, mengaktifkan canary, memverifikasi, membackup, dan rollback.
+Saat startup, binary otomatis membaca `.env` dari working directory. Environment process tetap menjadi prioritas; set `WAZZAP_ENV_FILE` pada process bila file berada di lokasi lain. Tenant/account UUID dibuat otomatis sekali di data directory, WhatsApp dan Agent aktif secara default, dan QR otomatis ditampilkan di terminal hanya ketika session belum ter-pair. Ikuti [runbook Part 1](docs/rewrite/07-PART1-RUNBOOK.md) untuk konfigurasi, canary, backup, kill switch opsional, dan rollback.
 
 ## Dokumentasi
 

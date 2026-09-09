@@ -543,7 +543,7 @@ Part 1 is deployed only as isolated canary:
 - dedicated WhatsApp account;
 - dedicated data directory, port, process/service, and log files;
 - mandatory fail-closed recipient/chat allowlist;
-- agent feature flag defaults off;
+- normal runtime starts the Agent only behind a mandatory narrow allowlist;
 - old service/account/data are never reused or modified;
 - health and account readiness are externally visible;
 - one-step disable/stop kill switch;
@@ -556,12 +556,12 @@ No architecture decision allows bypassing these controls to meet the same-day ta
 
 Validated startup config includes:
 
-- data root and fixed `TenantID`/account identity;
+- data root and versioned, automatically generated durable `TenantID`/account identity;
 - HTTP bind address;
 - configured owner address, normalized only inside trusted identity/adapter code;
 - required chat/recipient allowlist;
-- `WAZZAP_WHATSAPP_ENABLED` untuk native account runtime dan `WAZZAP_AGENT_ENABLED` untuk response policy; keduanya default `false`;
-- explicit terminal/disabled pairing output, default `disabled`;
+- WhatsApp runtime dan response policy aktif secara default; optional disable overrides tetap menjadi operational kill switch;
+- terminal/disabled pairing output override, dengan terminal sebagai default hanya ketika fresh session memerlukan QR;
 - LLM endpoint/model/key and request timeout;
 - inbound queue, LLM concurrency, text/prompt/response limits;
 - reconnect/send/shutdown timeouts;
@@ -573,7 +573,7 @@ Secrets and raw provider addresses are never included in `Redacted()` output. Em
 
 - `/health/live` reports that the process event loop is alive.
 - `/health/ready` reports component state; it is not ready until migrations are complete and required workers are running.
-- Ketika `WAZZAP_WHATSAPP_ENABLED=true`, readiness juga mensyaratkan account state `open`, walaupun response agent masih dimatikan untuk pairing.
+- Pada normal runtime, readiness juga mensyaratkan account state `open`; explicit WhatsApp-disabled diagnostic mode hanya melaporkan readiness process.
 - The response may expose stable state/error codes and timestamps, never secrets, raw addresses, prompts, or message content.
 - A reconnecting account makes readiness fail without making liveness fail.
 

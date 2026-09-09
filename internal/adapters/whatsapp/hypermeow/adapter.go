@@ -7,6 +7,8 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/socket"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
@@ -126,7 +129,8 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Adapter{
+	client := whatsmeow.NewClient(device, waLog.Noop)
+	adapter := &Adapter{
 		tenantID:       config.TenantID,
 		accountID:      config.AccountID,
 		owner:          owner,
@@ -137,12 +141,14 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		targets:        config.Targets,
 		logger:         logger,
 		container:      container,
-		client:         whatsmeow.NewClient(device, waLog.Noop),
+		client:         client,
 		queue:          make(chan conversation.IncomingCandidate, config.QueueCapacity),
 		workers:        config.Workers,
 		events:         make(chan account.ConnectionEvent, 8),
 		fatal:          make(chan error, 1),
-	}, nil
+	}
+	client.AutoReconnectHook = adapter.handleReconnectFailure
+	return adapter, nil
 }
 
 func (adapter *Adapter) BindHandler(handler CandidateHandler) error {
@@ -188,46 +194,78 @@ func (adapter *Adapter) Start(ctx context.Context) error {
 		adapter.wait.Add(1)
 		go adapter.consumePairing(qrChannel)
 	}
-	connectCtx, cancel := context.WithTimeout(adapter.rootCtx, adapter.connectTimeout)
-	defer cancel()
-	if err := adapter.client.ConnectContext(connectCtx); err != nil {
-		var fatalErr error
-		select {
-		case fatalErr = <-adapter.fatal:
-		default:
-		}
+	if err := waitForInitialConnection(
+		adapter.rootCtx,
+		adapter.connectTimeout,
+		adapter.client.ConnectContext,
+		func() bool { return adapter.client.IsConnected() && adapter.client.IsLoggedIn() },
+		adapter.events,
+		adapter.fatal,
+	); err != nil {
 		adapter.stopAfterFailedStart()
-		if fatalErr != nil {
-			return fatalErr
-		}
-		if connectCtx.Err() == context.DeadlineExceeded {
-			return agent.NewError(agent.ErrorTimeout, "connect WhatsApp account", connectCtx.Err())
-		}
-		if connectCtx.Err() == context.Canceled {
-			return agent.NewError(agent.ErrorCancelled, "connect WhatsApp account", connectCtx.Err())
-		}
-		return agent.NewError(agent.ErrorUnavailable, "connect WhatsApp account", err)
+		return err
 	}
-	if adapter.client.IsConnected() && adapter.client.IsLoggedIn() {
-		adapter.ready.Store(true)
-		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
-		return nil
-	}
+	adapter.ready.Store(adapter.client.IsConnected() && adapter.client.IsLoggedIn())
+	return nil
+}
+
+func waitForInitialConnection(
+	ctx context.Context,
+	timeout time.Duration,
+	connect func(context.Context) error,
+	ready func() bool,
+	eventsChannel <-chan account.ConnectionEvent,
+	fatalChannel <-chan error,
+) error {
+	connectResult := make(chan error, 1)
+	go func() { connectResult <- connect(ctx) }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	connectionObserved := false
+
 	for {
 		select {
-		case <-connectCtx.Done():
-			adapter.stopAfterFailedStart()
-			if connectCtx.Err() == context.DeadlineExceeded {
-				return agent.NewError(agent.ErrorTimeout, "wait for WhatsApp connection", connectCtx.Err())
+		case err := <-connectResult:
+			connectResult = nil
+			if err != nil {
+				if ctx.Err() != nil {
+					return agent.NewError(agent.ErrorCancelled, "connect WhatsApp account", ctx.Err())
+				}
+				return agent.NewError(agent.ErrorUnavailable, "connect WhatsApp account", err)
 			}
-			return agent.NewError(agent.ErrorCancelled, "wait for WhatsApp connection", connectCtx.Err())
-		case err := <-adapter.fatal:
-			adapter.stopAfterFailedStart()
-			return err
-		case event := <-adapter.events:
-			if event.Connected {
+			if connectionObserved || ready() {
 				return nil
 			}
+		case event, open := <-eventsChannel:
+			if !open {
+				eventsChannel = nil
+				continue
+			}
+			if event.Connected {
+				connectionObserved = true
+				if connectResult == nil {
+					return nil
+				}
+			}
+		case err, open := <-fatalChannel:
+			if !open {
+				fatalChannel = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		case <-timer.C:
+			return agent.NewError(agent.ErrorTimeout, "wait for WhatsApp connection", context.DeadlineExceeded)
+		case <-ctx.Done():
+			select {
+			case err := <-fatalChannel:
+				if err != nil {
+					return err
+				}
+			default:
+			}
+			return agent.NewError(agent.ErrorCancelled, "wait for WhatsApp connection", ctx.Err())
 		}
 	}
 }
@@ -296,12 +334,20 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 
 func (adapter *Adapter) handleEvent(event any) {
 	switch typed := event.(type) {
+	case *events.PairSuccess:
+		adapter.logger.Info("WhatsApp pairing completed")
 	case *events.Connected:
 		adapter.ready.Store(true)
+		adapter.logger.Info("WhatsApp account connected")
 		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
 	case *events.Disconnected:
 		adapter.ready.Store(false)
+		adapter.logger.Warn("WhatsApp account disconnected; reconnecting")
 		adapter.emitConnection(account.ConnectionEvent{Connected: false, Code: "reconnecting"})
+	case *events.StreamError:
+		adapter.logger.Warn("WhatsApp stream error", "reason", streamErrorReason(typed))
+	case *events.KeepAliveTimeout:
+		adapter.logger.Warn("WhatsApp keepalive timeout", "consecutive_failures", typed.ErrorCount)
 	case events.PermanentDisconnect:
 		adapter.ready.Store(false)
 		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", fmt.Errorf("%s", typed.PermanentDisconnectDescription())))
@@ -318,6 +364,61 @@ func (adapter *Adapter) handleEvent(event any) {
 		case adapter.queue <- candidate:
 		}
 	}
+}
+
+func (adapter *Adapter) handleReconnectFailure(err error) bool {
+	adapter.logger.Warn("WhatsApp reconnect attempt failed", "reason", reconnectFailureReason(err))
+	return adapter.rootCtx == nil || adapter.rootCtx.Err() == nil
+}
+
+func reconnectFailureReason(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	var statusError socket.ErrWithStatusCode
+	if errors.As(err, &statusError) {
+		return fmt.Sprintf("http_%d", statusError.StatusCode)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return "network_timeout"
+	}
+	normalized := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(normalized, "no such host"):
+		return "dns_failure"
+	case strings.Contains(normalized, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(normalized, "noise handshake"):
+		return "noise_handshake_failure"
+	case errors.Is(err, socket.ErrDialFailed):
+		return "websocket_dial_failure"
+	default:
+		return "provider_failure"
+	}
+}
+
+func streamErrorReason(event *events.StreamError) string {
+	if event == nil {
+		return "unknown"
+	}
+	if event.Code != "" && len(event.Code) <= 8 {
+		for _, character := range event.Code {
+			if character < '0' || character > '9' {
+				return "unknown"
+			}
+		}
+		return "code_" + event.Code
+	}
+	if event.Raw != nil {
+		if _, found := event.Raw.GetOptionalChildByTag("ping"); found {
+			return "ping"
+		}
+	}
+	return "unknown"
 }
 
 func ignoredNativeReason(event *events.Message) string {
@@ -528,7 +629,7 @@ func normalizeAddress(raw string) (string, error) {
 }
 
 // TerminalPairingSink intentionally bypasses structured logging. It should be
-// constructed only for the explicit WAZZAP_PAIRING_OUTPUT=terminal mode.
+// constructed only when terminal pairing output is enabled.
 type TerminalPairingSink struct {
 	Writer io.Writer
 	mu     sync.Mutex

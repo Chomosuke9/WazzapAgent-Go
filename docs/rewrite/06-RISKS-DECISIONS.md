@@ -20,7 +20,7 @@ Canonical Go domain types menjadi kontrak internal. HTTP API memakai version bar
 
 **Status:** accepted.
 
-Internal identity tidak memakai absolute path atau JID. Tenant ID immutable dan semua dependency tenant-scoped.
+Internal identity tidak memakai absolute path atau JID. Tenant ID immutable dan semua dependency tenant-scoped. Bootstrap membuat tenant/account UUID sekali dan menyimpannya dalam versioned runtime identity record; environment IDs hanya didukung sebagai legacy adoption override.
 
 ### D4 — Greenfield persistence
 
@@ -258,7 +258,7 @@ Primary deployment dan optimasi operasional adalah Debian Linux. Part 1 hanya me
 
 macOS bersifat best-effort. APK native ditunda dan memerlukan ADR mobile tersendiri untuk `gomobile`/JNI, app-private storage, background lifecycle, Android force-stop, ABI packaging, backup/export, dan upgrade preservation.
 
-Part 1 canary wajib memakai dedicated WhatsApp account, data root, port, process/service, logs, mandatory allowlist, default-disabled agent flag, kill switch, dan backup awal. Service lama tidak boleh dihentikan atau dimodifikasi.
+Part 1 canary wajib memakai dedicated WhatsApp account, data root, port, process/service, logs, mandatory allowlist, optional kill switch, dan backup awal. Normal startup aktif tanpa enable flags; allowlist harus benar sebelum pairing. Service lama tidak boleh dihentikan atau dimodifikasi.
 
 Stable release artifact:
 
@@ -338,7 +338,7 @@ Konsekuensi: the Hypermeow adapter may implement several small ports, but a cons
 
 **Status:** accepted.
 
-The same-day target cannot relax isolation controls. Canary requires dedicated WhatsApp account, data root, port, process/service, logs, mandatory allowlist, default-disabled agent feature flag, kill switch, and backup. Old runtime remains untouched. The result is labeled `v0.1-canary`.
+The same-day target cannot relax isolation controls. Canary requires dedicated WhatsApp account, data root, port, process/service, logs, mandatory allowlist, optional kill switch, and backup. Normal startup is enabled to reduce operator error; the narrow allowlist is configured before pairing. Old runtime remains untouched. The result is labeled `v0.1-canary`.
 
 ### D22 — Chat-scoped Agent aggregate
 

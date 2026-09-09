@@ -96,8 +96,15 @@ func TestRunRejectsDataFile(t *testing.T) {
 
 func testApplication(t *testing.T, values map[string]string) *Application {
 	t.Helper()
+	effectiveValues := make(map[string]string, len(values)+1)
+	for key, value := range values {
+		effectiveValues[key] = value
+	}
+	if _, configured := effectiveValues["WAZZAP_WHATSAPP_ENABLED"]; !configured {
+		effectiveValues["WAZZAP_WHATSAPP_ENABLED"] = "false"
+	}
 	cfg, err := config.Load(func(key string) (string, bool) {
-		value, ok := values[key]
+		value, ok := effectiveValues[key]
 		return value, ok
 	})
 	if err != nil {

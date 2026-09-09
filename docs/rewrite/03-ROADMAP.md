@@ -136,7 +136,7 @@ pair/connect
 4. Build internal Hypermeow pair/connect/text source/text sender adapter.
 5. Build text-only OpenAI-compatible adapter.
 6. Add recovery, replay, concurrency, bounds, cancellation, and redaction tests.
-7. Add fail-closed allowlist, disabled-by-default flag, readiness, kill switch, backup, and rollback probe.
+7. Add fail-closed allowlist, generated durable runtime identity, safe normal defaults, readiness, optional kill switch, backup, and rollback probe.
 
 This is the cut line. No later-Part feature may enter before all seven steps pass.
 

@@ -34,7 +34,8 @@ const (
 	defaultBasePrompt          = "Jawab pesan pengguna dengan ringkas, akurat, dan dalam bahasa yang sesuai dengan pesan pengguna."
 	defaultProviderID          = "openai-compatible"
 	defaultPolicyID            = "part1-chat-gate.v1"
-	defaultPairingOutput       = "disabled"
+	defaultWhatsAppEnabled     = true
+	defaultPairingOutput       = "terminal"
 	maxShutdownTimeout         = 5 * time.Minute
 	maxResponseBytes           = 16 * 1024
 )
@@ -74,7 +75,39 @@ type Snapshot struct {
 	pairingOutput       string
 }
 
+// LoadRuntime loads configuration from the process environment and an optional
+// dotenv file. Values explicitly present in the process environment take
+// precedence over values from the file.
+func LoadRuntime(lookup LookupEnv) (Snapshot, error) {
+	mergedLookup, err := lookupWithDotEnv(lookup)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot, err := load(mergedLookup, false)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !snapshot.whatsAppEnabled {
+		return snapshot, nil
+	}
+	tenantID, accountID, err := resolveRuntimeIdentity(
+		snapshot.dataDir,
+		value(mergedLookup, "WAZZAP_TENANT_ID"),
+		value(mergedLookup, "WAZZAP_ACCOUNT_ID"),
+	)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.tenantID = tenantID
+	snapshot.accountID = accountID
+	return snapshot, nil
+}
+
 func Load(lookup LookupEnv) (Snapshot, error) {
+	return load(lookup, true)
+}
+
+func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if lookup == nil {
 		return Snapshot{}, errors.New("environment lookup is required")
 	}
@@ -98,11 +131,11 @@ func Load(lookup LookupEnv) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	agentEnabled, err := parseBool(lookup, "WAZZAP_AGENT_ENABLED", false)
+	whatsAppEnabled, err := parseBool(lookup, "WAZZAP_WHATSAPP_ENABLED", defaultWhatsAppEnabled)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	whatsAppEnabled, err := parseBool(lookup, "WAZZAP_WHATSAPP_ENABLED", false)
+	agentEnabled, err := parseBool(lookup, "WAZZAP_AGENT_ENABLED", whatsAppEnabled)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -202,11 +235,13 @@ func Load(lookup LookupEnv) (Snapshot, error) {
 		allowlist:           splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
 	}
 	if whatsAppEnabled {
-		if err := snapshot.loadRequiredIdentity(lookup); err != nil {
-			return Snapshot{}, err
-		}
 		if err := snapshot.validateEnabled(); err != nil {
 			return Snapshot{}, err
+		}
+		if requireConfiguredIdentity {
+			if err := snapshot.loadRequiredIdentity(lookup); err != nil {
+				return Snapshot{}, err
+			}
 		}
 	}
 	return snapshot, nil

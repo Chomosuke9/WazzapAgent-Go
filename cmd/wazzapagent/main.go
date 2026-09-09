@@ -17,7 +17,7 @@ func main() {
 }
 
 func run() int {
-	cfg, err := config.Load(os.LookupEnv)
+	cfg, err := config.LoadRuntime(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
 		return 2

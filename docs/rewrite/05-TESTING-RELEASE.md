@@ -273,7 +273,7 @@ Part 1 is complete only after Stage D probes and rollback test pass.
 - [ ] Dedicated test account and allowlisted recipients/chats prepared.
 - [ ] Data root, port, process/service, and logs do not overlap old runtime.
 - [ ] LLM and application secrets supplied outside chat/log/CLI history.
-- [x] Agent defaults disabled.
+- [x] Normal runtime defaults enabled behind a mandatory fail-closed allowlist.
 - [ ] Kill switch tested.
 - [ ] Backup and rollback commands verified.
 - [x] Health and account readiness observable locally; real-device state remains pending.

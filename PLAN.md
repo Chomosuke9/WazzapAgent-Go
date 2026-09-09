@@ -370,7 +370,7 @@ action_receipts
 4. **Native vertical slice:** pindahkan spike ke internal Hypermeow adapter; pair/connect, canonical text source, dan text sender.
 5. **LLM vertical slice:** OpenAI-compatible text adapter, request separation, timeout, output validation, dan redaction.
 6. **Recovery/concurrency:** duplicate replay, unknown outcome, per-Agent invocation serialization, bounded AgentRegistry/queue/semaphore, graceful shutdown.
-7. **Canary hardening:** allowlist, agent-disabled default, readiness, metrics, backup, kill switch, dan rollback probe.
+7. **Canary hardening:** allowlist, safe normal defaults, readiness, metrics, backup, optional kill switch, dan rollback probe.
 
 Jalankan tests setelah setiap langkah. Jangan mengerjakan history, media, generic command framework, atau control panel untuk mempercepat Part 1.
 
@@ -418,7 +418,7 @@ Canary hanya boleh dimulai bila:
 - memakai dedicated WhatsApp test account, bukan account service lama;
 - memakai data directory, port, process/service, dan log terpisah;
 - recipient/chat allowlist wajib dan fail-closed;
-- response agent default disabled saat pair/reconnect/backup, lalu diaktifkan hanya untuk bounded send probe;
+- response agent aktif pada jalur normal; dedicated account dan allowlist sempit wajib benar sebelum pairing;
 - health dan account-ready dapat dibedakan;
 - operator memiliki kill switch satu langkah;
 - service lama tidak dihentikan atau dimodifikasi;
@@ -426,7 +426,7 @@ Canary hanya boleh dimulai bila:
 - error, reconnect, queue depth, LLM latency, dan duplicate count diamati;
 - minimal DM probe, group-mention probe, prompt set/clear, restart, dan duplicate replay lulus.
 
-Part 1 startup config wajib fail-fast untuk missing tenant/account identity, owner identity, LLM endpoint/model/key, timeout/limit, atau canary allowlist ketika runtime WhatsApp aktif. `WAZZAP_WHATSAPP_ENABLED` dan `WAZZAP_AGENT_ENABLED` default `false`; agent tidak dapat aktif tanpa runtime WhatsApp. Redacted config tidak boleh memuat secret, raw address, prompt, atau message content.
+Part 1 startup config membuat opaque tenant/account identity sekali lalu menyimpannya secara versioned di data root; legacy environment IDs hanya menjadi migration override dan conflict dengan identity durable wajib fail-fast. Owner identity, LLM endpoint/model/key, timeout/limit, dan canary allowlist tetap divalidasi saat runtime WhatsApp aktif. Jalur normal mengaktifkan WhatsApp dan Agent serta menampilkan QR session baru di terminal tanpa tiga environment switch; override disable tetap tersedia sebagai kill switch. Redacted config tidak boleh memuat ID mentah, secret, raw address, prompt, atau message content.
 
 Canary hari ini membuktikan alur dan boundary. Canary tidak membuktikan long-run reliability. Jika gate ini belum lulus, Part 1 tetap belum selesai walaupun binary berhasil build.
 

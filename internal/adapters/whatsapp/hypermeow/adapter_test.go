@@ -2,6 +2,7 @@ package hypermeow
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	waLog "github.com/polymorfa/hypermeow/util/log"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
@@ -184,6 +187,100 @@ func TestTerminalPairingSinkRejectsInvalidInputAndWriterFailure(t *testing.T) {
 	}
 	if err := (&TerminalPairingSink{Writer: failingWriter{}}).ShowPairingCode("payload", time.Second); err == nil {
 		t.Fatal("pairing writer failure was ignored")
+	}
+}
+
+func TestInitialConnectionKeepsRuntimeContextAliveAfterSuccess(t *testing.T) {
+	runtimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connected := make(chan account.ConnectionEvent, 1)
+	fatal := make(chan error, 1)
+	observedContext := make(chan context.Context, 1)
+
+	err := waitForInitialConnection(
+		runtimeCtx,
+		time.Second,
+		func(ctx context.Context) error {
+			observedContext <- ctx
+			connected <- account.ConnectionEvent{Connected: true}
+			return nil
+		},
+		func() bool { return false },
+		connected,
+		fatal,
+	)
+	if err != nil {
+		t.Fatalf("wait for initial connection: %v", err)
+	}
+	connectionCtx := <-observedContext
+	select {
+	case <-connectionCtx.Done():
+		t.Fatalf("successful connection context was cancelled: %v", connectionCtx.Err())
+	default:
+	}
+
+	cancel()
+	select {
+	case <-connectionCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("connection context did not follow runtime shutdown")
+	}
+}
+
+func TestInitialConnectionTimeoutIsBounded(t *testing.T) {
+	runtimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+
+	err := waitForInitialConnection(
+		runtimeCtx,
+		10*time.Millisecond,
+		func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		func() bool { return false },
+		make(chan account.ConnectionEvent),
+		make(chan error),
+	)
+	<-started
+	if !agent.IsCode(err, agent.ErrorTimeout) {
+		t.Fatalf("initial connection error = %v, want timeout", err)
+	}
+}
+
+func TestConnectionLifecycleLogsDoNotExposePairingIdentity(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	adapter.events = make(chan account.ConnectionEvent, 2)
+	var output bytes.Buffer
+	adapter.logger = slog.New(slog.NewJSONHandler(&output, nil))
+	secretNumber := "15550000888"
+	secretBusiness := "private-business-name"
+
+	adapter.handleEvent(&events.PairSuccess{
+		ID:           types.NewJID(secretNumber, types.DefaultUserServer),
+		BusinessName: secretBusiness,
+	})
+	adapter.handleEvent(&events.Connected{})
+	if !adapter.Ready() {
+		t.Fatal("connected event did not mark adapter ready")
+	}
+	adapter.handleEvent(&events.Disconnected{})
+	if adapter.Ready() {
+		t.Fatal("disconnected event left adapter ready")
+	}
+
+	logged := output.String()
+	for _, expected := range []string{"WhatsApp pairing completed", "WhatsApp account connected", "WhatsApp account disconnected"} {
+		if !strings.Contains(logged, expected) {
+			t.Fatalf("lifecycle log omitted %q: %s", expected, logged)
+		}
+	}
+	for _, sensitive := range []string{secretNumber, secretBusiness} {
+		if strings.Contains(logged, sensitive) {
+			t.Fatalf("lifecycle log exposed sensitive value %q: %s", sensitive, logged)
+		}
 	}
 }
 

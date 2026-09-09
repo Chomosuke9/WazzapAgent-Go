@@ -202,7 +202,7 @@ The application creates IDs and idempotency key. The model returns text only and
 ### Canary
 
 - Test account, data root, process/port, logs, and allowlist are isolated from the old service.
-- Agent is disabled until pair/connect/native send probes pass.
+- Normal startup enables the Agent only after a narrow dedicated-account allowlist is configured; an optional disable override supports staged pairing.
 - Kill switch and rollback are tested.
 - Deployment is reported as canary only.
 

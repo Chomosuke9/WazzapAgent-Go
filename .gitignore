@@ -1,4 +1,6 @@
 /socket.exe
+/wazzapagent
+/wazzapagent.exe
 /testing/*
 *.db
 *.db-shm
