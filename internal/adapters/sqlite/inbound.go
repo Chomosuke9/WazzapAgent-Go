@@ -40,12 +40,15 @@ func (store *InboundStore) ClaimAndResolveSender(
 	if err != nil {
 		return inbound.ClaimedMessage{}, err
 	}
-	senderRef, err := resolveSenderRef(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, participantID, store.senderRefs, nowMS)
+	senderRef, err := resolveSenderRef(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, participantID, candidate.SenderLID, store.senderRefs, nowMS)
 	if err != nil {
 		return inbound.ClaimedMessage{}, err
 	}
 	message, state, err := loadInboundByProvider(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, candidate.ProviderMessageID)
 	if err == nil {
+		if message.SenderLID != candidate.SenderLID || message.SenderID != participantID || message.SenderRef != senderRef {
+			return inbound.ClaimedMessage{}, agent.NewError(agent.ErrorIntegrityFailure, "verify duplicate sender identity", fmt.Errorf("provider message ID was replayed with a different sender identity"))
+		}
 		message.Owner = candidate.Owner
 		message.Allowlisted = candidate.Allowlisted
 		if err := tx.Commit(); err != nil {
@@ -74,13 +77,13 @@ func (store *InboundStore) ClaimAndResolveSender(
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO inbound_events(
         tenant_id, account_id, chat_id, invocation_id, message_id, causation_id,
-        provider_message_id, participant_id, sender_ref, sender_name, input_text,
+		provider_message_id, participant_id, sender_lid, sender_ref, sender_name, input_text,
         quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
         chat_kind, mentions_bot, from_me, owner, allowlisted, occurred_at_ms,
         received_at_ms, turn_state, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		candidate.TenantID.String(), candidate.AccountID.String(), chatID.String(), invocationID.String(), messageID.String(), causationID.String(),
-		candidate.ProviderMessageID, participantID.String(), senderRef.String(), candidate.SenderName, candidate.Text,
+		candidate.ProviderMessageID, participantID.String(), candidate.SenderLID.String(), senderRef.String(), candidate.SenderName, candidate.Text,
 		quotedID(quote), quotedSequence(quote), quotedRole(quote), quotedSenderRef(quote), quotedText(quote), boolInt(quote != nil && quote.Role == conversation.QuoteAssistant),
 		uint8(candidate.ChatKind), boolInt(candidate.MentionsBot), boolInt(candidate.FromMe), boolInt(candidate.Owner), boolInt(candidate.Allowlisted),
 		candidate.OccurredAt.UTC().UnixMilli(), nowMS, nowMS,
@@ -116,6 +119,7 @@ func (store *InboundStore) ClaimAndResolveSender(
 		AccountID:    candidate.AccountID,
 		ChatID:       chatID,
 		SenderID:     participantID,
+		SenderLID:    candidate.SenderLID,
 		SenderRef:    senderRef,
 		SenderName:   candidate.SenderName,
 		ChatKind:     candidate.ChatKind,
@@ -271,8 +275,8 @@ func (store *InboundStore) ReconcileAccountPolicy(
 			return storageError("apply durable chat allowlist", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE participants SET owner = CASE WHEN provider_address = ? THEN 1 ELSE 0 END
-      WHERE tenant_id = ? AND account_id = ?`, ownerAddress, tenantID.String(), accountID.String()); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE participants SET owner = CASE WHEN lid = ? OR phone_address = ? THEN 1 ELSE 0 END
+	  WHERE tenant_id = ? AND account_id = ?`, ownerAddress, ownerAddress, tenantID.String(), accountID.String()); err != nil {
 		return storageError("apply durable owner policy", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -311,13 +315,13 @@ func (store *InboundStore) ListRecoverableInbound(
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
-        e.participant_id, e.sender_ref, e.sender_name, e.input_text,
+		e.participant_id, e.sender_lid, e.sender_ref, e.sender_name, e.input_text,
         e.quoted_message_id, e.quoted_sequence, e.quoted_role, e.quoted_sender_ref, e.quoted_text, e.replied_to_bot, e.chat_kind,
         e.mentions_bot, e.from_me, p.owner, c.allowlisted, e.occurred_at_ms, e.received_at_ms
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
       JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
-      WHERE e.tenant_id = ? AND e.action_id IS NULL AND (
+	  WHERE e.tenant_id = ? AND e.action_id IS NULL AND e.sender_lid IS NOT NULL AND (
         (e.turn_state = 0 AND e.updated_at_ms <= ?) OR
         (e.turn_state = ? AND (e.generation_lease_until_ms IS NULL OR e.generation_lease_until_ms <= ?)) OR
         (e.turn_state = ? AND (e.retry_after_ms IS NULL OR e.retry_after_ms <= ?))
@@ -336,14 +340,14 @@ func (store *InboundStore) ListRecoverableInbound(
 	for rows.Next() {
 		var (
 			messageValue, invocationValue, causationValue, accountValue, chatValue string
-			participantValue, senderRefValue, senderName, text                     string
+			participantValue, senderLIDValue, senderRefValue, senderName, text     string
 			quotedMessage, quotedSender, quotedTextValue                           sql.NullString
 			quotedSequenceValue, quotedRoleValue                                   sql.NullInt64
 			repliedToBot, chatKind, mentionsBot, fromMe, owner, allowlisted        int64
 			occurredAt, receivedAt                                                 int64
 		)
 		if err := rows.Scan(&messageValue, &invocationValue, &causationValue, &accountValue, &chatValue,
-			&participantValue, &senderRefValue, &senderName, &text,
+			&participantValue, &senderLIDValue, &senderRefValue, &senderName, &text,
 			&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot, &chatKind, &mentionsBot,
 			&fromMe, &owner, &allowlisted, &occurredAt, &receivedAt); err != nil {
 			return nil, storageError("scan recoverable inbound", err)
@@ -372,6 +376,10 @@ func (store *InboundStore) ListRecoverableInbound(
 		if err != nil {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
 		}
+		senderLID, err := identity.ParseLID(senderLIDValue)
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable sender LID", err)
+		}
 		senderRef, err := identity.ParseSenderRef(senderRefValue)
 		if err != nil {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
@@ -383,7 +391,7 @@ func (store *InboundStore) ListRecoverableInbound(
 		messages = append(messages, conversation.IncomingMessage{
 			ID: messageID, InvocationID: invocationID, CausationID: causationID,
 			TenantID: tenantID, AccountID: accountID, ChatID: chatID,
-			SenderID: participantID, SenderRef: senderRef, SenderName: senderName,
+			SenderID: participantID, SenderLID: senderLID, SenderRef: senderRef, SenderName: senderName,
 			ChatKind: conversation.ChatKind(chatKind), Text: text,
 			Quote: quote, RepliedToBot: repliedToBot == 1,
 			MentionsBot: mentionsBot == 1, FromMe: fromMe == 1, Owner: owner == 1, Allowlisted: allowlisted == 1,
@@ -446,38 +454,85 @@ func resolveChat(ctx context.Context, tx *sql.Tx, candidate conversation.Incomin
 func resolveParticipant(ctx context.Context, tx *sql.Tx, candidate conversation.IncomingCandidate, nowMS int64) (identity.ParticipantID, error) {
 	var value string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM participants
-      WHERE tenant_id = ? AND account_id = ? AND provider_address = ?`,
-		candidate.TenantID.String(), candidate.AccountID.String(), candidate.ProviderSenderAddress,
+      WHERE tenant_id = ? AND account_id = ? AND lid = ?`,
+		candidate.TenantID.String(), candidate.AccountID.String(), candidate.SenderLID.String(),
 	).Scan(&value)
 	if err == nil {
 		participantID, parseErr := identity.ParseParticipantID(value)
 		if parseErr != nil {
 			return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "decode participant mapping", parseErr)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE participants SET owner = ?
+		if _, err := tx.ExecContext(ctx, `UPDATE participants SET owner = ?, phone_address = COALESCE(NULLIF(?, ''), phone_address)
           WHERE tenant_id = ? AND account_id = ? AND id = ?`,
-			boolInt(candidate.Owner), candidate.TenantID.String(), candidate.AccountID.String(), participantID.String(),
+			boolInt(candidate.Owner), candidate.ProviderSenderPhone, candidate.TenantID.String(), candidate.AccountID.String(), participantID.String(),
 		); err != nil {
 			return identity.ParticipantID{}, storageError("refresh participant mapping", err)
+		}
+		if err := bindParticipantLID(ctx, tx, candidate.TenantID, candidate.AccountID, participantID, candidate.SenderLID); err != nil {
+			return identity.ParticipantID{}, err
 		}
 		return participantID, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return identity.ParticipantID{}, storageError("resolve participant mapping", err)
 	}
+	// A phone alias may connect a pre-LID row during migration, but can never
+	// override an existing LID binding.
+	if candidate.ProviderSenderPhone != "" {
+		var existingLID sql.NullString
+		err = tx.QueryRowContext(ctx, `SELECT id, lid FROM participants
+		  WHERE tenant_id = ? AND account_id = ? AND phone_address = ?`,
+			candidate.TenantID.String(), candidate.AccountID.String(), candidate.ProviderSenderPhone,
+		).Scan(&value, &existingLID)
+		if err == nil {
+			if existingLID.Valid && existingLID.String != candidate.SenderLID.String() {
+				return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "bind participant LID", fmt.Errorf("phone alias is already bound to another LID"))
+			}
+			participantID, parseErr := identity.ParseParticipantID(value)
+			if parseErr != nil {
+				return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "decode participant mapping", parseErr)
+			}
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE participants SET lid = ?, provider_address = ?, owner = ?
+			  WHERE tenant_id = ? AND account_id = ? AND id = ?`, candidate.SenderLID.String(), candidate.SenderLID.String(), boolInt(candidate.Owner),
+				candidate.TenantID.String(), candidate.AccountID.String(), participantID.String()); updateErr != nil {
+				return identity.ParticipantID{}, storageError("bind participant LID", updateErr)
+			}
+			if bindErr := bindParticipantLID(ctx, tx, candidate.TenantID, candidate.AccountID, participantID, candidate.SenderLID); bindErr != nil {
+				return identity.ParticipantID{}, bindErr
+			}
+			return participantID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return identity.ParticipantID{}, storageError("resolve participant phone alias", err)
+		}
+	}
 	participantID, err := identity.NewParticipantID()
 	if err != nil {
 		return identity.ParticipantID{}, agent.NewError(agent.ErrorInternal, "create participant ID", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO participants(
-        tenant_id, account_id, id, provider_address, owner, created_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-		candidate.TenantID.String(), candidate.AccountID.String(), participantID.String(), candidate.ProviderSenderAddress,
-		boolInt(candidate.Owner), nowMS,
+        tenant_id, account_id, id, provider_address, lid, phone_address, owner, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)`,
+		candidate.TenantID.String(), candidate.AccountID.String(), participantID.String(), candidate.SenderLID.String(), candidate.SenderLID.String(),
+		candidate.ProviderSenderPhone, boolInt(candidate.Owner), nowMS,
 	); err != nil {
 		return identity.ParticipantID{}, storageError("create participant mapping", err)
 	}
 	return participantID, nil
+}
+
+func bindParticipantLID(ctx context.Context, tx *sql.Tx, tenantID identity.TenantID, accountID identity.AccountID, participantID identity.ParticipantID, lid identity.LID) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE sender_refs SET lid = ?
+	  WHERE tenant_id = ? AND account_id = ? AND participant_id = ? AND (lid IS NULL OR lid = ?)`,
+		lid.String(), tenantID.String(), accountID.String(), participantID.String(), lid.String()); err != nil {
+		return storageError("backfill senderRef LID mappings", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE inbound_events SET sender_lid = ?
+	  WHERE tenant_id = ? AND account_id = ? AND participant_id = ? AND sender_lid IS NULL`,
+		lid.String(), tenantID.String(), accountID.String(), participantID.String()); err != nil {
+		return storageError("backfill inbound sender LID", err)
+	}
+	return nil
 }
 
 func resolveSenderRef(
@@ -487,6 +542,7 @@ func resolveSenderRef(
 	accountID identity.AccountID,
 	chatID identity.ChatID,
 	participantID identity.ParticipantID,
+	lid identity.LID,
 	factory func() (identity.SenderRef, error),
 	nowMS int64,
 ) (identity.SenderRef, error) {
@@ -499,6 +555,14 @@ func resolveSenderRef(
 		parsed, parseErr := identity.ParseSenderRef(value)
 		if parseErr != nil {
 			return identity.SenderRef{}, agent.NewError(agent.ErrorIntegrityFailure, "decode sender ref", parseErr)
+		}
+		if _, updateErr := tx.ExecContext(ctx, `UPDATE sender_refs SET lid = COALESCE(lid, ?)
+		  WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND participant_id = ?
+		    AND (lid IS NULL OR lid = ?)`, lid.String(), tenantID.String(), accountID.String(), chatID.String(), participantID.String(), lid.String()); updateErr != nil {
+			return identity.SenderRef{}, storageError("bind sender ref LID", updateErr)
+		}
+		if err := verifySenderMapping(ctx, tx, tenantID, accountID, chatID, lid, parsed); err != nil {
+			return identity.SenderRef{}, err
 		}
 		return parsed, nil
 	}
@@ -514,11 +578,14 @@ func resolveSenderRef(
 			return identity.SenderRef{}, agent.NewError(agent.ErrorIntegrityFailure, "create sender ref", fmt.Errorf("factory returned an empty reference"))
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO sender_refs(
-          tenant_id, account_id, chat_id, participant_id, sender_ref, created_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
-			tenantID.String(), accountID.String(), chatID.String(), participantID.String(), ref.String(), nowMS,
+          tenant_id, account_id, chat_id, participant_id, lid, sender_ref, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			tenantID.String(), accountID.String(), chatID.String(), participantID.String(), lid.String(), ref.String(), nowMS,
 		)
 		if err == nil {
+			if verifyErr := verifySenderMapping(ctx, tx, tenantID, accountID, chatID, lid, ref); verifyErr != nil {
+				return identity.SenderRef{}, verifyErr
+			}
 			return ref, nil
 		}
 		if !isUniqueConstraint(err) {
@@ -526,6 +593,17 @@ func resolveSenderRef(
 		}
 	}
 	return identity.SenderRef{}, agent.NewError(agent.ErrorResourceExhausted, "create sender ref", fmt.Errorf("collision retry limit reached"))
+}
+
+func verifySenderMapping(ctx context.Context, query actionQuerier, tenantID identity.TenantID, accountID identity.AccountID, chatID identity.ChatID, lid identity.LID, ref identity.SenderRef) error {
+	var storedLID, storedRef string
+	err := query.QueryRowContext(ctx, `SELECT lid, sender_ref FROM sender_refs
+	  WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND (lid = ? OR sender_ref = ?)`,
+		tenantID.String(), accountID.String(), chatID.String(), lid.String(), ref.String()).Scan(&storedLID, &storedRef)
+	if err != nil || storedLID != lid.String() || storedRef != ref.String() {
+		return agent.NewError(agent.ErrorIntegrityFailure, "verify senderRef LID mapping", fmt.Errorf("sender identity round-trip failed"))
+	}
+	return nil
 }
 
 func loadInboundByProvider(
@@ -537,22 +615,22 @@ func loadInboundByProvider(
 	providerMessageID string,
 ) (conversation.IncomingMessage, int64, error) {
 	var (
-		messageValue, invocationValue, causationValue, participantValue, senderRefValue string
-		senderName, text                                                                string
-		quotedMessage, quotedSender, quotedTextValue                                    sql.NullString
-		quotedSequenceValue, quotedRoleValue                                            sql.NullInt64
-		chatKind, mentionsBot, fromMe, owner, allowlisted, occurredAt, receivedAt       int64
-		repliedToBot                                                                    int64
-		state                                                                           int64
+		messageValue, invocationValue, causationValue, participantValue, senderLIDValue, senderRefValue string
+		senderName, text                                                                                string
+		quotedMessage, quotedSender, quotedTextValue                                                    sql.NullString
+		quotedSequenceValue, quotedRoleValue                                                            sql.NullInt64
+		chatKind, mentionsBot, fromMe, owner, allowlisted, occurredAt, receivedAt                       int64
+		repliedToBot                                                                                    int64
+		state                                                                                           int64
 	)
 	err := query.QueryRowContext(ctx, `SELECT message_id, invocation_id, causation_id,
-        participant_id, sender_ref, sender_name, input_text,
+		participant_id, sender_lid, sender_ref, sender_name, input_text,
         quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
         chat_kind, mentions_bot,
         from_me, owner, allowlisted, occurred_at_ms, received_at_ms, turn_state
       FROM inbound_events WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_message_id = ?`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
-	).Scan(&messageValue, &invocationValue, &causationValue, &participantValue, &senderRefValue,
+	).Scan(&messageValue, &invocationValue, &causationValue, &participantValue, &senderLIDValue, &senderRefValue,
 		&senderName, &text, &quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot,
 		&chatKind, &mentionsBot, &fromMe, &owner, &allowlisted, &occurredAt, &receivedAt, &state)
 	if err != nil {
@@ -574,6 +652,10 @@ func loadInboundByProvider(
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound participant", err)
 	}
+	senderLID, err := identity.ParseLID(senderLIDValue)
+	if err != nil {
+		return conversation.IncomingMessage{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound sender LID", err)
+	}
 	senderRef, err := identity.ParseSenderRef(senderRefValue)
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound sender ref", err)
@@ -590,6 +672,7 @@ func loadInboundByProvider(
 		AccountID:    accountID,
 		ChatID:       chatID,
 		SenderID:     participantID,
+		SenderLID:    senderLID,
 		SenderRef:    senderRef,
 		SenderName:   senderName,
 		ChatKind:     conversation.ChatKind(chatKind),
@@ -603,6 +686,44 @@ func loadInboundByProvider(
 		OccurredAt:   time.UnixMilli(occurredAt).UTC(),
 		ReceivedAt:   time.UnixMilli(receivedAt).UTC(),
 	}, state, nil
+}
+
+// ResolveLID performs the public senderRef -> LID half of the identity contract.
+func (store *InboundStore) ResolveLID(ctx context.Context, key agent.Key, ref identity.SenderRef) (identity.LID, error) {
+	if err := key.Validate(); err != nil || ref.IsZero() {
+		return identity.LID{}, agent.NewError(agent.ErrorInvalidArgument, "resolve senderRef to LID", fmt.Errorf("valid key and senderRef are required"))
+	}
+	var value string
+	if err := store.db.QueryRowContext(ctx, `SELECT lid FROM sender_refs WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String()).Scan(&value); errors.Is(err, sql.ErrNoRows) {
+		return identity.LID{}, agent.NewError(agent.ErrorNotFound, "resolve senderRef to LID", err)
+	} else if err != nil {
+		return identity.LID{}, storageError("resolve senderRef to LID", err)
+	}
+	lid, err := identity.ParseLID(value)
+	if err != nil {
+		return identity.LID{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve senderRef to LID", err)
+	}
+	return lid, nil
+}
+
+// ResolveSenderRef performs the public LID -> senderRef half of the identity contract.
+func (store *InboundStore) ResolveSenderRef(ctx context.Context, key agent.Key, lid identity.LID) (identity.SenderRef, error) {
+	if err := key.Validate(); err != nil || lid.IsZero() {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "resolve LID to senderRef", fmt.Errorf("valid key and LID are required"))
+	}
+	var value string
+	if err := store.db.QueryRowContext(ctx, `SELECT sender_ref FROM sender_refs WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND lid = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), lid.String()).Scan(&value); errors.Is(err, sql.ErrNoRows) {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorNotFound, "resolve LID to senderRef", err)
+	} else if err != nil {
+		return identity.SenderRef{}, storageError("resolve LID to senderRef", err)
+	}
+	ref, err := identity.ParseSenderRef(value)
+	if err != nil {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve LID to senderRef", err)
+	}
+	return ref, nil
 }
 
 func resolveQuotedMessage(

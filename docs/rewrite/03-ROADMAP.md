@@ -200,6 +200,8 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 - Deterministic context builder dan golden serialization.
 - Structured provenance dan context injection defense.
 - `/help`, `/info`, `/reset`.
+- LID canonical identity dengan durable `senderRef ⇄ LID` round-trip invariant; phone JID hanya alias.
+- Command dan AI handler memakai queue/worker pool terpisah agar model stall tidak membekukan command.
 - Backup/restore, action reconciliation, and richer metrics.
 
 ### Exit gate
@@ -209,11 +211,12 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 - Same-chat ordering dan cross-chat concurrency lulus under load.
 - Network-loss/process-kill/replay tests tidak membuat silent loss atau duplicate visible response.
 
-### Status implementasi 2026-09-09
+### Status implementasi 2026-09-10
 
 - Full durable transcript child, version-guarded reset/read, retention, canonical quote, replied-to-bot, bounded context builder, provenance boundary, batching/debounce/burst cap, dan control commands telah diimplementasikan. Passive group message tersimpan tetapi tidak memicu invocation.
 - Action/inbound recovery tetap memakai durable lease/outbox; expired executing send menjadi `unknown_outcome` dan tidak di-resend secara buta.
 - Offline full-data backup, checksum verification, restore-to-new-directory, conversation metrics, dan local fault/replay tests tersedia.
+- LID-first sender mapping dan isolated command/AI lanes tersedia; local round-trip serta blocked-AI isolation tests lulus.
 - Real-device DM/group reply, reconnect, forced process kill, network-loss observation, restore drill, dan soak masih pending; Part 2 belum boleh disebut production-complete atau stable.
 
 ## Part 3 — Permission, commands, dan typed actions
@@ -243,7 +246,7 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 - Image receive/send dan lazy materialization.
 - Vision input serta text-only fallback.
 - MIME/size/pixel/hash/timeout/quota/cleanup checks.
-- Mention/reply rendering dan LID/phone mapping hardening.
+- Mention/reply rendering lanjutan.
 - Tambahkan document/audio/video satu per satu setelah capability gate.
 
 ### Exit gate

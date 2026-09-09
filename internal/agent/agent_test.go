@@ -102,7 +102,7 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	}
 }
 
-func TestHistoryResetSharesExclusiveGateWithInvoke(t *testing.T) {
+func TestHistoryResetCancelsInFlightTurnWithoutWaitingForModel(t *testing.T) {
 	store := openStore(t)
 	model := &blockingModel{started: make(chan agent.ModelRequest, 1), release: make(chan struct{})}
 	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
@@ -112,17 +112,14 @@ func TestHistoryResetSharesExclusiveGateWithInvoke(t *testing.T) {
 		invokeDone <- err
 	}()
 	<-model.started
-	resetCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	resetCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := current.History().Reset(resetCtx, agent.InitialConfigVersion); !agent.IsCode(err, agent.ErrorTimeout) {
-		t.Fatalf("reset while invoke is active = %v, want timeout", err)
+	if err := current.History().Reset(resetCtx, agent.InitialConfigVersion); err != nil {
+		t.Fatalf("reset while invoke is active: %v", err)
 	}
 	close(model.release)
-	if err := <-invokeDone; err != nil {
-		t.Fatalf("finish invoke: %v", err)
-	}
-	if err := current.History().Reset(context.Background(), agent.InitialConfigVersion); err != nil {
-		t.Fatalf("reset after invoke: %v", err)
+	if err := <-invokeDone; !agent.IsCode(err, agent.ErrorConflict) {
+		t.Fatalf("late invoke error = %v, want conflict", err)
 	}
 	page, err := current.History().List(context.Background(), agent.InitialConfigVersion, agent.HistoryQuery{Limit: 10})
 	if err != nil || len(page.Entries) != 0 {

@@ -250,13 +250,13 @@ type InboundStore interface {
 
 `ClaimAndResolveSender` atomically:
 
-- resolves/creates internal chat and participant mapping;
-- resolves/creates sender ref;
+- resolves/creates internal chat and participant menggunakan LID canonical; phone JID hanya alias;
+- resolves/creates sender ref dan memverifikasi `LID -> senderRef -> LID` sebelum commit;
 - creates internal message ID;
 - claims provider dedup key;
 - stores normalized text needed for safe restart replay and, in Part 2, appends the allowlisted chat's canonical transcript entry atomically;
 
-Duplicate claim returns a typed duplicate result, not a second `IncomingMessage`. The external inbound handler then applies allowlist/trigger policy, resolves the Agent key, and calls `AgentRegistry.AgentFor(...).Invoke(...)`.
+Duplicate claim returns a typed duplicate result, not a second `IncomingMessage`, dan replay dengan sender identity berbeda gagal tertutup. Setelah durable intake, dispatcher mengklasifikasikan pesan secara deterministik ke `CommandHandler` atau `AIHandler`. Keduanya memakai bounded queue, worker pool, dan serialization stripes terpisah, sehingga model call yang macet tidak menahan jalur command. Recovery merutekan ulang row durable melalui dispatcher yang sama.
 
 ### Agent
 

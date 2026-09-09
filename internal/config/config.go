@@ -27,6 +27,10 @@ const (
 	defaultConstructionTimeout = 10 * time.Second
 	defaultInboundQueue        = 512
 	defaultInboundWorkers      = 4
+	defaultCommandQueue        = 128
+	defaultCommandWorkers      = 2
+	defaultAIQueue             = 512
+	defaultAIWorkers           = 4
 	defaultMessageDebounce     = 350 * time.Millisecond
 	defaultMessageBurstCap     = 8
 	defaultHistoryWindow       = 64
@@ -73,6 +77,10 @@ type Snapshot struct {
 	policyRevision      uint64
 	inboundQueue        uint32
 	inboundWorkers      uint32
+	commandQueue        uint32
+	commandWorkers      uint32
+	aiQueue             uint32
+	aiWorkers           uint32
 	messageDebounce     time.Duration
 	messageBurstCap     uint32
 	historyWindow       uint32
@@ -210,6 +218,22 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	commandQueue, err := parseUint(lookup, "WAZZAP_COMMAND_QUEUE", defaultCommandQueue, 1, 65_536)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	commandWorkers, err := parseUint(lookup, "WAZZAP_COMMAND_WORKERS", defaultCommandWorkers, 1, 256)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	aiQueue, err := parseUint(lookup, "WAZZAP_AI_QUEUE", defaultAIQueue, 1, 65_536)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	aiWorkers, err := parseUint(lookup, "WAZZAP_AI_WORKERS", defaultAIWorkers, 1, 256)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	messageDebounce, err := parseDuration(lookup, "WAZZAP_MESSAGE_DEBOUNCE", defaultMessageDebounce, time.Minute)
 	if err != nil {
 		return Snapshot{}, err
@@ -276,6 +300,10 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		policyRevision:      policyRevision,
 		inboundQueue:        uint32(inboundQueue),
 		inboundWorkers:      uint32(inboundWorkers),
+		commandQueue:        uint32(commandQueue),
+		commandWorkers:      uint32(commandWorkers),
+		aiQueue:             uint32(aiQueue),
+		aiWorkers:           uint32(aiWorkers),
 		messageDebounce:     messageDebounce,
 		messageBurstCap:     uint32(messageBurstCap),
 		historyWindow:       uint32(historyWindow),
@@ -380,6 +408,10 @@ func (snapshot Snapshot) PolicyID() identity.PolicyID        { return snapshot.p
 func (snapshot Snapshot) PolicyRevision() uint64             { return snapshot.policyRevision }
 func (snapshot Snapshot) InboundQueue() uint32               { return snapshot.inboundQueue }
 func (snapshot Snapshot) InboundWorkers() uint32             { return snapshot.inboundWorkers }
+func (snapshot Snapshot) CommandQueue() uint32               { return snapshot.commandQueue }
+func (snapshot Snapshot) CommandWorkers() uint32             { return snapshot.commandWorkers }
+func (snapshot Snapshot) AIQueue() uint32                    { return snapshot.aiQueue }
+func (snapshot Snapshot) AIWorkers() uint32                  { return snapshot.aiWorkers }
 func (snapshot Snapshot) MessageDebounce() time.Duration     { return snapshot.messageDebounce }
 func (snapshot Snapshot) MessageBurstCap() uint32            { return snapshot.messageBurstCap }
 func (snapshot Snapshot) HistoryWindow() uint32              { return snapshot.historyWindow }
@@ -431,6 +463,10 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"max_response_bytes":      snapshot.maxResponseBytes,
 		"inbound_queue":           snapshot.inboundQueue,
 		"inbound_workers":         snapshot.inboundWorkers,
+		"command_queue":           snapshot.commandQueue,
+		"command_workers":         snapshot.commandWorkers,
+		"ai_queue":                snapshot.aiQueue,
+		"ai_workers":              snapshot.aiWorkers,
 		"message_debounce":        snapshot.messageDebounce.String(),
 		"message_burst_cap":       snapshot.messageBurstCap,
 		"history_window":          snapshot.historyWindow,

@@ -59,6 +59,7 @@ type conversationRuntime struct {
 	adapter         *whatsapp.Adapter
 	recovery        *action.RecoveryWorker
 	inboundRecovery *inbound.RecoveryWorker
+	inboundDispatch *inbound.SplitDispatcher
 	maintenance     *maintenance.Worker
 }
 
@@ -291,7 +292,17 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	inboundHandler, err := inbound.NewHandlerWithBatching(
+	commandCore, err := inbound.NewHandler(
+		store.Inbound(), registry, gate, commandResponses, application.metrics,
+	)
+	if err != nil {
+		return nil, err
+	}
+	commandHandler, err := inbound.NewCommandHandler(commandCore)
+	if err != nil {
+		return nil, err
+	}
+	aiCore, err := inbound.NewHandlerWithBatching(
 		store.Inbound(), registry, gate, commandResponses, application.metrics,
 		inbound.BatchOptions{
 			Debounce: application.config.MessageDebounce(),
@@ -302,11 +313,26 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	if err := waAdapter.BindHandler(inboundHandler); err != nil {
+	aiHandler, err := inbound.NewAIHandler(aiCore)
+	if err != nil {
+		return nil, err
+	}
+	inboundDispatch, err := inbound.NewSplitDispatcher(
+		store.Inbound(), commandHandler, aiHandler, application.metrics,
+		application.config.CommandQueue(), application.config.AIQueue(),
+		application.config.CommandWorkers(), application.config.AIWorkers(),
+		func(lane inbound.Lane, err error) {
+			application.logger.Error("inbound lane processing failed", "lane", lane, "code", agent.CodeOf(err))
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := waAdapter.BindHandler(inboundDispatch); err != nil {
 		return nil, err
 	}
 	inboundRecovery, err := inbound.NewRecoveryWorker(
-		application.config.TenantID(), store.Inbound(), inboundHandler, agent.SystemClock{}, 2*time.Second, 5*time.Second, 64,
+		application.config.TenantID(), store.Inbound(), inboundDispatch, agent.SystemClock{}, 2*time.Second, 5*time.Second, 64,
 	)
 	if err != nil {
 		return nil, err
@@ -334,7 +360,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	adapterOwned = false
 	return &conversationRuntime{
 		store: store, registry: registry, account: accountRuntime, adapter: waAdapter,
-		recovery: recovery, inboundRecovery: inboundRecovery, maintenance: maintenanceWorker,
+		recovery: recovery, inboundRecovery: inboundRecovery, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
 	}, nil
 }
 
@@ -345,6 +371,7 @@ func (runtime *conversationRuntime) run(ctx context.Context) error {
 		runtime.account.Run,
 		runtime.recovery.Run,
 		runtime.inboundRecovery.Run,
+		runtime.inboundDispatch.Run,
 		runtime.maintenance.Run,
 	}
 	errorsChannel := make(chan error, len(runners))

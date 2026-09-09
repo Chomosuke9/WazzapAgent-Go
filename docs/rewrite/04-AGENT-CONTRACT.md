@@ -69,7 +69,7 @@ Agent tetap bertanggung jawab atas domain validation dan invariants. Contoh:
 - authorization luar menentukan siapa yang boleh mengganti model;
 - `Agent.Config().SetModel()` menentukan apakah model reference valid dan update konsisten;
 - authorization luar menentukan siapa yang boleh reset history;
-- `Agent.History().Reset()` menjaga transaction, tombstone, dan invocation ordering.
+- `Agent.History().Reset()` menjaga transaction dan tombstone yang membatalkan commit invocation lama tanpa menunggu model.
 
 Permission configuration boleh tersimpan dalam `Agent.Config`, tetapi interpretasi dan enforcement-nya dilakukan oleh policy/application/action layer. Model tidak pernah dianggap sebagai actor yang berwenang hanya karena data config masuk prompt.
 
@@ -784,7 +784,7 @@ Rules:
 - Part 2 accepts exactly one valid UTF-8 `TextPart` per history entry; later media parts require an explicit schema/contract extension;
 - `Append` is idempotent by message/invocation identity and rejects conflicting content digests;
 - `List` recomputes the immutable identity/content digest for every row and returns `integrity_failure` on corruption;
-- `Reset` coordinates with the Agent invocation gate, writes a reset tombstone, dan membatalkan pre-reset staged/generating inbound work;
+- `Reset` tidak menunggu Agent invocation gate; transaction menulis tombstone, membatalkan lease pre-reset, dan memastikan hasil model yang datang terlambat gagal commit;
 - staging batching memeriksa tombstone yang sama agar pesan lama tidak dapat masuk lagi setelah race dengan reset;
 - an older received/generating/retryable/planned turn blocks a newer conversation batch; order uses the durable SQLite intake sequence rather than timestamp/UUID coincidence, recovery reuses the original durable batch anchor, and a pre-Part-2 turn without an anchor is recovered as a one-message batch;
 - `Trim` is called by retention workflow and pins pending history only. Unknown history is terminal and may age out; the independent turn/action receipt remains the anti-resend tombstone;
@@ -795,10 +795,16 @@ Rules:
 
 ## External application handlers
 
+### Identity and lane contract
+
+`IncomingCandidate.SenderLID` adalah identity provider canonical dan wajib ada. Phone JID hanya optional alias untuk delivery serta pencocokan konfigurasi; ia tidak boleh dipakai membuat participant atau senderRef. Durable intake mempertahankan internal `ParticipantID`, tetapi mapping authoritative adalah `(tenant, account, chat, LID) ⇄ senderRef`. Kedua arah wajib unik dan diverifikasi dalam transaksi yang sama sebelum inbound event commit. Event tanpa LID, binding ambigu, collision, atau replay provider-message ID dengan sender berbeda gagal tertutup.
+
+Setelah claim durable, `SplitDispatcher` merutekan pesan yang dikenali parser ke `CommandHandler`; semua pesan lainnya ke `AIHandler`. Kedua handler mempunyai bounded queue, worker pool, dan handler instance/serialization stripes sendiri. Saturasi atau model call yang macet pada AI lane tidak boleh menunggu atau memakai kapasitas command lane. Jika queue penuh, row tetap durable dan recovery mencoba routing lagi; jangan memindahkan message langsung antar-lane sebagai fallback.
+
 ### Invoke path
 
 ```go
-func (h *InboundHandler) Handle(
+func (h *SplitDispatcher) Handle(
     ctx context.Context,
     candidate IncomingCandidate,
 ) error {
@@ -807,33 +813,12 @@ func (h *InboundHandler) Handle(
         return err
     }
 
-    currentAgent, err := h.agents.AgentFor(ctx, AgentKeyFrom(message))
-    if err != nil {
-        return err
-    }
 
-    snapshot, err := currentAgent.Config().Refresh(ctx)
-    if err != nil {
-        return err
-    }
-
-    decision, err := h.policy.Evaluate(
-        ctx,
-        message,
-        snapshot.Permission,
-    )
-    if err != nil || !decision.Invoke {
-        return err
-    }
-
-    decision.Invocation.PolicyVersion = snapshot.Version
-
-    _, err = currentAgent.Invoke(ctx, decision.Invocation)
-    return err
+    return h.Resume(ctx, message) // command queue atau AI queue
 }
 ```
 
-Identity/inbox claim happens before Agent lookup. External trigger/allowlist/actor policy then evaluates the refreshed immutable policy reference before `Agent.Invoke()`.
+Identity/inbox claim happens before routing dan Agent lookup. Masing-masing lane menjalankan external trigger/allowlist/actor policy, lalu mengevaluasi refreshed immutable policy reference sebelum core method dipanggil.
 
 ### Config mutation path
 

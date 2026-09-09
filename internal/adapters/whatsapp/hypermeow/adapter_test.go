@@ -31,7 +31,7 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 	adapter.allowlist[chat.String()] = struct{}{}
 	event := &events.Message{
 		Info: types.MessageInfo{
-			MessageSource: types.MessageSource{Chat: chat, Sender: sender},
+			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000001", types.HiddenUserServer)},
 			ID:            types.MessageID("provider-message-id"),
 			PushName:      "Test User",
 			Timestamp:     time.Now().UTC(),
@@ -45,8 +45,8 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 	if candidate.ChatKind != conversation.ChatDirect || candidate.Text != "hello" || !candidate.Owner || !candidate.Allowlisted {
 		t.Fatalf("normalized candidate = %#v", candidate)
 	}
-	if candidate.ProviderSenderAddress != "15550000001@s.whatsapp.net" {
-		t.Fatalf("sender was not canonicalized: %q", candidate.ProviderSenderAddress)
+	if candidate.SenderLID.String() != "10000000001@lid" {
+		t.Fatalf("LID was not canonicalized: %q", candidate.SenderLID.String())
 	}
 	if ownJID.IsEmpty() {
 		t.Fatal("test own JID is empty")
@@ -61,7 +61,7 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 	message := func(mentions []string) *events.Message {
 		return &events.Message{
 			Info: types.MessageInfo{
-				MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
+				MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
 				ID:            types.MessageID("group-message"),
 				Timestamp:     time.Now().UTC(),
 			},
@@ -87,7 +87,7 @@ func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.
 	adapter.allowlist[chat.String()] = struct{}{}
 	event := &events.Message{
 		Info: types.MessageInfo{
-			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
+			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
 			ID:            types.MessageID("reply-message"), Timestamp: time.Now().UTC(),
 		},
 		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
@@ -107,7 +107,7 @@ func TestNormalizeStickerAsTranscriptPlaceholder(t *testing.T) {
 	adapter.allowlist[chat.String()] = struct{}{}
 	event := &events.Message{
 		Info: types.MessageInfo{
-			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
+			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
 			ID:            types.MessageID("sticker-message"), Timestamp: time.Now().UTC(),
 		},
 		Message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}},
@@ -123,7 +123,7 @@ func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 	info := types.MessageInfo{
 		MessageSource: types.MessageSource{
 			Chat:   types.NewJID("15550000002", types.DefaultUserServer),
-			Sender: types.NewJID("15550000001", types.DefaultUserServer),
+			Sender: types.NewJID("15550000001", types.DefaultUserServer), SenderAlt: types.NewJID("10000000001", types.HiddenUserServer),
 		},
 		ID: types.MessageID("id"), Timestamp: time.Now().UTC(),
 	}
@@ -132,6 +132,19 @@ func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 	}
 	if _, ok := adapter.normalizeMessage(&events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("edit")}, IsEdit: true}); ok {
 		t.Fatal("accepted edited message")
+	}
+}
+
+func TestNormalizeFailsClosedWithoutSenderLID(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	event := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat: types.NewJID("15550000002", types.DefaultUserServer), Sender: types.NewJID("15550000001", types.DefaultUserServer),
+		}, ID: "missing-lid", Timestamp: time.Now().UTC()},
+		Message: &waE2E.Message{Conversation: proto.String("hello")},
+	}
+	if _, ok := adapter.normalizeMessage(event); ok {
+		t.Fatal("message without a trusted LID was accepted")
 	}
 }
 
@@ -145,7 +158,7 @@ func TestIgnoredNativeEventLogDoesNotExposePayloadOrProviderIdentity(t *testing.
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{
 				Chat:   types.NewJID("15550000022", types.DefaultUserServer),
-				Sender: types.NewJID("15550000021", types.DefaultUserServer),
+				Sender: types.NewJID("15550000021", types.DefaultUserServer), SenderAlt: types.NewJID("10000000021", types.HiddenUserServer),
 			},
 			ID: types.MessageID(secretID), Timestamp: time.Now().UTC(),
 		},
@@ -162,7 +175,7 @@ func TestIgnoredNativeEventLogDoesNotExposePayloadOrProviderIdentity(t *testing.
 	}
 }
 
-func TestDirectMessageUsesPhoneAlternateForStableIdentityAndAllowlist(t *testing.T) {
+func TestDirectMessageUsesLIDIdentityAndPhoneAliasForAllowlist(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	lid := types.NewJID("10000000001", types.HiddenUserServer)
 	phone := types.NewJID("15550000011", types.DefaultUserServer)
@@ -179,12 +192,12 @@ func TestDirectMessageUsesPhoneAlternateForStableIdentityAndAllowlist(t *testing
 	if !ok || !candidate.Owner || !candidate.Allowlisted {
 		t.Fatalf("alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
-	if candidate.ProviderChatAddress != phone.String() || candidate.ProviderSenderAddress != phone.String() {
-		t.Fatalf("did not prefer stable phone identity: %#v", candidate)
+	if candidate.ProviderChatAddress != phone.String() || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
+		t.Fatalf("did not preserve LID identity and phone alias: %#v", candidate)
 	}
 }
 
-func TestGroupSenderUsesPhoneAlternateForStableOwnerIdentity(t *testing.T) {
+func TestGroupSenderUsesLIDIdentityAndPhoneAliasForOwner(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	chat := types.NewJID("120363000000000002", types.GroupServer)
 	lid := types.NewJID("10000000002", types.HiddenUserServer)
@@ -199,7 +212,7 @@ func TestGroupSenderUsesPhoneAlternateForStableOwnerIdentity(t *testing.T) {
 		Message: &waE2E.Message{Conversation: proto.String("hello group")},
 	}
 	candidate, ok := adapter.normalizeMessage(event)
-	if !ok || !candidate.Owner || candidate.ProviderSenderAddress != phone.String() {
+	if !ok || !candidate.Owner || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
 		t.Fatalf("group alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
 }

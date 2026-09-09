@@ -27,16 +27,18 @@ type IncomingCandidate struct {
 	ProviderMessageID       string
 	ProviderQuotedMessageID string
 	ProviderChatAddress     string
-	ProviderSenderAddress   string
-	SenderName              string
-	ChatKind                ChatKind
-	Text                    string
-	MentionsBot             bool
-	FromMe                  bool
-	Owner                   bool
-	Allowlisted             bool
-	OccurredAt              time.Time
-	ReceivedAt              time.Time
+	SenderLID               identity.LID
+	// ProviderSenderPhone is an optional delivery/addressing alias, never identity.
+	ProviderSenderPhone string
+	SenderName          string
+	ChatKind            ChatKind
+	Text                string
+	MentionsBot         bool
+	FromMe              bool
+	Owner               bool
+	Allowlisted         bool
+	OccurredAt          time.Time
+	ReceivedAt          time.Time
 }
 
 func (candidate IncomingCandidate) Validate() error {
@@ -52,8 +54,11 @@ func (candidate IncomingCandidate) Validate() error {
 	if strings.TrimSpace(candidate.ProviderChatAddress) == "" || len(candidate.ProviderChatAddress) > 512 {
 		return fmt.Errorf("provider chat address is invalid")
 	}
-	if strings.TrimSpace(candidate.ProviderSenderAddress) == "" || len(candidate.ProviderSenderAddress) > 512 {
-		return fmt.Errorf("provider sender address is invalid")
+	if candidate.SenderLID.IsZero() {
+		return fmt.Errorf("sender LID is required")
+	}
+	if len(candidate.ProviderSenderPhone) > 512 {
+		return fmt.Errorf("provider sender phone alias is invalid")
 	}
 	if candidate.ChatKind != ChatDirect && candidate.ChatKind != ChatGroup && candidate.ChatKind != ChatStatus {
 		return fmt.Errorf("chat kind is invalid")
@@ -93,6 +98,7 @@ type IncomingMessage struct {
 	AccountID    identity.AccountID
 	ChatID       identity.ChatID
 	SenderID     identity.ParticipantID
+	SenderLID    identity.LID
 	SenderRef    identity.SenderRef
 	SenderName   string
 	ChatKind     ChatKind
@@ -110,7 +116,7 @@ type IncomingMessage struct {
 func (message IncomingMessage) Validate() error {
 	if message.ID.IsZero() || message.InvocationID.IsZero() || message.CausationID.IsZero() ||
 		message.TenantID.IsZero() || message.AccountID.IsZero() || message.ChatID.IsZero() ||
-		message.SenderID.IsZero() || message.SenderRef.IsZero() {
+		message.SenderID.IsZero() || message.SenderLID.IsZero() || message.SenderRef.IsZero() {
 		return fmt.Errorf("canonical message identities are required")
 	}
 	if message.ChatKind != ChatDirect && message.ChatKind != ChatGroup && message.ChatKind != ChatStatus {

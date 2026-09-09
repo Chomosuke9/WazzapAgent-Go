@@ -52,14 +52,15 @@ Part 1 bukan stable v1.0 dan tidak menggantikan service lama. Label artifact/dep
 |---|---:|---|
 | Incoming/outgoing text | 1 | DM dan group mention yang allowlisted. |
 | Ignore self/status/duplicate event | 1 | Single deterministic inbound pipeline. |
-| Opaque stable senderRef | 1 | Per tenant/chat/participant, durable, collision-safe. |
+| Opaque stable senderRef | 1 | Per tenant/chat/LID, durable, collision-safe, resolvable dua arah. |
 | Raw JID hidden from model/log | 1 | JID hanya di adapter/mapping store. |
 | Persistent internal message ID | 1 | Dibutuhkan inbox/action causation. |
 | Conversation history | 2 | Tidak masuk Part 1 model context. |
 | Quoted-message lookup/reply | 2 | Stable mapping and hydration. |
 | Replied-to-bot trigger | 2 | Part 1 group trigger hanya mention. |
 | Batching/debounce/burst | 2 | Part 1 proses satu inbound turn. |
-| LID/phone mapping hardening | 4 | Minimum mapping boleh muncul di adapter Part 1. |
+| LID identity + phone alias | core | LID canonical; phone hanya alias. Intake gagal tertutup bila LID tidak tersedia atau round-trip mapping tidak konsisten. |
+| Command/AI handler isolation | 2 | Durable intake merutekan ke queue dan worker pool terpisah. |
 | View-once/ephemeral/edited wrappers | 8 | Capability and privacy review required. |
 
 ## Prompt, agent, dan commands
@@ -158,9 +159,10 @@ The application creates IDs and idempotency key. The model returns text only and
 
 ### Sender ref
 
-- scope: `(tenant_id, chat_id, participant_id)`;
+- scope: `(tenant_id, account_id, chat_id, LID)`; `participant_id` hanya surrogate internal;
 - unique display ref inside `(tenant_id, chat_id)`;
-- random and opaque rather than derived from phone/JID;
+- random and opaque rather than derived from LID/phone JID;
+- mapping `senderRef ⇄ LID` wajib unik dan diverifikasi dua arah dalam transaksi intake;
 - persisted before model invocation;
 - stable after process restart/backup restore;
 - never used as authorization evidence.
@@ -180,6 +182,9 @@ The application creates IDs and idempotency key. The model returns text only and
 - Allowlisted group mention receives one text reply.
 - Self/status/duplicate/non-trigger group events produce no reply.
 - Same participant keeps the same ref after restart.
+- LID yang sama tetap mendapat senderRef yang sama walaupun alias nomor/pushName berubah.
+- Event tanpa LID atau mapping ambigu gagal tertutup dan tidak boleh membuat identity baru dari nomor.
+- Command tetap berjalan ketika worker AI diblokir.
 - Different tenant/chat scopes do not accidentally share mapping.
 - Model/log payload contains no raw JID/phone number.
 

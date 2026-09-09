@@ -616,9 +616,10 @@ func newFixtureAtPath(
 
 func (fixture *fixture) candidate(id, chat string, kind conversation.ChatKind, text string) conversation.IncomingCandidate {
 	now := time.Now().UTC()
+	lid, _ := identity.ParseLID("10000000001@lid")
 	return conversation.IncomingCandidate{
 		TenantID: fixture.tenantID, AccountID: fixture.accountID,
-		ProviderMessageID: id, ProviderChatAddress: chat, ProviderSenderAddress: "15550000001@s.whatsapp.net",
+		ProviderMessageID: id, ProviderChatAddress: chat, SenderLID: lid, ProviderSenderPhone: "15550000001@s.whatsapp.net",
 		SenderName: "Tester", ChatKind: kind, Text: text, Allowlisted: true,
 		OccurredAt: now.Add(-time.Second), ReceivedAt: now,
 	}

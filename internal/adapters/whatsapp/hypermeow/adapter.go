@@ -460,15 +460,20 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 	}
 	chat := event.Info.Chat.ToNonAD()
 	sender := event.Info.Sender.ToNonAD()
-	sender = preferPhoneAddress(sender, event.Info.SenderAlt)
+	senderLID, ok := lidAddress(sender, event.Info.SenderAlt)
+	if !ok {
+		// Identity is fail-closed: never invent a senderRef from a phone alias.
+		return conversation.IncomingCandidate{}, false
+	}
+	senderPhone := phoneAddress(sender, event.Info.SenderAlt)
 	if !event.Info.IsGroup {
 		if event.Info.IsFromMe {
-			chat = preferPhoneAddress(chat, event.Info.RecipientAlt)
+			chat = phoneAddress(chat, event.Info.RecipientAlt)
 		} else {
-			chat = preferPhoneAddress(chat, event.Info.SenderAlt)
+			chat = phoneAddress(chat, event.Info.SenderAlt)
 		}
 	}
-	if chat.IsEmpty() || sender.IsEmpty() || event.Info.ID == "" || event.Info.Timestamp.IsZero() {
+	if chat.IsEmpty() || event.Info.ID == "" || event.Info.Timestamp.IsZero() {
 		return conversation.IncomingCandidate{}, false
 	}
 	chatKind := conversation.ChatDirect
@@ -503,7 +508,8 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 		ProviderMessageID:       string(event.Info.ID),
 		ProviderQuotedMessageID: quotedMessageID,
 		ProviderChatAddress:     chatAddress,
-		ProviderSenderAddress:   sender.String(),
+		SenderLID:               mustLID(senderLID),
+		ProviderSenderPhone:     jidString(senderPhone),
 		SenderName:              event.Info.PushName,
 		ChatKind:                chatKind,
 		Text:                    text,
@@ -525,7 +531,7 @@ func (adapter *Adapter) isConfiguredOwner(addresses ...types.JID) bool {
 	return false
 }
 
-func preferPhoneAddress(primary types.JID, alternatives ...types.JID) types.JID {
+func phoneAddress(primary types.JID, alternatives ...types.JID) types.JID {
 	if primary.Server == types.DefaultUserServer || primary.Server == types.HostedServer {
 		return primary.ToNonAD()
 	}
@@ -536,6 +542,31 @@ func preferPhoneAddress(primary types.JID, alternatives ...types.JID) types.JID 
 		}
 	}
 	return primary.ToNonAD()
+}
+
+func lidAddress(addresses ...types.JID) (types.JID, bool) {
+	for _, address := range addresses {
+		address = address.ToNonAD()
+		if (address.Server == types.HiddenUserServer || address.Server == types.HostedLIDServer) && address.User != "" {
+			return address, true
+		}
+	}
+	return types.EmptyJID, false
+}
+
+func mustLID(address types.JID) identity.LID {
+	lid, err := identity.ParseLID(address.ToNonAD().String())
+	if err != nil {
+		panic("validated WhatsApp LID could not be parsed")
+	}
+	return lid
+}
+
+func jidString(address types.JID) string {
+	if address.IsEmpty() {
+		return ""
+	}
+	return address.ToNonAD().String()
 }
 
 func (adapter *Adapter) mentionsOwnAccount(mentioned []string) bool {

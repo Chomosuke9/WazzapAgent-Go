@@ -19,7 +19,7 @@ Perintah `backup` memuat `.env` dengan aturan runtime yang sama, tetapi hanya me
 
 Backup menyalin seluruh data root sebagai satu set, termasuk `runtime-identity.json`, application SQLite, dan Hypermeow device SQLite. Manifest menyimpan ukuran serta SHA-256 setiap file. Jangan menjalankan backup ketika runtime masih hidup; kedua database terpisah harus diambil pada operational point yang sama.
 
-Setelah backup terverifikasi, jalankan binary Part 2. Migration `002_part2_history.sql` dan `003_full_transcript_quotes.sql` diterapkan otomatis, lalu migration checksum lama diverifikasi. Jangan mengubah migration yang sudah pernah diterapkan.
+Setelah backup terverifikasi, jalankan binary Part 2. Migration `002_part2_history.sql`, `003_full_transcript_quotes.sql`, dan `004_lid_identity.sql` diterapkan otomatis, lalu migration checksum lama diverifikasi. Migration 004 menjadikan LID identity canonical dan mempertahankan nomor sebagai alias. Row lama berbasis nomor baru diikat saat Hypermeow memberikan pasangan LID/nomor pertama; recovery tidak memproses row tanpa LID. Jangan mengubah migration yang sudah pernah diterapkan.
 
 ## 2. Konfigurasi Part 2
 
@@ -28,6 +28,10 @@ Nilai default baru di `.env.example`:
 ```dotenv
 WAZZAP_MESSAGE_DEBOUNCE=350ms
 WAZZAP_MESSAGE_BURST_CAP=8
+WAZZAP_COMMAND_QUEUE=128
+WAZZAP_COMMAND_WORKERS=2
+WAZZAP_AI_QUEUE=512
+WAZZAP_AI_WORKERS=4
 WAZZAP_HISTORY_WINDOW=64
 WAZZAP_MAX_CONTEXT_BYTES=65536
 WAZZAP_HISTORY_KEEP_LATEST=256
@@ -35,6 +39,7 @@ WAZZAP_HISTORY_MAX_AGE=720h
 ```
 
 - `MESSAGE_DEBOUNCE` adalah quiet window per chat sebelum batch diklaim. Nilainya harus positif dan maksimal satu menit.
+- `COMMAND_*` dan `AI_*` mengatur kapasitas queue/worker lane masing-masing. Jangan menyatukan keduanya; command harus tetap memiliki kapasitas sendiri saat model lambat.
 - `MESSAGE_BURST_CAP` membatasi jumlah pesan dalam satu invocation. Remainder tetap durable dan diproses sebagai batch berikutnya.
 - `HISTORY_WINDOW` membatasi jumlah entry yang dibaca untuk satu model invocation; ini tidak memotong transcript durable yang tersimpan.
 - `MAX_CONTEXT_BYTES` membatasi hasil context builder setelah serialisasi; logical invocation lama (user beserta assistant reply-nya) dibuang bersama, bukan dipotong atau dibuat orphan.
@@ -49,6 +54,8 @@ Semua nilai dibaca saat runtime startup. Perubahan memerlukan restart.
 - Beberapa text yang tiba berdekatan pada chat yang sama digabung menjadi satu invocation setelah quiet window, tetapi tetap menjadi entry user terpisah dengan sender provenance masing-masing.
 - Hanya assistant response yang delivery-nya terkonfirmasi `succeeded` yang dipakai kembali sebagai model history. Pending, failed, dan unknown output tidak dianggap sudah dilihat pengguna.
 - Quote diterjemahkan dari provider message ID menjadi internal `MessageID` dalam scope tenant/account/chat. Raw JID dan provider ID tidak dikirim ke model.
+- Event sender wajib membawa LID dari Hypermeow. Intake memverifikasi mapping `senderRef ⇄ LID` dua arah sebelum commit; nomor hanya alias dan tidak boleh membuat identity baru sendiri.
+- Command dan AI memakai queue/worker terpisah. Uji `/help` ketika endpoint model sengaja diblokir untuk memastikan jalur command tetap responsif.
 - Di group allowlisted, bot dipicu oleh mention atau reply terhadap response bot yang dapat di-resolve. Group message biasa tetap tidak memicu response, tetapi tetap disimpan sebagai transcript dan akan terlihat pada invocation eligible berikutnya.
 - Setiap entry memiliki sequence monotonik, timestamp, senderRef opaque, dan quote ke internal MessageID/sequence. Sticker yang belum didukung sebagai media masuk sebagai placeholder `【sticker】` agar chronology tidak hilang.
 - Context selalu diakhiri current user message. Jika durable message yang lebih baru sudah ada, invocation lama gagal tertutup sebagai stale context.

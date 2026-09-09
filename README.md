@@ -29,6 +29,8 @@ Termasuk:
 
 - fresh QR pairing dan persistent Hypermeow device session;
 - eligible DM dan group mention/reply text; semua inbound text/sticker pada chat allowlisted tetap masuk transcript, sedangkan group pasif tidak memicu respons;
+- LID sebagai canonical sender identity; nomor telepon hanya alias addressing/policy, dan mapping durable `senderRef ⇄ LID` diverifikasi dua arah sebelum transaksi intake commit;
+- dua handler serta worker pool independen untuk command dan AI; model yang macet tidak menghabiskan worker command;
 - durable dedup, opaque per-chat `senderRef`, generation lease, action outbox, receipt, dan restart recovery;
 - `/prompt view`, `/prompt set <teks>`, dan `/prompt clear`, hanya untuk configured owner;
 - full durable transcript untuk chat allowlisted (DM dan group), termasuk pesan group pasif yang tidak memicu balasan; model tetap menerima bounded context yang bertahan setelah restart;

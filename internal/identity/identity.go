@@ -1,5 +1,6 @@
 // Package identity contains validated semantic identifiers shared by the core.
-// Provider addresses and credentials deliberately do not belong in this package.
+// Delivery addresses and credentials deliberately do not belong here. WhatsApp
+// LID is the canonical participant identity and is represented explicitly.
 package identity
 
 import (
@@ -21,11 +22,15 @@ type ActionID struct{ value string }
 type InvocationID struct{ value string }
 type CausationID struct{ value string }
 type SenderRef struct{ value string }
+
+// LID is WhatsApp's canonical participant identity. Phone JIDs are aliases only.
+type LID struct{ value string }
 type ProviderID struct{ value string }
 type PolicyID struct{ value string }
 
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,62}$`)
 var senderRefPattern = regexp.MustCompile(`^u_[0-9A-HJKMNP-TV-Z]{8}$`)
+var lidPattern = regexp.MustCompile(`^[0-9]{1,32}@(hosted\.)?lid$`)
 var crockfordEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
 func ParseTenantID(value string) (TenantID, error) {
@@ -75,6 +80,13 @@ func ParseSenderRef(value string) (SenderRef, error) {
 	return SenderRef{value: value}, nil
 }
 
+func ParseLID(value string) (LID, error) {
+	if !lidPattern.MatchString(value) {
+		return LID{}, errors.New("LID must be a numeric WhatsApp @lid or @hosted.lid address")
+	}
+	return LID{value: value}, nil
+}
+
 func ParseProviderID(value string) (ProviderID, error) {
 	value, err := parseSlug("provider ID", value)
 	return ProviderID{value: value}, err
@@ -117,6 +129,7 @@ func (id ActionID) String() string      { return id.value }
 func (id InvocationID) String() string  { return id.value }
 func (id CausationID) String() string   { return id.value }
 func (id SenderRef) String() string     { return id.value }
+func (id LID) String() string           { return id.value }
 func (id ProviderID) String() string    { return id.value }
 func (id PolicyID) String() string      { return id.value }
 
@@ -129,6 +142,7 @@ func (id ActionID) IsZero() bool      { return id.value == "" }
 func (id InvocationID) IsZero() bool  { return id.value == "" }
 func (id CausationID) IsZero() bool   { return id.value == "" }
 func (id SenderRef) IsZero() bool     { return id.value == "" }
+func (id LID) IsZero() bool           { return id.value == "" }
 func (id ProviderID) IsZero() bool    { return id.value == "" }
 func (id PolicyID) IsZero() bool      { return id.value == "" }
 

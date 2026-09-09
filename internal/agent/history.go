@@ -122,10 +122,8 @@ func (history *History) Reset(ctx context.Context, version ConfigVersion) error 
 	if version == 0 {
 		return NewError(ErrorInvalidArgument, "reset history", fmt.Errorf("authorized config version is required"))
 	}
-	if err := history.gate.acquire(ctx); err != nil {
-		return err
-	}
-	defer history.gate.release()
+	// Do not wait for a model call. The durable reset tombstone cancels its
+	// pre-reset lease, so a late result cannot commit or repopulate history.
 	return history.store.ResetIfConfigVersion(ctx, history.key, version, history.clock.Now())
 }
 
