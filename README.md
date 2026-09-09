@@ -1,6 +1,6 @@
 # WazzapAgent Go
 
-Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 2 menyediakan conversation core text-only yang durable: pesan WhatsApp masuk, kebijakan eksternal, satu `Agent` per chat, bounded history/context, LLM OpenAI-compatible, lalu pengiriman balasan melalui durable action outbox.
+Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 2 menyediakan conversation core text-only yang durable: transcript canonical penuh untuk chat yang allowlisted, kebijakan eksternal, satu `Agent` per chat, bounded model context, LLM OpenAI-compatible, lalu pengiriman balasan melalui durable action outbox.
 
 Status saat ini: Part 0 selesai; implementasi lokal Part 1 dan Part 2 selesai. Exit gate real-device/production canary belum dibuktikan, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
 
@@ -28,10 +28,11 @@ Kontrak lengkap ada di [docs/rewrite/04-AGENT-CONTRACT.md](docs/rewrite/04-AGENT
 Termasuk:
 
 - fresh QR pairing dan persistent Hypermeow device session;
-- eligible DM dan group mention text;
+- eligible DM dan group mention/reply text; semua inbound text/sticker pada chat allowlisted tetap masuk transcript, sedangkan group pasif tidak memicu respons;
 - durable dedup, opaque per-chat `senderRef`, generation lease, action outbox, receipt, dan restart recovery;
 - `/prompt view`, `/prompt set <teks>`, dan `/prompt clear`, hanya untuk configured owner;
-- persistent bounded history dan context yang bertahan setelah restart;
+- full durable transcript untuk chat allowlisted (DM dan group), termasuk pesan group pasif yang tidak memicu balasan; model tetap menerima bounded context yang bertahan setelah restart;
+- setiap entry memiliki sequence ordering, timestamp, opaque senderRef, dan canonical quote metadata; sticker text-only disimpan sebagai placeholder `【sticker】`;
 - deterministic typed-provenance context builder; sender name, quote, dan message text tetap diperlakukan sebagai untrusted data;
 - canonical quoted-message lookup serta group trigger melalui mention atau reply ke bot;
 - durable per-chat debounce/batching dengan burst cap dan stale-context guard;
@@ -43,6 +44,8 @@ Termasuk:
 - scrub content terminal setelah 24 jam, bounded history, dan hapus terminal turn/action setelah 30 hari.
 
 Belum termasuk media, tool calling, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
+
+Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai representasi JSON terstruktur (bukan renderer pretty-print seperti format transcript lama).
 
 ## Mulai
 

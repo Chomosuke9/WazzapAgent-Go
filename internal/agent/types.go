@@ -109,6 +109,9 @@ type Invocation struct {
 }
 
 type QuoteContext struct {
+	// Sequence is optional transcript ordering metadata. It is deliberately not
+	// part of invocation identity so quoted Part 2 turns remain replayable.
+	Sequence  uint64
 	MessageID identity.MessageID
 	Role      HistoryRole
 	SenderRef identity.SenderRef

@@ -75,22 +75,39 @@ func (store *InboundStore) ClaimAndResolveSender(
 	_, err = tx.ExecContext(ctx, `INSERT INTO inbound_events(
         tenant_id, account_id, chat_id, invocation_id, message_id, causation_id,
         provider_message_id, participant_id, sender_ref, sender_name, input_text,
-        quoted_message_id, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
+        quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
         chat_kind, mentions_bot, from_me, owner, allowlisted, occurred_at_ms,
         received_at_ms, turn_state, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		candidate.TenantID.String(), candidate.AccountID.String(), chatID.String(), invocationID.String(), messageID.String(), causationID.String(),
 		candidate.ProviderMessageID, participantID.String(), senderRef.String(), candidate.SenderName, candidate.Text,
-		quotedID(quote), quotedRole(quote), quotedSenderRef(quote), quotedText(quote), boolInt(quote != nil && quote.Role == conversation.QuoteAssistant),
+		quotedID(quote), quotedSequence(quote), quotedRole(quote), quotedSenderRef(quote), quotedText(quote), boolInt(quote != nil && quote.Role == conversation.QuoteAssistant),
 		uint8(candidate.ChatKind), boolInt(candidate.MentionsBot), boolInt(candidate.FromMe), boolInt(candidate.Owner), boolInt(candidate.Allowlisted),
 		candidate.OccurredAt.UTC().UnixMilli(), nowMS, nowMS,
 	)
 	if err != nil {
 		return inbound.ClaimedMessage{}, storageError("insert incoming event", err)
 	}
+	// A managed chat has one canonical transcript. Recording happens before
+	// trigger checks: group traffic that does not mention or reply to the bot is
+	// still useful context for the next eligible invocation, but never becomes a
+	// reason to send a response on its own.
+	shouldRecord, err := shouldRecordInboundHistory(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, candidate.ReceivedAt.UTC().UnixMilli())
+	if err != nil {
+		return inbound.ClaimedMessage{}, err
+	}
+	if shouldRecord && candidate.Allowlisted && candidate.ChatKind != conversation.ChatStatus && !candidate.FromMe {
+		key := agent.Key{TenantID: candidate.TenantID, AccountID: candidate.AccountID, ChatID: chatID}
+		if err := store.Store.appendHistoryEntryTx(ctx, tx, key, inboundTranscriptEntry(
+			messageID, invocationID, causationID, participantID, senderRef, candidate, quote,
+		), nowMS); err != nil {
+			return inbound.ClaimedMessage{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return inbound.ClaimedMessage{}, storageError("commit incoming claim", err)
 	}
+	handled := !shouldRecord && candidate.Allowlisted && candidate.ChatKind != conversation.ChatStatus && !candidate.FromMe
 	return inbound.ClaimedMessage{Message: conversation.IncomingMessage{
 		ID:           messageID,
 		InvocationID: invocationID,
@@ -111,7 +128,61 @@ func (store *InboundStore) ClaimAndResolveSender(
 		Allowlisted:  candidate.Allowlisted,
 		OccurredAt:   candidate.OccurredAt.UTC(),
 		ReceivedAt:   candidate.ReceivedAt.UTC(),
-	}}, nil
+	}, Handled: handled}, nil
+}
+
+func shouldRecordInboundHistory(
+	ctx context.Context,
+	tx *sql.Tx,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	chatID identity.ChatID,
+	receivedAtMS int64,
+) (bool, error) {
+	var resetAtMS sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT reset_at_ms FROM history_resets
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
+		tenantID.String(), accountID.String(), chatID.String(),
+	).Scan(&resetAtMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, storageError("check inbound history reset", err)
+	}
+	return !resetAtMS.Valid || receivedAtMS > resetAtMS.Int64, nil
+}
+
+func inboundTranscriptEntry(
+	messageID identity.MessageID,
+	invocationID identity.InvocationID,
+	causationID identity.CausationID,
+	participantID identity.ParticipantID,
+	senderRef identity.SenderRef,
+	candidate conversation.IncomingCandidate,
+	quote *conversation.QuotedMessage,
+) agent.HistoryEntry {
+	var historyQuote *agent.QuoteContext
+	if quote != nil {
+		role := agent.HistoryUser
+		if quote.Role == conversation.QuoteAssistant {
+			role = agent.HistoryAssistant
+		}
+		historyQuote = &agent.QuoteContext{
+			Sequence: quote.Sequence, MessageID: quote.ID, Role: role, SenderRef: quote.SenderRef, Text: quote.Text,
+		}
+	}
+	return agent.HistoryEntry{
+		MessageID: messageID, InvocationID: invocationID,
+		Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: causationID},
+		Role:      agent.HistoryUser,
+		Sender: &agent.SenderContext{
+			ParticipantID: participantID, Ref: senderRef, DisplayName: candidate.SenderName,
+		},
+		Quote:    historyQuote,
+		Content:  []agent.ContentPart{agent.TextPart{Text: candidate.Text}},
+		Delivery: agent.DeliveryNotStarted, CreatedAt: candidate.OccurredAt.UTC(),
+	}
 }
 
 func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation.IncomingMessage, reason inbound.IgnoreReason) error {
@@ -241,7 +312,7 @@ func (store *InboundStore) ListRecoverableInbound(
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
         e.participant_id, e.sender_ref, e.sender_name, e.input_text,
-        e.quoted_message_id, e.quoted_role, e.quoted_sender_ref, e.quoted_text, e.replied_to_bot, e.chat_kind,
+        e.quoted_message_id, e.quoted_sequence, e.quoted_role, e.quoted_sender_ref, e.quoted_text, e.replied_to_bot, e.chat_kind,
         e.mentions_bot, e.from_me, p.owner, c.allowlisted, e.occurred_at_ms, e.received_at_ms
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
@@ -267,13 +338,13 @@ func (store *InboundStore) ListRecoverableInbound(
 			messageValue, invocationValue, causationValue, accountValue, chatValue string
 			participantValue, senderRefValue, senderName, text                     string
 			quotedMessage, quotedSender, quotedTextValue                           sql.NullString
-			quotedRoleValue                                                        sql.NullInt64
+			quotedSequenceValue, quotedRoleValue                                   sql.NullInt64
 			repliedToBot, chatKind, mentionsBot, fromMe, owner, allowlisted        int64
 			occurredAt, receivedAt                                                 int64
 		)
 		if err := rows.Scan(&messageValue, &invocationValue, &causationValue, &accountValue, &chatValue,
 			&participantValue, &senderRefValue, &senderName, &text,
-			&quotedMessage, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot, &chatKind, &mentionsBot,
+			&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot, &chatKind, &mentionsBot,
 			&fromMe, &owner, &allowlisted, &occurredAt, &receivedAt); err != nil {
 			return nil, storageError("scan recoverable inbound", err)
 		}
@@ -305,7 +376,7 @@ func (store *InboundStore) ListRecoverableInbound(
 		if err != nil {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
 		}
-		quote, err := decodeQuotedMessage(quotedMessage, quotedRoleValue, quotedSender, quotedTextValue)
+		quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue)
 		if err != nil {
 			return nil, err
 		}
@@ -469,20 +540,20 @@ func loadInboundByProvider(
 		messageValue, invocationValue, causationValue, participantValue, senderRefValue string
 		senderName, text                                                                string
 		quotedMessage, quotedSender, quotedTextValue                                    sql.NullString
-		quotedRoleValue                                                                 sql.NullInt64
+		quotedSequenceValue, quotedRoleValue                                            sql.NullInt64
 		chatKind, mentionsBot, fromMe, owner, allowlisted, occurredAt, receivedAt       int64
 		repliedToBot                                                                    int64
 		state                                                                           int64
 	)
 	err := query.QueryRowContext(ctx, `SELECT message_id, invocation_id, causation_id,
         participant_id, sender_ref, sender_name, input_text,
-        quoted_message_id, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
+        quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
         chat_kind, mentions_bot,
         from_me, owner, allowlisted, occurred_at_ms, received_at_ms, turn_state
       FROM inbound_events WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_message_id = ?`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
 	).Scan(&messageValue, &invocationValue, &causationValue, &participantValue, &senderRefValue,
-		&senderName, &text, &quotedMessage, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot,
+		&senderName, &text, &quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot,
 		&chatKind, &mentionsBot, &fromMe, &owner, &allowlisted, &occurredAt, &receivedAt, &state)
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, err
@@ -507,7 +578,7 @@ func loadInboundByProvider(
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound sender ref", err)
 	}
-	quote, err := decodeQuotedMessage(quotedMessage, quotedRoleValue, quotedSender, quotedTextValue)
+	quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue)
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, err
 	}
@@ -546,7 +617,8 @@ func resolveQuotedMessage(
 		return nil, nil
 	}
 	var responseValue, text string
-	err := query.QueryRowContext(ctx, `SELECT a.response_id,
+	var responseSequence sql.NullInt64
+	err := query.QueryRowContext(ctx, `SELECT a.response_id, h.sequence,
         CASE
           WHEN r.reset_at_ms IS NOT NULL AND e.received_at_ms <= r.reset_at_ms
             THEN '[konten balasan sebelum reset tidak disertakan]'
@@ -561,7 +633,7 @@ func resolveQuotedMessage(
       WHERE a.tenant_id = ? AND a.account_id = ? AND a.chat_id = ? AND a.provider_receipt = ?
       ORDER BY a.created_at_ms DESC LIMIT 1`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
-	).Scan(&responseValue, &text)
+	).Scan(&responseValue, &responseSequence, &text)
 	if err == nil {
 		messageID, parseErr := identity.ParseMessageID(responseValue)
 		if parseErr != nil {
@@ -570,13 +642,18 @@ func resolveQuotedMessage(
 		if text == "" {
 			return nil, nil
 		}
-		return &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}, nil
+		quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}
+		if responseSequence.Valid && responseSequence.Int64 > 0 {
+			quote.Sequence = uint64(responseSequence.Int64)
+		}
+		return quote, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, storageError("resolve quoted assistant", err)
 	}
 	var messageValue, senderRefValue string
-	err = query.QueryRowContext(ctx, `SELECT e.message_id, e.sender_ref,
+	var messageSequence sql.NullInt64
+	err = query.QueryRowContext(ctx, `SELECT e.message_id, h.sequence, e.sender_ref,
         CASE
           WHEN r.reset_at_ms IS NOT NULL AND e.received_at_ms <= r.reset_at_ms
             THEN '[konten pesan sebelum reset tidak disertakan]'
@@ -590,7 +667,7 @@ func resolveQuotedMessage(
         AND e.sender_ref IS NOT NULL
       ORDER BY e.received_at_ms DESC LIMIT 1`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
-	).Scan(&messageValue, &senderRefValue, &text)
+	).Scan(&messageValue, &messageSequence, &senderRefValue, &text)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -608,11 +685,16 @@ func resolveQuotedMessage(
 	if text == "" {
 		return nil, nil
 	}
-	return &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteUser, SenderRef: senderRef, Text: text}, nil
+	quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteUser, SenderRef: senderRef, Text: text}
+	if messageSequence.Valid && messageSequence.Int64 > 0 {
+		quote.Sequence = uint64(messageSequence.Int64)
+	}
+	return quote, nil
 }
 
 func decodeQuotedMessage(
 	message sql.NullString,
+	sequence sql.NullInt64,
 	role sql.NullInt64,
 	sender sql.NullString,
 	text sql.NullString,
@@ -628,6 +710,9 @@ func decodeQuotedMessage(
 		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", err)
 	}
 	quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteRole(role.Int64), Text: text.String}
+	if sequence.Valid && sequence.Int64 > 0 {
+		quote.Sequence = uint64(sequence.Int64)
+	}
 	if sender.Valid {
 		ref, err := identity.ParseSenderRef(sender.String)
 		if err != nil {
@@ -647,6 +732,13 @@ func quotedID(quote *conversation.QuotedMessage) any {
 		return nil
 	}
 	return quote.ID.String()
+}
+
+func quotedSequence(quote *conversation.QuotedMessage) any {
+	if quote == nil || quote.Sequence == 0 {
+		return nil
+	}
+	return quote.Sequence
 }
 
 func quotedRole(quote *conversation.QuotedMessage) any {

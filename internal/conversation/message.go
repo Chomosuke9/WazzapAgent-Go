@@ -78,6 +78,7 @@ const (
 )
 
 type QuotedMessage struct {
+	Sequence  uint64
 	ID        identity.MessageID
 	Role      QuoteRole
 	SenderRef identity.SenderRef

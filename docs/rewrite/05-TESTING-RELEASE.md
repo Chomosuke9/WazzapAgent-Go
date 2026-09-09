@@ -50,6 +50,7 @@ Use fake clock, deterministic random source, fake LLM, fake sender, and temporar
 - sender-ref collision retry and uniqueness;
 - prompt-override set/view/clear and isolation;
 - inbound dedup;
+- full allowlisted transcript intake, passive group retention, monotonic sequence/quote metadata, and through-invocation context boundary;
 - InvocationID/digest conflict and generation lease expiry;
 - atomic response/action plan transaction;
 - receipt conflict and unknown-outcome transitions;
@@ -73,6 +74,7 @@ Required Part 1 scenarios:
 
 - eligible DM sends exactly one response;
 - group mention sends one response;
+- passive group text/sticker sends none immediately but appears in the next eligible model context;
 - non-mention group/self/status/duplicate sends none;
 - owner `/prompt` operations bypass LLM and persist;
 - non-owner prompt mutation is denied;

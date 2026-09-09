@@ -67,6 +67,53 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	}
 }
 
+func TestFullGroupTranscriptIncludesPassiveMessagesInNextInvocation(t *testing.T) {
+	fixture := newFixture(t)
+	chat := "120363000000000002@g.us"
+	passive := fixture.candidate("group-passive", chat, conversation.ChatGroup, "context before mention")
+	if err := fixture.handler.Handle(context.Background(), passive); err != nil {
+		t.Fatalf("handle passive group message: %v", err)
+	}
+	trigger := fixture.candidate("group-trigger", chat, conversation.ChatGroup, "please answer this")
+	trigger.MentionsBot = true
+	if err := fixture.handler.Handle(context.Background(), trigger); err != nil {
+		t.Fatalf("handle group trigger: %v", err)
+	}
+	request := fixture.model.lastRequest()
+	seenPassive := false
+	seenTrigger := false
+	for _, message := range request.Messages {
+		seenPassive = seenPassive || strings.Contains(message.Content, "context before mention")
+		seenTrigger = seenTrigger || strings.Contains(message.Content, "please answer this")
+	}
+	if !seenPassive || !seenTrigger {
+		t.Fatalf("full group context = %#v", request.Messages)
+	}
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), passive)
+	if err != nil {
+		t.Fatalf("reload passive message: %v", err)
+	}
+	current, err := fixture.registry.AgentFor(context.Background(), agent.Key{
+		TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID,
+	})
+	if err != nil {
+		t.Fatalf("load group agent: %v", err)
+	}
+	snapshot, err := current.Config().Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("load group config: %v", err)
+	}
+	page, err := current.History().List(context.Background(), snapshot.Version, agent.HistoryQuery{Limit: 10})
+	if err != nil || len(page.Entries) != 3 {
+		t.Fatalf("full group history = %#v, err=%v", page, err)
+	}
+	for index, entry := range page.Entries {
+		if entry.Sequence == 0 || (index > 0 && entry.Sequence <= page.Entries[index-1].Sequence) {
+			t.Fatalf("history sequence is not strictly increasing: %#v", page.Entries)
+		}
+	}
+}
+
 func TestRapidMessagesAreDurablyDebouncedIntoOneBoundedBatch(t *testing.T) {
 	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 8)
 	chat := "15550000012@s.whatsapp.net"
@@ -172,7 +219,8 @@ func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
 		t.Fatalf("reload reply: %v", err)
 	}
 	if !claimed.Message.RepliedToBot || claimed.Message.Quote == nil ||
-		claimed.Message.Quote.Role != conversation.QuoteAssistant || claimed.Message.Quote.ID.IsZero() {
+		claimed.Message.Quote.Role != conversation.QuoteAssistant || claimed.Message.Quote.ID.IsZero() ||
+		claimed.Message.Quote.Sequence == 0 {
 		t.Fatalf("canonical reply quote = %#v", claimed.Message)
 	}
 }

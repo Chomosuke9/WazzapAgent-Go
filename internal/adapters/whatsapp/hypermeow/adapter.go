@@ -428,7 +428,7 @@ func ignoredNativeReason(event *events.Message) string {
 	if event.IsEdit {
 		return "edited_message"
 	}
-	if event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" {
+	if event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil {
 		return "unsupported_content"
 	}
 	return "invalid_metadata"
@@ -442,6 +442,18 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 	extended := event.Message.GetExtendedTextMessage()
 	if text == "" && extended != nil {
 		text = extended.GetText()
+	}
+	contextInfo := (*waE2E.ContextInfo)(nil)
+	if extended != nil {
+		contextInfo = extended.GetContextInfo()
+	}
+	if text == "" {
+		if sticker := event.Message.GetStickerMessage(); sticker != nil {
+			// Part 2 remains text-only for the model, but the canonical transcript
+			// must not lose visible group chronology when someone sends a sticker.
+			text = "【sticker】"
+			contextInfo = sticker.GetContextInfo()
+		}
 	}
 	if text == "" {
 		return conversation.IncomingCandidate{}, false
@@ -479,11 +491,11 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 	}
 	mentioned := false
 	quotedMessageID := ""
-	if extended != nil && extended.GetContextInfo() != nil {
-		quotedMessageID = extended.GetContextInfo().GetStanzaID()
+	if contextInfo != nil {
+		quotedMessageID = contextInfo.GetStanzaID()
 	}
-	if chatKind == conversation.ChatGroup && extended != nil {
-		mentioned = adapter.mentionsOwnAccount(extended.GetContextInfo().GetMentionedJID())
+	if chatKind == conversation.ChatGroup && contextInfo != nil {
+		mentioned = adapter.mentionsOwnAccount(contextInfo.GetMentionedJID())
 	}
 	return conversation.IncomingCandidate{
 		TenantID:                adapter.tenantID,

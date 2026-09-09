@@ -331,7 +331,8 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 			role = agent.HistoryAssistant
 		}
 		quote = &agent.QuoteContext{
-			MessageID: message.Quote.ID, Role: role, SenderRef: message.Quote.SenderRef, Text: message.Quote.Text,
+			Sequence: message.Quote.Sequence, MessageID: message.Quote.ID, Role: role,
+			SenderRef: message.Quote.SenderRef, Text: message.Quote.Text,
 		}
 	}
 	return agent.Invocation{
@@ -400,10 +401,21 @@ func (handler *Handler) handleControl(
 		if err := currentAgent.History().Reset(ctx, snapshot.Version); err != nil {
 			return err
 		}
-		handler.observer.ObserveHistoryReset()
 		response = "History percakapan berhasil direset."
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle control command", fmt.Errorf("unknown control command"))
+	}
+	if command == ControlReset {
+		// The confirmation itself is part of the full transcript, but it must
+		// not immediately repopulate the new conversation context. The second
+		// tombstone is idempotent and runs after the durable response plan exists.
+		replyErr := handler.responses.Reply(ctx, message, snapshot.Version, response)
+		resetErr := currentAgent.History().Reset(ctx, snapshot.Version)
+		handler.observer.ObserveHistoryReset()
+		if replyErr != nil {
+			return replyErr
+		}
+		return resetErr
 	}
 	return handler.responses.Reply(ctx, message, snapshot.Version, response)
 }

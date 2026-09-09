@@ -33,8 +33,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 2 {
-		t.Fatalf("migration count = %d, want 2", migrations)
+	if migrations != 3 {
+		t.Fatalf("migration count = %d, want 3", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -90,10 +90,10 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 2 {
-		t.Fatalf("upgraded migration count = %d, want 2", migrations)
+	if migrations != 3 {
+		t.Fatalf("upgraded migration count = %d, want 3", migrations)
 	}
-	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
+	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT sequence FROM history_entries LIMIT 0"); err != nil {
@@ -602,6 +602,47 @@ func TestMessageCannotEnterBatchAfterAConcurrentHistoryReset(t *testing.T) {
 	}
 }
 
+func TestLateClaimOfPreResetInboundDoesNotReintroduceHistory(t *testing.T) {
+	ctx := context.Background()
+	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	store := openTestStoreWithClock(t, clock)
+	first := testCandidate(t, "reset-seed", "15550000046@s.whatsapp.net")
+	first.ReceivedAt = clock.now
+	first.OccurredAt = clock.now
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, first)
+	if err != nil {
+		t.Fatalf("claim seed: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	resetAt := clock.now.Add(time.Second)
+	if err := store.History().ResetIfConfigVersion(ctx, key, snapshot.Version, resetAt); err != nil {
+		t.Fatalf("reset history: %v", err)
+	}
+	late := first
+	late.ProviderMessageID = "reset-preexisting-late-claim"
+	late.Text = "must stay hidden"
+	late.OccurredAt = resetAt.Add(-time.Second)
+	late.ReceivedAt = resetAt.Add(-time.Millisecond)
+	lateClaim, err := store.Inbound().ClaimAndResolveSender(ctx, late)
+	if err != nil {
+		t.Fatalf("claim pre-reset event after reset: %v", err)
+	}
+	if !lateClaim.Handled {
+		t.Fatal("pre-reset late claim was left eligible for processing")
+	}
+	page, err := store.History().ListIfConfigVersion(ctx, key, snapshot.Version, agent.HistoryQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list post-reset history: %v", err)
+	}
+	if len(page.Entries) != 0 {
+		t.Fatalf("pre-reset late claim resurfaced: %#v", page.Entries)
+	}
+}
+
 func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
@@ -703,9 +744,13 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	historyPage, err := store.History().ListIfConfigVersion(
 		context.Background(), key, configSnapshot.Version, agent.HistoryQuery{Limit: 10},
 	)
-	if err != nil || len(historyPage.Entries) != 1 ||
-		historyPage.Entries[0].Role != agent.HistoryAssistant ||
-		historyPage.Entries[0].Delivery != agent.DeliverySucceeded {
+	var completedAssistant *agent.HistoryEntry
+	for index := range historyPage.Entries {
+		if historyPage.Entries[index].Role == agent.HistoryAssistant {
+			completedAssistant = &historyPage.Entries[index]
+		}
+	}
+	if err != nil || completedAssistant == nil || completedAssistant.Delivery != agent.DeliverySucceeded {
 		t.Fatalf("completed assistant history = %#v, err=%v", historyPage, err)
 	}
 	observed, err := actions.Claim(context.Background(), plan.Dispatch, clock.now)
@@ -999,9 +1044,13 @@ func TestExpiredExecutingActionBecomesUnknownAndCannotBeReclaimed(t *testing.T) 
 	history, err := store.History().ListIfConfigVersion(
 		context.Background(), key, snapshot.Version, agent.HistoryQuery{Limit: 10},
 	)
-	if err != nil || len(history.Entries) != 1 ||
-		history.Entries[0].Role != agent.HistoryAssistant ||
-		history.Entries[0].Delivery != agent.DeliveryUnknownOutcome {
+	var unknownAssistant *agent.HistoryEntry
+	for index := range history.Entries {
+		if history.Entries[index].Role == agent.HistoryAssistant {
+			unknownAssistant = &history.Entries[index]
+		}
+	}
+	if err != nil || unknownAssistant == nil || unknownAssistant.Delivery != agent.DeliveryUnknownOutcome {
 		t.Fatalf("unknown assistant history = %#v, err=%v", history, err)
 	}
 }

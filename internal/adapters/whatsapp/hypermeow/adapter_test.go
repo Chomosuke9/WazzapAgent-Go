@@ -100,6 +100,24 @@ func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.
 	}
 }
 
+func TestNormalizeStickerAsTranscriptPlaceholder(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	chat := types.NewJID("120363000000000010", types.GroupServer)
+	sender := types.NewJID("15550000003", types.DefaultUserServer)
+	adapter.allowlist[chat.String()] = struct{}{}
+	event := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
+			ID:            types.MessageID("sticker-message"), Timestamp: time.Now().UTC(),
+		},
+		Message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}},
+	}
+	candidate, ok := adapter.normalizeMessage(event)
+	if !ok || candidate.Text != "【sticker】" || !candidate.Allowlisted || candidate.ChatKind != conversation.ChatGroup {
+		t.Fatalf("sticker candidate = %#v, ok=%v", candidate, ok)
+	}
+}
+
 func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	info := types.MessageInfo{

@@ -191,7 +191,8 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 
 ### Work items
 
-- Persistent bounded history dan retention.
+- Persistent full canonical transcript untuk chat allowlisted, dengan bounded model context dan retention.
+- Passive group text/sticker tetap dicatat sebagai context tetapi tidak memicu respons; trigger policy tetap berada di inbound layer.
 - Implement `Agent.History().List/Append/Reset/Trim` as the Part 2 child capability; externally authorized read/reset receives and transactionally verifies the authorized Config version.
 - Stable internal message ID dan quoted lookup.
 - Replied-to-bot trigger.
@@ -204,12 +205,13 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 ### Exit gate
 
 - History/context survive restart.
+- Allowlisted passive group entries survive restart and appear in the next eligible bounded context without triggering a standalone response.
 - Same-chat ordering dan cross-chat concurrency lulus under load.
 - Network-loss/process-kill/replay tests tidak membuat silent loss atau duplicate visible response.
 
 ### Status implementasi 2026-09-09
 
-- Durable history child, version-guarded reset/read, retention, canonical quote, replied-to-bot, context builder, provenance boundary, batching/debounce/burst cap, dan control commands telah diimplementasikan.
+- Full durable transcript child, version-guarded reset/read, retention, canonical quote, replied-to-bot, bounded context builder, provenance boundary, batching/debounce/burst cap, dan control commands telah diimplementasikan. Passive group message tersimpan tetapi tidak memicu invocation.
 - Action/inbound recovery tetap memakai durable lease/outbox; expired executing send menjadi `unknown_outcome` dan tidak di-resend secara buta.
 - Offline full-data backup, checksum verification, restore-to-new-directory, conversation metrics, dan local fault/replay tests tersedia.
 - Real-device DM/group reply, reconnect, forced process kill, network-loss observation, restore drill, dan soak masih pending; Part 2 belum boleh disebut production-complete atau stable.

@@ -151,7 +151,12 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err
 	}
-	page, err := agent.history.List(ctx, snapshot.Version, HistoryQuery{Limit: agent.historyWindow})
+	// The transcript may continue to receive passive group messages while this
+	// turn is waiting for its debounce window. Context is therefore bounded at
+	// this invocation rather than at the newest row in the whole chat.
+	page, err := agent.history.List(ctx, snapshot.Version, HistoryQuery{
+		Limit: agent.historyWindow, ThroughInvocationID: invocation.ID,
+	})
 	if err != nil {
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err

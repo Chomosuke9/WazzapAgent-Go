@@ -254,7 +254,7 @@ type InboundStore interface {
 - resolves/creates sender ref;
 - creates internal message ID;
 - claims provider dedup key;
-- stores normalized text needed for safe restart replay.
+- stores normalized text needed for safe restart replay and, in Part 2, appends the allowlisted chat's canonical transcript entry atomically;
 
 Duplicate claim returns a typed duplicate result, not a second `IncomingMessage`. The external inbound handler then applies allowlist/trigger policy, resolves the Agent key, and calls `AgentRegistry.AgentFor(...).Invoke(...)`.
 
@@ -320,7 +320,8 @@ native event
   -> Hypermeow normalization
   -> validate tenant and bounds
   -> ClaimAndResolveSender transaction
-  -> ignore duplicate/self/status/basic non-trigger
+  -> persist allowlisted inbound transcript before trigger filtering
+  -> ignore duplicate/self/status/basic non-trigger (without invoking the Agent)
   -> AgentRegistry.AgentFor(chat)
   -> Config.Refresh
   -> external allowlist/trigger/actor policy
@@ -465,7 +466,7 @@ Rules:
 - application never writes Hypermeow-owned schema;
 - coordinated backup pauses intake and checkpoints both DBs; no cross-DB atomicity is assumed.
 
-Part 1 retains normalized inbound/outbound text only as long as required for recovery/diagnosis. Content should be scrubbed by a short configurable retention after terminal state while dedup/receipt tombstones remain longer. Exact retention is finalized before canary.
+Part 1 retains normalized inbound/outbound text only as long as required for recovery/diagnosis. Part 2 retains the canonical allowlisted transcript until its explicit history retention policy applies. Content should be scrubbed by a short configurable retention after terminal state while dedup/receipt tombstones remain longer. Exact retention is finalized before canary.
 
 ## Account runtime
 

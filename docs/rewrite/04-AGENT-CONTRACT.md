@@ -223,6 +223,7 @@ type SenderContext struct {
 }
 
 type QuoteContext struct {
+    Sequence  uint64 // durable transcript ordering metadata; optional on input
     MessageID identity.MessageID
     Role      HistoryRole
     SenderRef identity.SenderRef
@@ -320,7 +321,7 @@ Part berikutnya dapat menambah `ImagePart`, `FilePart`, atau `SubagentResultPart
 
 Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-selected target.
 
-`ContextBuilder` mengubah Config dan bounded durable history menjadi `[]ModelMessage`. Base prompt dan prompt override tetap menjadi system messages dengan provenance terpisah; sender name, message text, dan canonical quote diserialisasi sebagai JSON di dalam user message dan diberi label untrusted. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan current user message wajib berada paling akhir.
+`ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt dan prompt override tetap menjadi system messages dengan provenance terpisah; sequence/timestamp, sender name, message text, dan canonical quote diserialisasi sebagai JSON di dalam user message dan diberi label untrusted. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan current user message wajib berada paling akhir. View di-anchor pada invocation yang sedang diproses agar passive message yang tiba sesudah trigger tidak menyusup ke context turn tersebut.
 
 `ModelInvoker` dibangun dengan non-overridable application safety/system policy dan provider credentials. Adapter selalu menaruh policy tersebut sebelum seluruh `ModelMessage`, lalu memvalidasi pasangan role/provenance. Config, history, atau output model tidak dapat mengganti policy itu. `ModelResult` hanya berisi candidate content—tidak pernah target, actor, action ID, atau authorization data.
 
@@ -459,8 +460,9 @@ acquire Agent invocation gate
   -> Config.Refresh + verify external PolicyVersion for genuinely new work
   -> durable TurnStore.Claim
   -> return/resume stored result when already planned
-  -> append durable incoming history
-  -> load bounded History window
+  -> canonical inbound transcript was persisted atomically at intake
+  -> append/reconcile the current user history idempotently
+  -> load bounded History view through the current invocation
   -> build typed model request
   -> invoke model
   -> validate response
@@ -471,7 +473,7 @@ acquire Agent invocation gate
   -> release gate
 ```
 
-Part 1 historically used inbound/action tables without conversation history. Part 2 preserves the dispatch contract and adds history within the existing claim/plan transactions.
+Part 1 historically used inbound/action tables without conversation history. Part 2 preserves the dispatch contract and adds a full canonical transcript within the existing intake/claim/plan transactions. Trigger policy still decides whether a stored inbound entry gets an invocation: passive allowlisted group traffic is retained, but does not call the model or send a response.
 
 Semantics:
 
@@ -684,6 +686,7 @@ const (
 )
 
 type HistoryEntry struct {
+    Sequence     uint64 // assigned by the durable store; callers must leave it zero
     MessageID    identity.MessageID
     InvocationID identity.InvocationID
     Causation    CausationRef
@@ -698,8 +701,9 @@ type HistoryEntry struct {
 type HistoryCursor string
 
 type HistoryQuery struct {
-    Before HistoryCursor
-    Limit  uint32
+    Before              HistoryCursor
+    ThroughInvocationID identity.InvocationID
+    Limit               uint32
 }
 
 type HistoryPage struct {
@@ -761,6 +765,11 @@ There is intentionally no arbitrary `SetHistory([]Message)` method.
 Rules:
 
 - `List` returns immutable copies/pages, not the internal mutable slice;
+- `List` is the canonical durable transcript for an allowlisted chat from the moment this runtime accepts an event; it is not a retroactive provider-history import;
+- inbound text and text-only sticker placeholders are stored for allowlisted DM/group chats before trigger filtering; a passive group entry is context, not an invocation reason;
+- generated model replies and command replies are assistant entries whose delivery state is finalized with the same action receipt; manual outgoing messages outside this outbox are not claimed as transcript entries;
+- every stored row has a monotonic `Sequence` and `CreatedAt`; quote metadata points to the canonical internal message and may carry its sequence, while provider IDs/JIDs never cross into model context;
+- `ThroughInvocationID` bounds a context read at the current user entry and cannot be combined with `Before`; it prevents messages arriving during debounce from changing an in-flight context;
 - `List` and `Reset` receive the exact Config version whose Permission reference was externally authorized;
 - their store transaction verifies that `agent_configs.version` still matches before reading/resetting history, otherwise returns `conflict`;
 - `Append` is normally used only by Agent invocation/recovery internals;
@@ -1054,9 +1063,10 @@ Part 1 does not implement:
 
 Part 2 implements:
 
-- durable `Agent.History().List/Append/Reset/Trim` with immutable paging, reset tombstone, and retention;
+- full durable canonical transcript through `Agent.History().List/Append/Reset/Trim` with immutable paging, store-assigned sequence, reset tombstone, and retention;
+- allowlisted DM/group inbound text plus text-only sticker placeholders are persisted before trigger filtering; passive group traffic is visible to the next eligible invocation without causing a response;
 - atomic user-history intake and assistant-history creation/finalization around the existing durable turn/action lifecycle;
-- deterministic bounded context builder with typed role/provenance and non-overridable adapter policy;
+- deterministic bounded context view through the triggering invocation with sequence/timestamp/quote provenance, typed roles, and non-overridable adapter policy;
 - canonical internal quote resolution and group reply-to-bot trigger;
 - durable per-chat debounce/batching with bounded burst draining and restart recovery;
 - `/help`, `/info`, and externally owner-authorized `/reset`;
@@ -1105,6 +1115,7 @@ Required before Part 1 canary:
 Required Part 2 additions:
 
 - history pagination, defensive copies, idempotent append, digest collision, version guard, reset, and retention;
+- full passive-group transcript followed by a mention/reply trigger, sequence ordering, sticker placeholder, and through-invocation stale-context boundary;
 - reset-vs-invoke exclusion and reset-vs-debounce race handling;
 - deterministic context golden serialization, injection-as-data, context bound, stale-order rejection, and exclusion of undelivered assistant output;
 - Part 1 digest compatibility plus quote-aware digest distinction;

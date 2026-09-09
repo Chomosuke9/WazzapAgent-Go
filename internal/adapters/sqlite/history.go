@@ -45,16 +45,35 @@ func (store *HistoryStore) ListIfConfigVersion(
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return agent.HistoryPage{}, storageError("load history reset", err)
 	}
+	through := int64(0)
+	if !query.ThroughInvocationID.IsZero() {
+		err = tx.QueryRowContext(ctx, `SELECT sequence FROM history_entries
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
+            AND role = ? AND sequence > ?`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), query.ThroughInvocationID.String(),
+			uint8(agent.HistoryUser), resetCutoff,
+		).Scan(&through)
+		if errors.Is(err, sql.ErrNoRows) {
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "bound history context", fmt.Errorf("current invocation history is missing or reset"))
+		}
+		if err != nil {
+			return agent.HistoryPage{}, storageError("bound history context", err)
+		}
+	}
 	args := []any{key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), resetCutoff}
 	bound := ""
 	if before > 0 {
 		bound = " AND sequence < ?"
 		args = append(args, before)
 	}
+	if through > 0 {
+		bound = " AND sequence <= ?"
+		args = append(args, through)
+	}
 	args = append(args, int64(query.Limit)+1)
 	rows, err := tx.QueryContext(ctx, `SELECT sequence, message_id, invocation_id, causation_kind,
         causation_id, role, participant_id, sender_ref, sender_name, quoted_message_id,
-        quoted_role, quoted_sender_ref, quoted_text, content_text,
+        quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, content_text,
         content_digest, delivery_status, created_at_ms
       FROM history_entries
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sequence > ?`+bound+`
@@ -100,8 +119,7 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 	if err := key.Validate(); err != nil {
 		return err
 	}
-	digest, err := agent.DigestHistoryEntry(entry)
-	if err != nil {
+	if _, err := agent.DigestHistoryEntry(entry); err != nil {
 		return err
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -126,11 +144,33 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 	if err == nil && receivedAtMS.Valid && receivedAtMS.Int64 <= resetAtMS.Int64 {
 		return agent.NewError(agent.ErrorConflict, "append history", fmt.Errorf("inbound turn predates the latest history reset"))
 	}
+	if err := store.Store.appendHistoryEntryTx(ctx, tx, key, entry, store.clock.Now().UnixMilli()); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("commit history append", err)
+	}
+	return nil
+}
+
+// appendHistoryEntryTx writes one immutable transcript entry. The caller owns
+// the transaction and decides any reset visibility guard before calling it.
+func (store *Store) appendHistoryEntryTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	key agent.Key,
+	entry agent.HistoryEntry,
+	nowMS int64,
+) error {
+	digest, err := agent.DigestHistoryEntry(entry)
+	if err != nil {
+		return err
+	}
 	var participantID, senderRef any
-	var quotedMessageID, quotedRole, quotedSenderRef, quotedText any
+	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
 	senderName := ""
 	if entry.Sender != nil {
-		if err := ensureInternalSender(ctx, tx, key, *entry.Sender, store.clock.Now().UnixMilli()); err != nil {
+		if err := ensureInternalSender(ctx, tx, key, *entry.Sender, nowMS); err != nil {
 			return err
 		}
 		participantID = entry.Sender.ParticipantID.String()
@@ -139,6 +179,9 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 	}
 	if entry.Quote != nil {
 		quotedMessageID = entry.Quote.MessageID.String()
+		if entry.Quote.Sequence > 0 {
+			quotedSequence = entry.Quote.Sequence
+		}
 		quotedRole = uint8(entry.Quote.Role)
 		quotedText = entry.Quote.Text
 		if !entry.Quote.SenderRef.IsZero() {
@@ -148,14 +191,14 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO history_entries(
         tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
         causation_id, role, participant_id, sender_ref, sender_name,
-        quoted_message_id, quoted_role, quoted_sender_ref, quoted_text, content_text,
+		quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, content_text,
         content_digest, delivery_status, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 		entry.MessageID.String(), entry.InvocationID.String(), uint8(entry.Causation.Kind),
 		entry.Causation.ID.String(), uint8(entry.Role), participantID, senderRef, senderName,
-		quotedMessageID, quotedRole, quotedSenderRef, quotedText,
-		flattenText(entry.Content), digest[:], uint8(entry.Delivery), entry.CreatedAt.UTC().UnixMilli(), store.clock.Now().UnixMilli(),
+		quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText,
+		flattenText(entry.Content), digest[:], uint8(entry.Delivery), entry.CreatedAt.UTC().UnixMilli(), nowMS,
 	)
 	if err != nil {
 		return storageError("append history", err)
@@ -194,9 +237,6 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 		if matches != 1 {
 			return agent.NewError(agent.ErrorConflict, "append history", fmt.Errorf("history identity collision"))
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return storageError("commit history append", err)
 	}
 	return nil
 }
@@ -353,6 +393,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		senderRefValue  sql.NullString
 		senderName      string
 		quotedMessage   sql.NullString
+		quotedSequence  sql.NullInt64
 		quotedRole      sql.NullInt64
 		quotedSenderRef sql.NullString
 		quotedText      sql.NullString
@@ -362,7 +403,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		createdAtMS     int64
 	)
 	if err := scanner.Scan(&sequence, &messageValue, &invocationValue, &causationKind, &causationValue,
-		&role, &participant, &senderRefValue, &senderName, &quotedMessage, &quotedRole,
+		&role, &participant, &senderRefValue, &senderName, &quotedMessage, &quotedSequence, &quotedRole,
 		&quotedSenderRef, &quotedText, &content, &contentDigest, &delivery, &createdAtMS); err != nil {
 		return agent.HistoryEntry{}, 0, storageError("scan history entry", err)
 	}
@@ -379,7 +420,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	entry := agent.HistoryEntry{
-		MessageID: messageID, InvocationID: invocationID,
+		Sequence: uint64(sequence), MessageID: messageID, InvocationID: invocationID,
 		Causation: agent.CausationRef{Kind: agent.CausationKind(causationKind), ID: causationID},
 		Role:      agent.HistoryRole(role), Content: []agent.ContentPart{agent.TextPart{Text: content}},
 		Delivery: agent.DeliveryStatus(delivery), CreatedAt: time.UnixMilli(createdAtMS).UTC(),
@@ -406,7 +447,11 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		if parseErr != nil {
 			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
-		entry.Quote = &agent.QuoteContext{MessageID: quotedMessageID, Role: agent.HistoryRole(quotedRole.Int64), Text: quotedText.String}
+		quoteSequence := uint64(0)
+		if quotedSequence.Valid && quotedSequence.Int64 > 0 {
+			quoteSequence = uint64(quotedSequence.Int64)
+		}
+		entry.Quote = &agent.QuoteContext{Sequence: quoteSequence, MessageID: quotedMessageID, Role: agent.HistoryRole(quotedRole.Int64), Text: quotedText.String}
 		if quotedSenderRef.Valid {
 			ref, parseErr := identity.ParseSenderRef(quotedSenderRef.String)
 			if parseErr != nil {

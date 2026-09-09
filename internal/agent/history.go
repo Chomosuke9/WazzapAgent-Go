@@ -28,6 +28,9 @@ const (
 )
 
 type HistoryEntry struct {
+	// Sequence is the durable ordering number assigned by the history store.
+	// It is output-only: callers never choose it when appending an entry.
+	Sequence     uint64
 	MessageID    identity.MessageID
 	InvocationID identity.InvocationID
 	Causation    CausationRef
@@ -42,8 +45,9 @@ type HistoryEntry struct {
 type HistoryCursor string
 
 type HistoryQuery struct {
-	Before HistoryCursor
-	Limit  uint32
+	Before              HistoryCursor
+	ThroughInvocationID identity.InvocationID
+	Limit               uint32
 }
 
 type HistoryPage struct {
@@ -101,6 +105,9 @@ func (history *History) List(ctx context.Context, version ConfigVersion, query H
 }
 
 func (history *History) Append(ctx context.Context, entry HistoryEntry) error {
+	if entry.Sequence != 0 {
+		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
+	}
 	if err := validateHistoryEntry(entry); err != nil {
 		return err
 	}
@@ -134,6 +141,9 @@ func (history *History) Trim(ctx context.Context, policy RetentionPolicy) (TrimR
 }
 
 func (history *History) appendWithinGate(ctx context.Context, entry HistoryEntry) error {
+	if entry.Sequence != 0 {
+		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
+	}
 	if err := validateHistoryEntry(entry); err != nil {
 		return err
 	}
@@ -148,6 +158,9 @@ func validateHistoryQuery(query HistoryQuery) error {
 		if _, err := parseHistoryCursor(query.Before); err != nil {
 			return err
 		}
+	}
+	if query.Before != "" && !query.ThroughInvocationID.IsZero() {
+		return NewError(ErrorInvalidArgument, "validate history query", fmt.Errorf("before cursor and invocation boundary cannot be combined"))
 	}
 	return nil
 }

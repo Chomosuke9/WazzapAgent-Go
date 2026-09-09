@@ -61,9 +61,9 @@ func TestDeterministicContextBuilderGoldenSerialization(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
 		{Role: ModelSystem, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"message_id\":\"018f0000-0000-7000-8000-000000000004\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"halo\"}"},
-		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "{\"type\":\"assistant_message\",\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"text\":\"Hai!\"}"},
-		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"message_id\":\"018f0000-0000-7000-8000-000000000006\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"lanjutkan\",\"quote\":{\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"role\":\"assistant\",\"text\":\"Hai!\"}}"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"created_at\":\"2023-11-14T22:13:20Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000004\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"halo\"}"},
+		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "{\"type\":\"assistant_message\",\"created_at\":\"2023-11-14T22:13:21Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"text\":\"Hai!\"}"},
+		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "Untrusted chat data (JSON):\n{\"type\":\"chat_message\",\"created_at\":\"2023-11-14T22:13:22Z\",\"message_id\":\"018f0000-0000-7000-8000-000000000006\",\"sender_ref\":\"u_01234567\",\"display_name\":\"Alice\",\"text\":\"lanjutkan\",\"quote\":{\"message_id\":\"018f0000-0000-7000-8000-000000000005\",\"role\":\"assistant\",\"text\":\"Hai!\"}}"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)

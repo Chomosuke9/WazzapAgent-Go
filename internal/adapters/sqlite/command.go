@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -113,6 +114,14 @@ func (store *ActionStore) PlanCommandResponse(
 	)
 	if err != nil {
 		return agent.DispatchRef{}, storageError("insert command receipt", err)
+	}
+	if err := store.Store.appendHistoryEntryTx(ctx, tx, key, agent.HistoryEntry{
+		MessageID: responseID, InvocationID: message.InvocationID,
+		Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: message.CausationID},
+		Role:      agent.HistoryAssistant, Content: []agent.ContentPart{agent.TextPart{Text: text}},
+		Delivery: agent.DeliveryPending, CreatedAt: time.UnixMilli(nowMS).UTC(),
+	}, nowMS); err != nil {
+		return agent.DispatchRef{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
         invocation_digest = ?, config_version = ?, turn_state = ?, response_id = ?,

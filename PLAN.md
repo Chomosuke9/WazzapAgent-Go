@@ -460,7 +460,8 @@ Canary hari ini membuktikan alur dan boundary. Canary tidak membuktikan long-run
 
 Menambah kemampuan percakapan tanpa tool berbahaya:
 
-- durable bounded history;
+- full durable transcript untuk chat allowlisted, dengan bounded model context dan retention;
+- pesan group pasif disimpan tanpa memicu invocation; inbound text/sticker diberi sequence, timestamp, senderRef, dan quote provenance;
 - `Agent.History().List/Append/Reset/Trim` child-object implementation dengan authorized Config-version guard untuk read/reset;
 - stable internal message ID dan quoted-message mapping;
 - replied-to-bot trigger;

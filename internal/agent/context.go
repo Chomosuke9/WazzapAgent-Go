@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
@@ -123,6 +124,7 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 	switch entry.Role {
 	case HistoryUser:
 		type quoteEnvelope struct {
+			Sequence  uint64 `json:"sequence,omitempty"`
 			MessageID string `json:"message_id"`
 			Role      string `json:"role"`
 			SenderRef string `json:"sender_ref,omitempty"`
@@ -130,6 +132,8 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 		}
 		type userEnvelope struct {
 			Type        string         `json:"type"`
+			Sequence    uint64         `json:"sequence,omitempty"`
+			CreatedAt   string         `json:"created_at"`
 			MessageID   string         `json:"message_id"`
 			SenderRef   string         `json:"sender_ref"`
 			DisplayName string         `json:"display_name,omitempty"`
@@ -137,7 +141,7 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 			Quote       *quoteEnvelope `json:"quote,omitempty"`
 		}
 		envelope := userEnvelope{
-			Type: "chat_message", MessageID: entry.MessageID.String(),
+			Type: "chat_message", Sequence: entry.Sequence, CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339), MessageID: entry.MessageID.String(),
 			SenderRef: entry.Sender.Ref.String(), DisplayName: entry.Sender.DisplayName, Text: text,
 		}
 		if entry.Quote != nil {
@@ -146,7 +150,7 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 				role = "assistant"
 			}
 			envelope.Quote = &quoteEnvelope{
-				MessageID: entry.Quote.MessageID.String(), Role: role,
+				Sequence: entry.Quote.Sequence, MessageID: entry.Quote.MessageID.String(), Role: role,
 				SenderRef: entry.Quote.SenderRef.String(), Text: entry.Quote.Text,
 			}
 		}
@@ -162,9 +166,11 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 	case HistoryAssistant:
 		encoded, err := marshalContextJSON(struct {
 			Type      string `json:"type"`
+			Sequence  uint64 `json:"sequence,omitempty"`
+			CreatedAt string `json:"created_at"`
 			MessageID string `json:"message_id"`
 			Text      string `json:"text"`
-		}{Type: "assistant_message", MessageID: entry.MessageID.String(), Text: text})
+		}{Type: "assistant_message", Sequence: entry.Sequence, CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339), MessageID: entry.MessageID.String(), Text: text})
 		if err != nil {
 			return ModelMessage{}, err
 		}
