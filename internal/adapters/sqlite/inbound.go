@@ -12,6 +12,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 const ignoredTurnState = -1
@@ -301,6 +302,37 @@ func (store *InboundStore) ResolveChatAddress(ctx context.Context, key agent.Key
 		return "", storageError("resolve chat target", err)
 	}
 	return address.String, nil
+}
+
+// ReadHumanAccess resolves current command authority with the composite
+// participant-ID/LID identity. The LID predicate is deliberately redundant:
+// it prevents a stale internal surrogate from becoming sufficient authority.
+func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy.Principal) (policy.HumanAccess, error) {
+	if err := principal.Validate(); err != nil || principal.Kind != policy.PrincipalHuman {
+		return policy.HumanAccess{}, agent.NewError(agent.ErrorInvalidArgument, "read human access", fmt.Errorf("valid human principal is required"))
+	}
+	var kind, allowlisted, owner int64
+	err := store.db.QueryRowContext(ctx, `SELECT c.kind, c.allowlisted, p.owner
+	  FROM chats c
+	  JOIN participants p ON p.tenant_id = c.tenant_id AND p.account_id = c.account_id
+	  WHERE c.tenant_id = ? AND c.account_id = ? AND c.id = ?
+	    AND p.id = ? AND p.lid = ?`,
+		principal.TenantID.String(), principal.AccountID.String(), principal.ChatID.String(),
+		principal.ParticipantID.String(), principal.LID.String(),
+	).Scan(&kind, &allowlisted, &owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return policy.HumanAccess{}, agent.NewError(agent.ErrorNotFound, "read human access", fmt.Errorf("principal is not current"))
+	}
+	if err != nil {
+		return policy.HumanAccess{}, storageError("read human access", err)
+	}
+	access := policy.HumanAccess{
+		ChatKind: conversation.ChatKind(kind), Allowlisted: allowlisted == 1, ConfiguredOwner: owner == 1,
+	}
+	if err := access.Validate(); err != nil {
+		return policy.HumanAccess{}, agent.NewError(agent.ErrorIntegrityFailure, "read human access", err)
+	}
+	return access, nil
 }
 
 func (store *InboundStore) ListRecoverableInbound(

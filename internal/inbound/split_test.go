@@ -59,6 +59,15 @@ func TestCommandLaneProgressesWhileAILaneIsBlocked(t *testing.T) {
 	}
 }
 
+func TestMalformedKnownCommandStaysInCommandLane(t *testing.T) {
+	if !IsCommand("/help unexpected") || !IsCommand("/prompt ") {
+		t.Fatal("recognized command with malformed arguments entered AI lane")
+	}
+	if IsCommand("/not-registered whatever") {
+		t.Fatal("unknown slash text was treated as a command")
+	}
+}
+
 func validSplitMessage(t *testing.T, text string) conversation.IncomingMessage {
 	t.Helper()
 	messageID, _ := identity.NewMessageID()

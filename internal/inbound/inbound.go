@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 type ClaimedMessage struct {
@@ -76,8 +78,7 @@ type Registry interface {
 
 type Policy interface {
 	AuthorizeInvocation(context.Context, conversation.IncomingMessage, agent.PermissionConfig) error
-	AuthorizePrompt(context.Context, conversation.IncomingMessage, agent.PermissionConfig) error
-	AuthorizeHistoryReset(context.Context, conversation.IncomingMessage, agent.PermissionConfig) error
+	AuthorizeCommand(context.Context, policy.Principal, policy.Capability, agent.PermissionConfig) error
 }
 
 type ResponseWriter interface {
@@ -168,34 +169,8 @@ func (handler *Handler) Resume(ctx context.Context, message conversation.Incomin
 		return handler.ignore(ctx, message, IgnoreGroupNotMentioned)
 	}
 
-	if command, recognized := ParsePromptCommand(message.Text); recognized {
-		stripe := handler.stripe(message.ChatID)
-		stripe.Lock()
-		defer stripe.Unlock()
-		currentAgent, snapshot, err := handler.loadAgent(ctx, message)
-		if err != nil {
-			return err
-		}
-		if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
-			return err
-		}
-		if err := handler.policy.AuthorizePrompt(ctx, message, snapshot.Permission); err != nil {
-			return handler.responses.Reply(ctx, message, snapshot.Version, "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi.")
-		}
-		return handler.handlePrompt(ctx, currentAgent, snapshot, message, command)
-	}
-	if control, recognized := ParseControlCommand(message.Text); recognized {
-		stripe := handler.stripe(message.ChatID)
-		stripe.Lock()
-		defer stripe.Unlock()
-		currentAgent, snapshot, err := handler.loadAgent(ctx, message)
-		if err != nil {
-			return err
-		}
-		if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
-			return err
-		}
-		return handler.handleControl(ctx, currentAgent, snapshot, message, control)
+	if request, descriptor, recognized := parseRegisteredCommand(message.Text); recognized {
+		return handler.resumeCommand(ctx, message, request, descriptor)
 	}
 
 	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
@@ -243,6 +218,81 @@ func (handler *Handler) Resume(ctx context.Context, message conversation.Incomin
 		// inbound workers return after durable staging, so a hot chat cannot
 		// occupy one worker per message during the debounce window.
 		readyAt = handler.batch.Clock.Now()
+	}
+}
+
+func (handler *Handler) resumeCommand(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	request command.Request,
+	descriptor command.Descriptor,
+) error {
+	stripe := handler.stripe(message.ChatID)
+	stripe.Lock()
+	defer stripe.Unlock()
+	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
+	if err != nil {
+		return err
+	}
+	// A response already planned by an earlier authorized execution remains
+	// replayable through the normal durable send policy. It must not be
+	// regenerated from the original command text.
+	if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
+		return err
+	}
+	principal, err := policy.HumanPrincipal(message)
+	if err != nil {
+		return err
+	}
+	if err := handler.policy.AuthorizeCommand(ctx, principal, descriptor.Capability, snapshot.Permission); err != nil {
+		return handler.responses.Reply(ctx, message, snapshot.Version, commandDeniedReply(descriptor.Capability))
+	}
+
+	switch request.Name {
+	case "prompt":
+		if descriptor.Capability != policy.CapabilityPromptWrite {
+			return commandCapabilityMismatch(request, descriptor.Capability)
+		}
+		parsed, recognized := ParsePromptCommand(canonicalCommandText(request))
+		if !recognized {
+			return agent.NewError(agent.ErrorIntegrityFailure, "dispatch registered command", fmt.Errorf("prompt command was not parsed"))
+		}
+		return handler.handlePrompt(ctx, currentAgent, snapshot, message, parsed)
+	case "help", "info", "reset":
+		parsed, valid := parseControlRequest(request)
+		if !valid {
+			return handler.responses.Reply(ctx, message, snapshot.Version, invalidControlReply(request))
+		}
+		if descriptor.Capability != controlCapability(parsed) {
+			return commandCapabilityMismatch(request, descriptor.Capability)
+		}
+		return handler.handleControl(ctx, currentAgent, snapshot, message, parsed)
+	default:
+		return commandCapabilityMismatch(request, descriptor.Capability)
+	}
+}
+
+func commandDeniedReply(capability policy.Capability) string {
+	switch capability {
+	case policy.CapabilityPromptWrite:
+		return "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi."
+	case policy.CapabilityHistoryReset:
+		return "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi."
+	default:
+		return "Perintah ini tidak dapat digunakan pada chat ini."
+	}
+}
+
+func controlCapability(command ControlCommandKind) policy.Capability {
+	switch command {
+	case ControlHelp:
+		return policy.CapabilityCommandHelp
+	case ControlInfo:
+		return policy.CapabilityCommandInfo
+	case ControlReset:
+		return policy.CapabilityHistoryReset
+	default:
+		return ""
 	}
 }
 
@@ -395,9 +445,6 @@ func (handler *Handler) handleControl(
 		}
 		response = fmt.Sprintf("Agent aktif. Model: %s. Config version: %d. History: %s.", snapshot.Model.Model, snapshot.Version, historyState)
 	case ControlReset:
-		if err := handler.policy.AuthorizeHistoryReset(ctx, message, snapshot.Permission); err != nil {
-			return handler.responses.Reply(ctx, message, snapshot.Version, "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi.")
-		}
 		if err := currentAgent.History().Reset(ctx, snapshot.Version); err != nil {
 			return err
 		}

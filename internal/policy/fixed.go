@@ -16,6 +16,7 @@ type ConfigReader interface {
 
 type ChatAccess interface {
 	IsChatAllowlisted(context.Context, agent.Key) (bool, error)
+	HumanAccessReader
 }
 
 // FixedGate is the deliberately narrow text-conversation policy. It never
@@ -40,26 +41,34 @@ func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigRea
 func (gate *FixedGate) SetEnabled(enabled bool) { gate.enabled.Store(enabled) }
 func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
-func (gate *FixedGate) AuthorizeInvocation(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
-	if !gate.enabled.Load() || !message.Allowlisted || message.FromMe || message.ChatKind == conversation.ChatStatus ||
+func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
+	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
 		(message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", fmt.Errorf("message is not eligible"))
 	}
-	return gate.requirePolicy(permission)
+	principal, err := HumanPrincipal(message)
+	if err != nil {
+		return err
+	}
+	return gate.authorizeHuman(ctx, principal, permission, false)
 }
 
-func (gate *FixedGate) AuthorizePrompt(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
-	if !gate.enabled.Load() || !message.Allowlisted || !message.Owner || message.FromMe || message.ChatKind == conversation.ChatStatus {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize prompt command", fmt.Errorf("configured owner is required"))
+// AuthorizeCommand is intentionally separate from Agent. The principal was
+// formed from a durably resolved LID at inbound intake, while this method
+// rereads the current account policy before a command changes chat state.
+func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal, capability Capability, permission agent.PermissionConfig) error {
+	if !gate.enabled.Load() || principal.Kind != PrincipalHuman {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("eligible human principal is required"))
 	}
-	return gate.requirePolicy(permission)
-}
-
-func (gate *FixedGate) AuthorizeHistoryReset(_ context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
-	if !gate.enabled.Load() || !message.Allowlisted || !message.Owner || message.FromMe || message.ChatKind == conversation.ChatStatus {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize history reset", fmt.Errorf("configured owner is required"))
+	requiresOwner := false
+	switch capability {
+	case CapabilityCommandHelp, CapabilityCommandInfo:
+	case CapabilityHistoryReset, CapabilityPromptWrite:
+		requiresOwner = true
+	default:
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("command capability is not enabled"))
 	}
-	return gate.requirePolicy(permission)
+	return gate.authorizeHuman(ctx, principal, permission, requiresOwner)
 }
 
 func (gate *FixedGate) AuthorizeSend(ctx context.Context, key agent.Key) error {
@@ -83,6 +92,29 @@ func (gate *FixedGate) AuthorizeSend(ctx context.Context, key agent.Key) error {
 func (gate *FixedGate) requirePolicy(permission agent.PermissionConfig) error {
 	if permission.PolicyID != gate.policyID || permission.Revision != gate.revision {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", fmt.Errorf("unsupported policy revision"))
+	}
+	return nil
+}
+
+func (gate *FixedGate) authorizeHuman(ctx context.Context, principal Principal, permission agent.PermissionConfig, requiresOwner bool) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if err := gate.requirePolicy(permission); err != nil {
+		return err
+	}
+	access, err := gate.chats.ReadHumanAccess(ctx, principal)
+	if err != nil {
+		if agent.IsCode(err, agent.ErrorNotFound) {
+			return agent.NewError(agent.ErrorPermissionDenied, "read human command access", fmt.Errorf("principal is no longer current"))
+		}
+		return err
+	}
+	if err := access.Validate(); err != nil {
+		return err
+	}
+	if !access.Allowlisted || access.ChatKind == conversation.ChatStatus || (requiresOwner && !access.ConfiguredOwner) {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize human access", fmt.Errorf("current chat policy denies principal"))
 	}
 	return nil
 }

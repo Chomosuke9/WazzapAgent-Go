@@ -21,7 +21,7 @@ result, err := current.Invoke(ctx, invocation)
 - Actor verification, trigger, allowlist, dan permission check sengaja berada di `internal/inbound` dan `internal/policy`, di luar object Agent.
 - SQLite adalah source of truth; object/cache dapat direkonstruksi setelah restart.
 
-Kontrak lengkap ada di [docs/rewrite/04-AGENT-CONTRACT.md](docs/rewrite/04-AGENT-CONTRACT.md).
+Kontrak lengkap ada di [docs/rewrite/04-AGENT-CONTRACT.md](docs/rewrite/04-AGENT-CONTRACT.md). Kontrak Part 3 untuk principal, capability, command registry, dan typed effect ada di [docs/rewrite/09-PART3-CONTRACT.md](docs/rewrite/09-PART3-CONTRACT.md).
 
 ## Part 1 dan Part 2
 

@@ -221,6 +221,11 @@ Membuat percakapan text tahan restart dan kaya konteks tanpa membuka tool berbah
 
 ## Part 3 — Permission, commands, dan typed actions
 
+Kontrak tahap ini dibekukan di [09-PART3-CONTRACT.md](09-PART3-CONTRACT.md).
+Implementasi sengaja dibagi menjadi slice 3.0–3.4 agar setiap effect memiliki
+authorization dan receipt lifecycle lengkap sebelum diaktifkan. `run_command`
+generik dari project lama tetap ditolak.
+
 ### Work items
 
 - Human/model/system/recovery principals.

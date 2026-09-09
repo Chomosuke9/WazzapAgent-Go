@@ -297,6 +297,39 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	}
 }
 
+func TestKnownMalformedCommandDoesNotFallThroughToModel(t *testing.T) {
+	fixture := newFixture(t)
+	candidate := fixture.candidate("control-malformed", "15550000017@s.whatsapp.net", conversation.ChatDirect, "/help unexpected")
+	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+		t.Fatalf("handle malformed command: %v", err)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("malformed command invoked model %d times", fixture.model.calls.Load())
+	}
+	if got := fixture.sender.last().Text; got != "Format perintah /help tidak menerima argumen." {
+		t.Fatalf("malformed command response = %q", got)
+	}
+}
+
+func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
+	fixture := newFixture(t)
+	candidate := fixture.candidate("current-owner-only", "15550000018@s.whatsapp.net", conversation.ChatDirect, "/reset")
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("claim command: %v", err)
+	}
+	// The message snapshot is deliberately forged after the durable identity
+	// boundary. Authorization must consult the participant's current LID-bound
+	// policy record instead of this transient field.
+	claimed.Message.Owner = true
+	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
+		t.Fatalf("resume command: %v", err)
+	}
+	if got := fixture.sender.last().Text; got != "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi." {
+		t.Fatalf("forged owner command response = %q", got)
+	}
+}
+
 func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	fixture := newFixture(t)
 	chat := "15550000003@s.whatsapp.net"

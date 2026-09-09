@@ -148,7 +148,6 @@ func (dispatcher *SplitDispatcher) Run(ctx context.Context) error {
 }
 
 func IsCommand(text string) bool {
-	_, prompt := ParsePromptCommand(text)
-	_, control := ParseControlCommand(text)
-	return prompt || control
+	_, _, recognized := parseRegisteredCommand(text)
+	return recognized
 }
