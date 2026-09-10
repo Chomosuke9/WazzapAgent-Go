@@ -13,6 +13,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
@@ -33,8 +34,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 5 {
-		t.Fatalf("migration count = %d, want 5", migrations)
+	if migrations != 7 {
+		t.Fatalf("migration count = %d, want 7", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -90,8 +91,8 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 5 {
-		t.Fatalf("upgraded migration count = %d, want 5", migrations)
+	if migrations != 7 {
+		t.Fatalf("upgraded migration count = %d, want 7", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
@@ -165,6 +166,31 @@ func TestConfigCASAndTenantChatIsolation(t *testing.T) {
 	}
 	if isolated.PromptOverride != nil || isolated.Version != agent.InitialConfigVersion {
 		t.Fatalf("config B was changed through config A: %#v", isolated)
+	}
+}
+
+func TestConfigPersistsCanonicalModelToolCapabilities(t *testing.T) {
+	store := openTestStore(t)
+	key := testKey(t)
+	snapshot, err := store.Configs().LoadOrCreate(context.Background(), key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	values := snapshot.Values()
+	values.Permission.ModelCapabilities, _ = agent.NewCapabilitySet("message.react", "chat.presence")
+	updated, err := store.Configs().CompareAndSwap(context.Background(), key, snapshot.Version, values)
+	if err != nil {
+		t.Fatalf("persist model capabilities: %v", err)
+	}
+	reloaded, err := store.Configs().Load(context.Background(), key)
+	if err != nil || !reloaded.Permission.ModelToolCapabilities().Has("message.react") ||
+		!reloaded.Permission.ModelToolCapabilities().Has("chat.presence") || reloaded.Version != updated.Version {
+		t.Fatalf("reloaded model capabilities = %#v, %v", reloaded.Permission.ModelToolCapabilities().Values(), err)
+	}
+	values = updated.Values()
+	values.Permission.ModelCapabilities, _ = agent.NewCapabilitySet("message.delete")
+	if _, err := store.Configs().CompareAndSwap(context.Background(), key, updated.Version, values); err == nil {
+		t.Fatal("model delete capability was accepted into durable config")
 	}
 }
 
@@ -718,7 +744,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create config: %v", err)
 	}
-	capabilities, _ := agent.NewCapabilitySet()
+	capabilities, _ := agent.NewCapabilitySet("message.react")
 	invocation := agent.Invocation{
 		ID:            claimed.Message.InvocationID,
 		Causation:     agent.CausationRef{Kind: agent.CausationMessage, ID: claimed.Message.CausationID},
@@ -741,11 +767,22 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if claim.State != agent.TurnGenerating || claim.Lease == "" {
 		t.Fatalf("turn claim = %#v", claim)
 	}
+	if err := store.History().Append(context.Background(), key, agent.HistoryEntry{
+		MessageID: claim.MessageID, InvocationID: invocation.ID, Causation: invocation.Causation,
+		Role: agent.HistoryUser, Sender: invocation.Sender, Content: invocation.Input,
+		Delivery: agent.DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
+	}); err != nil {
+		t.Fatalf("append current history target: %v", err)
+	}
 	if _, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now}); !agent.IsCode(err, agent.ErrorInProgress) {
 		t.Fatalf("active lease error = %v, want in_progress", err)
 	}
 	plan, err := turns.CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: claim.Lease, ConfigVersion: configSnapshot.Version, ResponseText: "hello back",
+		Key: key, InvocationID: invocation.ID, CurrentMessageID: claim.MessageID, Lease: claim.Lease, ConfigVersion: configSnapshot.Version, ResponseText: "hello back",
+		Capabilities: capabilities,
+		Effects: []agent.ModelEffect{{CallID: "call_react_1", Intent: agent.EffectIntent{
+			Kind: agent.EffectReact, TargetMessageID: claim.MessageID, Emoji: "✅",
+		}}},
 	})
 	if err != nil {
 		t.Fatalf("commit plan: %v", err)
@@ -760,6 +797,13 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}
 	if replay.Plan == nil || replay.Plan.ActionID != plan.ActionID || replay.Plan.ResponseID != plan.ResponseID {
 		t.Fatalf("replay plan = %#v, original = %#v", replay.Plan, plan)
+	}
+	if len(plan.Effects) != 1 || len(replay.Plan.Effects) != 1 || replay.Plan.Effects[0] != plan.Effects[0] {
+		t.Fatalf("atomic model effect refs = %#v / %#v", plan.Effects, replay.Plan.Effects)
+	}
+	blockedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}, clock.now)
+	if err != nil || blockedEffect.State != effect.StatePending {
+		t.Fatalf("model effect ran before response delivery = %#v, %v", blockedEffect, err)
 	}
 	changed := invocation
 	changed.Input = []agent.ContentPart{agent.TextPart{Text: "different"}}
@@ -800,6 +844,10 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}
 	if record.State != agent.TurnSucceeded || record.Delivery != agent.DeliverySucceeded || record.Plan.ActionID != plan.ActionID {
 		t.Fatalf("completed turn = %#v", record)
+	}
+	releasedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}, clock.now)
+	if err != nil || releasedEffect.State != effect.StateClaimed {
+		t.Fatalf("model effect was not released after response delivery = %#v, %v", releasedEffect, err)
 	}
 	historyPage, err := store.History().ListIfConfigVersion(
 		context.Background(), key, configSnapshot.Version, agent.HistoryQuery{Limit: 10},

@@ -416,6 +416,31 @@ func TestSnapshotRedactsSecret(t *testing.T) {
 	}
 }
 
+func TestOptionalFallbackRequiresCompletePairAndRedactsItsSecret(t *testing.T) {
+	values := enabledRuntimeValues(t.TempDir())
+	tenantID, _ := identity.NewTenantID()
+	accountID, _ := identity.NewAccountID()
+	values["WAZZAP_TENANT_ID"] = tenantID.String()
+	values["WAZZAP_ACCOUNT_ID"] = accountID.String()
+	values["WAZZAP_LLM_FALLBACK_ENDPOINT"] = "https://fallback.example.invalid/v1/chat/completions"
+	if _, err := Load(mapLookup(values)); err == nil {
+		t.Fatal("incomplete fallback configuration was accepted")
+	}
+	values["WAZZAP_LLM_FALLBACK_API_KEY"] = "fallback-secret"
+	cfg, err := Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("load fallback configuration: %v", err)
+	}
+	if cfg.LLMFallbackEndpoint() == "" || cfg.LLMFallbackAPIKey() != "fallback-secret" || cfg.Redacted()["llm_fallback_configured"] != true {
+		t.Fatalf("fallback configuration = %#v", cfg.Redacted())
+	}
+	for _, value := range cfg.Redacted() {
+		if value == "fallback-secret" {
+			t.Fatal("redacted config exposed fallback secret")
+		}
+	}
+}
+
 func enabledRuntimeValues(dataDir string) map[string]string {
 	return map[string]string{
 		"WAZZAP_DATA_DIR":       dataDir,

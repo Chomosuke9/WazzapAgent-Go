@@ -22,18 +22,19 @@ type ChatAccess interface {
 // FixedGate is the deliberately narrow text-conversation policy. It never
 // delegates authority to senderRef, prompt content, or model output.
 type FixedGate struct {
-	policyID identity.PolicyID
-	revision uint64
-	configs  ConfigReader
-	chats    ChatAccess
-	enabled  atomic.Bool
+	policyID  identity.PolicyID
+	revision  uint64
+	configs   ConfigReader
+	chats     ChatAccess
+	authority ChatAuthorityReader
+	enabled   atomic.Bool
 }
 
-func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, enabled bool) (*FixedGate, error) {
-	if policyID.IsZero() || revision == 0 || configs == nil || chats == nil {
+func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, authority ChatAuthorityReader, enabled bool) (*FixedGate, error) {
+	if policyID.IsZero() || revision == 0 || configs == nil || chats == nil || authority == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create fixed policy", fmt.Errorf("policy reference and stores are required"))
 	}
-	gate := &FixedGate{policyID: policyID, revision: revision, configs: configs, chats: chats}
+	gate := &FixedGate{policyID: policyID, revision: revision, configs: configs, chats: chats, authority: authority}
 	gate.enabled.Store(enabled)
 	return gate, nil
 }
@@ -63,12 +64,53 @@ func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal
 	requiresOwner := false
 	switch capability {
 	case CapabilityCommandHelp, CapabilityCommandInfo:
-	case CapabilityHistoryReset, CapabilityPromptWrite:
+	case CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite:
 		requiresOwner = true
 	default:
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("command capability is not enabled"))
 	}
 	return gate.authorizeHuman(ctx, principal, permission, requiresOwner)
+}
+
+// AuthorizeEffect is deliberately outside Agent. It reevaluates the durable
+// policy and reads live provider authority just before the native dispatcher
+// crosses its boundary. Only a principal minted for this model invocation can
+// use an opt-in model capability.
+func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthorization) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if !gate.enabled.Load() || request.Principal.Kind != PrincipalModel {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("model effect is not eligible"))
+	}
+	allowed, err := gate.chats.IsChatAllowlisted(ctx, request.Key)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("chat is not allowlisted"))
+	}
+	snapshot, err := gate.configs.Load(ctx, request.Key)
+	if err != nil {
+		return err
+	}
+	if err := gate.requirePolicy(snapshot.Permission); err != nil {
+		return err
+	}
+	if !snapshot.Permission.ModelToolCapabilities().Has(agent.Capability(request.Capability)) {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("model capability is not currently granted"))
+	}
+	authority, err := gate.authority.ReadChatAuthority(ctx, request.Principal)
+	if err != nil {
+		return err
+	}
+	if err := authority.Validate(); err != nil {
+		return err
+	}
+	if authority.ChatKind == conversation.ChatGroup && request.Capability == CapabilityMessageDelete && !authority.BotIsAdmin {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("bot is not a current group admin"))
+	}
+	return nil
 }
 
 func (gate *FixedGate) AuthorizeSend(ctx context.Context, key agent.Key) error {
@@ -89,7 +131,21 @@ func (gate *FixedGate) AuthorizeSend(ctx context.Context, key agent.Key) error {
 	return gate.requirePolicy(snapshot.Permission)
 }
 
+// ModelCapabilities returns the policy-scoped tool set only after validating
+// the immutable policy reference carried by the current config snapshot. The
+// caller binds this set into one invocation digest; it is not a standing model
+// role and is rechecked again by AuthorizeEffect before execution.
+func (gate *FixedGate) ModelCapabilities(permission agent.PermissionConfig) (agent.CapabilitySet, error) {
+	if err := gate.requirePolicy(permission); err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	return permission.ModelToolCapabilities(), nil
+}
+
 func (gate *FixedGate) requirePolicy(permission agent.PermissionConfig) error {
+	if err := permission.Validate(); err != nil {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", err)
+	}
 	if permission.PolicyID != gate.policyID || permission.Revision != gate.revision {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", fmt.Errorf("unsupported policy revision"))
 	}

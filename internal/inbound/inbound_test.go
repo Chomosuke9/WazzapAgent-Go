@@ -460,6 +460,85 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 	}
 }
 
+func TestPermissionCommandDurablyControlsModelToolCapabilities(t *testing.T) {
+	fixture := newFixture(t)
+	chat := "15550000019@s.whatsapp.net"
+	command := fixture.candidate("permission-1", chat, conversation.ChatDirect, "/permission set react presence")
+	command.Owner = true
+	if err := fixture.handler.Handle(context.Background(), command); err != nil {
+		t.Fatalf("set model capabilities: %v", err)
+	}
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), command)
+	if err != nil {
+		t.Fatalf("claim permission command: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	snapshot, err := fixture.store.Configs().Load(context.Background(), key)
+	if err != nil || !snapshot.Permission.ModelToolCapabilities().Has("message.react") ||
+		!snapshot.Permission.ModelToolCapabilities().Has("chat.presence") || snapshot.Permission.ModelToolCapabilities().Has("message.mark-read") {
+		t.Fatalf("stored model capabilities = %#v, %v", snapshot.Permission.ModelToolCapabilities().Values(), err)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("permission command called model %d times", fixture.model.calls.Load())
+	}
+	message := fixture.candidate("permission-2", chat, conversation.ChatDirect, "what can you do?")
+	if err := fixture.handler.Handle(context.Background(), message); err != nil {
+		t.Fatalf("invoke after model capability grant: %v", err)
+	}
+	request := fixture.model.lastRequest()
+	if !request.Capabilities.Has("message.react") || !request.Capabilities.Has("chat.presence") || request.Capabilities.Has("message.mark-read") {
+		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
+	}
+
+	denied := fixture.candidate("permission-3", chat, conversation.ChatDirect, "/permission set none")
+	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
+		t.Fatalf("deny non-owner permission: %v", err)
+	}
+	afterDenied, err := fixture.store.Configs().Load(context.Background(), key)
+	if err != nil || !afterDenied.Permission.ModelToolCapabilities().Has("message.react") {
+		t.Fatalf("non-owner changed model capabilities: %#v, %v", afterDenied.Permission.ModelToolCapabilities().Values(), err)
+	}
+	if got := fixture.sender.last().Text; got != "Perintah /permission hanya dapat digunakan oleh owner yang dikonfigurasi." {
+		t.Fatalf("permission denial response = %q", got)
+	}
+}
+
+func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
+	fixture := newFixture(t)
+	candidate := fixture.candidate("permission-crash", "15550000020@s.whatsapp.net", conversation.ChatDirect, "/permission set mark-read")
+	candidate.Owner = true
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("claim command: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	current, err := fixture.registry.AgentFor(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	snapshot, err := current.Config().Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("refresh config: %v", err)
+	}
+	command, _ := inbound.ParsePermissionCommand(candidate.Text)
+	journal, err := fixture.store.Inbound().BeginPermissionMutation(context.Background(), claimed.Message, command, snapshot.Version)
+	if err != nil {
+		t.Fatalf("begin command journal: %v", err)
+	}
+	permission := snapshot.Permission
+	permission.ModelCapabilities = command.Capabilities
+	if _, err := current.Config().SetPermission(context.Background(), journal.ExpectedVersion, permission); err != nil {
+		t.Fatalf("commit config before simulated crash: %v", err)
+	}
+	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+		t.Fatalf("recover duplicate command: %v", err)
+	}
+	recovered, err := fixture.store.Configs().Load(context.Background(), key)
+	if err != nil || recovered.Version != 2 || !recovered.Permission.ModelToolCapabilities().Has("message.mark-read") {
+		t.Fatalf("permission command was applied twice or lost: %#v, %v", recovered, err)
+	}
+}
+
 func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 	fixture := newFixture(t)
 	candidate := fixture.candidate("inbound-crash", "15550000006@s.whatsapp.net", conversation.ChatDirect, "resume me")
@@ -600,7 +679,7 @@ func newFixtureAtPath(
 	model := &echoModel{}
 	sender := &recordingSender{}
 	sender.ready.Store(true)
-	gate, err := policy.NewFixedGate(policyID, 1, store.Configs(), store.Inbound(), true)
+	gate, err := policy.NewFixedGate(policyID, 1, store.Configs(), store.Inbound(), staticChatAuthority{}, true)
 	if err != nil {
 		t.Fatalf("create policy: %v", err)
 	}
@@ -699,6 +778,12 @@ type recordingSender struct {
 	requests []action.SendTextRequest
 	err      error
 	ready    atomic.Bool
+}
+
+type staticChatAuthority struct{}
+
+func (staticChatAuthority) ReadChatAuthority(_ context.Context, _ policy.Principal) (policy.ChatAuthority, error) {
+	return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}, nil
 }
 
 func (sender *recordingSender) Ready() bool { return sender.ready.Load() }

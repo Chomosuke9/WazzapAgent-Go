@@ -48,6 +48,48 @@ func TestAgentInvokePersistsPlanAndSkipsModelOnReplay(t *testing.T) {
 	}
 }
 
+func TestAgentAtomicallyPlansAndDispatchesGrantedTypedEffect(t *testing.T) {
+	store := openStore(t)
+	model := &currentReactionModel{}
+	responses := &fakeDispatcher{}
+	effects := &fakeEffectDispatcher{}
+	key := newKey(t)
+	deps := dependencies(store, model, responses, &eventRecorder{})
+	deps.Effects = effects
+	current, err := agent.New(context.Background(), key, deps)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	invocation := newInvocation(t, agent.InitialConfigVersion, "react please")
+	invocation.Capabilities, _ = agent.NewCapabilitySet("message.react")
+	if _, err := current.Invoke(context.Background(), invocation); err != nil {
+		t.Fatalf("invoke typed effect: %v", err)
+	}
+	if effects.calls.Load() != 1 {
+		t.Fatalf("effect dispatch calls = %d, want 1", effects.calls.Load())
+	}
+	record, err := store.Turns().Load(context.Background(), key, invocation.ID)
+	if err != nil || record.Plan == nil || len(record.Plan.Effects) != 1 || effects.last != record.Plan.Effects[0] {
+		t.Fatalf("atomic stored effect plan = %#v, last=%#v, err=%v", record.Plan, effects.last, err)
+	}
+}
+
+func TestAgentRejectsModelEffectRedirectedToAnotherMessage(t *testing.T) {
+	store := openStore(t)
+	redirected, _ := identity.NewMessageID()
+	model := &redirectedReactionModel{target: redirected}
+	key := newKey(t)
+	current, err := agent.New(context.Background(), key, dependencies(store, model, &fakeDispatcher{}, &eventRecorder{}))
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	invocation := newInvocation(t, agent.InitialConfigVersion, "react another")
+	invocation.Capabilities, _ = agent.NewCapabilitySet("message.react")
+	if _, err := current.Invoke(context.Background(), invocation); !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("redirected model effect error = %v, want provider_failure", err)
+	}
+}
+
 func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	store := openStore(t)
 	model := &blockingModel{started: make(chan agent.ModelRequest, 1), release: make(chan struct{})}
@@ -398,6 +440,23 @@ type fakeModel struct {
 	calls atomic.Int32
 }
 
+type currentReactionModel struct{ calls atomic.Int32 }
+
+func (model *currentReactionModel) Generate(_ context.Context, request agent.ModelRequest) (agent.ModelResult, error) {
+	model.calls.Add(1)
+	return agent.ModelResult{Text: "done", Effects: []agent.ModelEffect{{
+		CallID: "call_react", Intent: agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: request.CurrentMessageID, Emoji: "✅"},
+	}}}, nil
+}
+
+type redirectedReactionModel struct{ target identity.MessageID }
+
+func (model *redirectedReactionModel) Generate(context.Context, agent.ModelRequest) (agent.ModelResult, error) {
+	return agent.ModelResult{Text: "done", Effects: []agent.ModelEffect{{
+		CallID: "call_redirect", Intent: agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: model.target, Emoji: "✅"},
+	}}}, nil
+}
+
 func (model *fakeModel) Generate(context.Context, agent.ModelRequest) (agent.ModelResult, error) {
 	model.calls.Add(1)
 	return agent.ModelResult{Text: model.text}, nil
@@ -445,6 +504,17 @@ func (dispatcher *fakeDispatcher) Dispatch(_ context.Context, ref agent.Dispatch
 	dispatcher.calls.Add(1)
 	now := time.Now().UTC()
 	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: &now}, nil
+}
+
+type fakeEffectDispatcher struct {
+	calls atomic.Int32
+	last  agent.EffectDispatchRef
+}
+
+func (dispatcher *fakeEffectDispatcher) DispatchEffect(_ context.Context, ref agent.EffectDispatchRef) error {
+	dispatcher.calls.Add(1)
+	dispatcher.last = ref
+	return nil
 }
 
 type failingDispatcher struct{ err error }

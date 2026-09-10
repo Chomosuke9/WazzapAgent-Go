@@ -23,6 +23,31 @@ func (store *InboundStore) BeginPromptMutation(
 		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin prompt mutation", fmt.Errorf("mutation command and config version are required"))
 	}
 	digest := promptCommandDigest(message, command)
+	return store.beginConfigMutation(ctx, message, uint8(command.Kind), digest, expected)
+}
+
+const permissionMutationKind = 100
+
+func (store *InboundStore) BeginPermissionMutation(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	command inbound.PermissionCommand,
+	expected agent.ConfigVersion,
+) (inbound.PromptMutation, error) {
+	if expected == 0 || command.Kind != inbound.PermissionSet {
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin permission mutation", fmt.Errorf("mutation command and config version are required"))
+	}
+	digest := permissionCommandDigest(message, command)
+	return store.beginConfigMutation(ctx, message, permissionMutationKind, digest, expected)
+}
+
+func (store *InboundStore) beginConfigMutation(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	kind uint8,
+	digest [32]byte,
+	expected agent.ConfigVersion,
+) (inbound.PromptMutation, error) {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return inbound.PromptMutation{}, storageError("begin prompt mutation journal", err)
@@ -47,8 +72,8 @@ func (store *InboundStore) BeginPromptMutation(
 	}
 	if storedKind.Valid || storedDigest.Valid || storedExpected.Valid {
 		if !storedKind.Valid || !storedDigest.Valid || !storedExpected.Valid ||
-			inbound.PromptCommandKind(storedKind.Int64) != command.Kind || !bytes.Equal(storedDigest.Bytes, digest[:]) {
-			return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin prompt mutation", fmt.Errorf("incoming command is bound to a different mutation"))
+			uint8(storedKind.Int64) != kind || !bytes.Equal(storedDigest.Bytes, digest[:]) {
+			return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", fmt.Errorf("incoming command is bound to a different mutation"))
 		}
 		mutation := inbound.PromptMutation{ExpectedVersion: agent.ConfigVersion(storedExpected.Int64)}
 		if storedApplied.Valid {
@@ -74,7 +99,7 @@ func (store *InboundStore) BeginPromptMutation(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&pendingInvocation)
 	if err == nil {
-		return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin prompt mutation", fmt.Errorf("an earlier prompt mutation must be recovered first"))
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", fmt.Errorf("an earlier config mutation must be recovered first"))
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return inbound.PromptMutation{}, storageError("find pending prompt mutation", err)
@@ -83,7 +108,7 @@ func (store *InboundStore) BeginPromptMutation(
         command_kind = ?, command_digest = ?, command_expected_version = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
         AND command_kind IS NULL AND action_id IS NULL AND turn_state = 0`,
-		uint8(command.Kind), digest[:], uint64(expected), store.clock.Now().UnixMilli(),
+		kind, digest[:], uint64(expected), store.clock.Now().UnixMilli(),
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	)
 	if err := requireOne(result, err, "persist prompt mutation journal"); err != nil {
@@ -96,6 +121,24 @@ func (store *InboundStore) BeginPromptMutation(
 }
 
 func (store *InboundStore) MarkPromptMutationApplied(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	expected agent.ConfigVersion,
+	applied agent.ConfigVersion,
+) error {
+	return store.markConfigMutationApplied(ctx, message, expected, applied)
+}
+
+func (store *InboundStore) MarkPermissionMutationApplied(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	expected agent.ConfigVersion,
+	applied agent.ConfigVersion,
+) error {
+	return store.markConfigMutationApplied(ctx, message, expected, applied)
+}
+
+func (store *InboundStore) markConfigMutationApplied(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 	expected agent.ConfigVersion,
@@ -120,4 +163,16 @@ func (store *InboundStore) MarkPromptMutationApplied(
 
 func promptCommandDigest(message conversation.IncomingMessage, command inbound.PromptCommand) [32]byte {
 	return sha256.Sum256([]byte(fmt.Sprintf("wazzapagent.prompt.v1\x00%d\x00%s\x00%s", command.Kind, message.InvocationID.String(), command.Text)))
+}
+
+func permissionCommandDigest(message conversation.IncomingMessage, command inbound.PermissionCommand) [32]byte {
+	values := command.Capabilities.Values()
+	canonical := make([]byte, 0, 128)
+	canonical = append(canonical, "wazzapagent.permission.v1\x00"...)
+	canonical = append(canonical, message.InvocationID.String()...)
+	for _, capability := range values {
+		canonical = append(canonical, '\x00')
+		canonical = append(canonical, string(capability)...)
+	}
+	return sha256.Sum256(canonical)
 }

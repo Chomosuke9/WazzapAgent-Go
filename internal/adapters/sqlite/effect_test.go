@@ -79,6 +79,39 @@ func TestTypedEffectRejectsTargetFromAnotherChatAndDoesNotReplayUnknown(t *testi
 	}
 }
 
+func TestTypedEffectRecoveryListsOnlyPendingOrExpiredLeases(t *testing.T) {
+	store := openTestStore(t)
+	key := testKey(t)
+	target := seedEffectTarget(t, store, key)
+	principal, _ := policy.SystemPrincipal(key)
+	invocationID, _ := identity.NewInvocationID()
+	effectID, _ := identity.NewEffectID()
+	now := time.Now().UTC()
+	request := effect.PlanRequest{
+		Ref: effect.Ref{Key: key, EffectID: effectID}, InvocationID: invocationID, Principal: principal,
+		Effect: effect.React{TargetMessageID: target, Emoji: "✅"},
+	}
+	if _, err := store.Effects().Plan(context.Background(), request, now); err != nil {
+		t.Fatalf("plan recoverable effect: %v", err)
+	}
+	refs, err := store.Effects().ListRecoverableEffects(context.Background(), key.TenantID, now, 10)
+	if err != nil || len(refs) != 1 || refs[0] != request.Ref {
+		t.Fatalf("pending recoverable refs = %#v, %v", refs, err)
+	}
+	claimed, err := store.Effects().Claim(context.Background(), request.Ref, now)
+	if err != nil || claimed.State != effect.StateClaimed {
+		t.Fatalf("claim effect: %#v, %v", claimed, err)
+	}
+	refs, err = store.Effects().ListRecoverableEffects(context.Background(), key.TenantID, now, 10)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("active claim was recoverable: %#v, %v", refs, err)
+	}
+	refs, err = store.Effects().ListRecoverableEffects(context.Background(), key.TenantID, now.Add(time.Hour), 10)
+	if err != nil || len(refs) != 1 || refs[0] != request.Ref {
+		t.Fatalf("expired claim recoverable refs = %#v, %v", refs, err)
+	}
+}
+
 func seedEffectTarget(t *testing.T, store *Store, key agent.Key) identity.MessageID {
 	t.Helper()
 	messageID, _ := identity.NewMessageID()

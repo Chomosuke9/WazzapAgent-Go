@@ -1,8 +1,8 @@
 # WazzapAgent Go
 
-Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 2 menyediakan conversation core text-only yang durable: transcript canonical penuh untuk chat yang allowlisted, kebijakan eksternal, satu `Agent` per chat, bounded model context, LLM OpenAI-compatible, lalu pengiriman balasan melalui durable action outbox.
+Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 3 menyediakan conversation core durable: transcript canonical penuh untuk chat yang allowlisted, kebijakan eksternal, satu `Agent` per chat, bounded model context, LLM OpenAI-compatible, lalu pengiriman balasan dan typed effect melalui outbox terpisah.
 
-Status saat ini: Part 0 selesai; implementasi lokal Part 1 dan Part 2 selesai. Exit gate real-device/production canary belum dibuktikan, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
+Status saat ini: Part 0 selesai; implementasi lokal Part 1–3 selesai. Exit gate real-device/production canary belum dibuktikan, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
 
 ## Bentuk OOP
 
@@ -23,7 +23,7 @@ result, err := current.Invoke(ctx, invocation)
 
 Kontrak lengkap ada di [docs/rewrite/04-AGENT-CONTRACT.md](docs/rewrite/04-AGENT-CONTRACT.md). Kontrak Part 3 untuk principal, capability, command registry, dan typed effect ada di [docs/rewrite/09-PART3-CONTRACT.md](docs/rewrite/09-PART3-CONTRACT.md).
 
-## Part 1 dan Part 2
+## Part 1 sampai Part 3
 
 Termasuk:
 
@@ -40,12 +40,16 @@ Termasuk:
 - durable per-chat debounce/batching dengan burst cap dan stale-context guard;
 - recovery turn lama tetap diproses lebih dahulu; pesan baru tidak menyalip turn yang masih generating, retryable, atau menunggu delivery;
 - `/help`, `/info`, dan owner-only `/reset`;
+- owner-only `/permission view` dan `/permission set <react|mark-read|presence|none>` untuk capability model per-chat yang default-nya kosong;
+- typed model tools untuk react, mark-read, dan presence yang tidak menerima target/chat/raw WhatsApp ID, di-commit atomik dengan reply, lalu direcheck terhadap policy dan authority provider saat eksekusi;
+- typed effect recovery: operasi durable ambigu menjadi `unknown_outcome`, sedangkan read/presence yang ephemeral tidak direplay;
+- optional one-hop fallback LLM untuk timeout/rate-limit/provider failure; fallback tidak pernah mengulang native effect;
 - checksum-verified offline backup/restore serta history retention;
 - fail-closed allowlist, external send reauthorization, response kill switch, bounded queues/concurrency/timeouts;
 - `/health/live`, `/health/ready`, dan Prometheus text `/metrics` pada loopback secara default;
 - scrub content terminal setelah 24 jam, bounded history, dan hapus terminal turn/action setelah 30 hari.
 
-Belum termasuk media, tool calling, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
+Belum termasuk media, generic command/tool execution, model delete/moderation, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
 Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact kompatibel format lama (`【#id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) agar hemat token. Metadata durable tetap disimpan terstruktur di SQLite.
 
@@ -67,7 +71,7 @@ wazzapagent verify-backup <backup-directory>
 wazzapagent restore-backup <backup-directory> <new-data-directory>
 ```
 
-Saat startup, binary otomatis membaca `.env` dari working directory. Environment process tetap menjadi prioritas; set `WAZZAP_ENV_FILE` pada process bila file berada di lokasi lain. Tenant/account UUID dibuat otomatis sekali di data directory, WhatsApp dan Agent aktif secara default, dan QR otomatis ditampilkan di terminal hanya ketika session belum ter-pair. Ikuti [runbook Part 1](docs/rewrite/07-PART1-RUNBOOK.md) untuk pairing awal dan [runbook Part 2](docs/rewrite/08-PART2-RUNBOOK.md) untuk history, batching, backup/restore, dan canary.
+Saat startup, binary otomatis membaca `.env` dari working directory. Environment process tetap menjadi prioritas; set `WAZZAP_ENV_FILE` pada process bila file berada di lokasi lain. Tenant/account UUID dibuat otomatis sekali di data directory, WhatsApp dan Agent aktif secara default, dan QR otomatis ditampilkan di terminal hanya ketika session belum ter-pair. Ikuti [runbook Part 1](docs/rewrite/07-PART1-RUNBOOK.md) untuk pairing awal, [runbook Part 2](docs/rewrite/08-PART2-RUNBOOK.md) untuk history/batching/backup/restore, serta [contract Part 3](docs/rewrite/09-PART3-CONTRACT.md) sebelum mengaktifkan capability model.
 
 ## Dokumentasi
 
@@ -78,3 +82,4 @@ Saat startup, binary otomatis membaca `.env` dari working directory. Environment
 - [Testing and release](docs/rewrite/05-TESTING-RELEASE.md)
 - [Part 1 operator runbook](docs/rewrite/07-PART1-RUNBOOK.md)
 - [Part 2 operator runbook](docs/rewrite/08-PART2-RUNBOOK.md)
+- [Part 3 authority and typed effect contract](docs/rewrite/09-PART3-CONTRACT.md)

@@ -39,8 +39,32 @@ type PromptOverride struct {
 }
 
 type PermissionConfig struct {
-	PolicyID identity.PolicyID
-	Revision uint64
+	PolicyID          identity.PolicyID
+	Revision          uint64
+	ModelCapabilities CapabilitySet
+}
+
+// ModelToolCapabilities is the intentionally small set that a chat owner may
+// opt in for the model. Human-command and administrative capabilities never
+// cross the Agent/model boundary. Message deletion is deliberately excluded:
+// it stays available to a future explicitly-authorized human feature, but is
+// not a model privilege in Part 3.
+func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
+	return CapabilitySet{values: permission.ModelCapabilities.Values()}
+}
+
+func (permission PermissionConfig) Validate() error {
+	if permission.PolicyID.IsZero() || permission.Revision == 0 {
+		return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("permission policy reference is required"))
+	}
+	for _, capability := range permission.ModelCapabilities.Values() {
+		switch capability {
+		case "message.react", "message.mark-read", "chat.presence":
+		default:
+			return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("model capability is not allowed"))
+		}
+	}
+	return nil
 }
 
 type ConfigValues struct {
@@ -262,7 +286,7 @@ func (snapshot ConfigSnapshot) Values() ConfigValues {
 		Model:          snapshot.Model,
 		Prompt:         snapshot.Prompt,
 		PromptOverride: clonePromptOverride(snapshot.PromptOverride),
-		Permission:     snapshot.Permission,
+		Permission:     clonePermissionConfig(snapshot.Permission),
 	}
 }
 
@@ -292,20 +316,32 @@ func validateConfigValues(values ConfigValues) error {
 			return NewError(ErrorInvalidArgument, "validate config", fmt.Errorf("prompt override must be non-empty valid UTF-8 within %d bytes", MaxPromptBytes))
 		}
 	}
-	if values.Permission.PolicyID.IsZero() || values.Permission.Revision == 0 {
-		return NewError(ErrorInvalidArgument, "validate config", fmt.Errorf("permission policy reference is required"))
+	if err := values.Permission.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
 
+// ValidateConfigValues lets a durable adapter defend its write boundary even
+// when a future caller bypasses the Agent facade. It does not authorize a
+// change; actor checks stay outside Agent and storage.
+func ValidateConfigValues(values ConfigValues) error { return validateConfigValues(values) }
+
 func cloneConfigValues(values ConfigValues) ConfigValues {
 	values.PromptOverride = clonePromptOverride(values.PromptOverride)
+	values.Permission = clonePermissionConfig(values.Permission)
 	return values
 }
 
 func cloneConfigSnapshot(snapshot ConfigSnapshot) ConfigSnapshot {
 	snapshot.PromptOverride = clonePromptOverride(snapshot.PromptOverride)
+	snapshot.Permission = clonePermissionConfig(snapshot.Permission)
 	return snapshot
+}
+
+func clonePermissionConfig(value PermissionConfig) PermissionConfig {
+	value.ModelCapabilities = CapabilitySet{values: value.ModelCapabilities.Values()}
+	return value
 }
 
 func clonePromptOverride(value *PromptOverride) *PromptOverride {
@@ -317,11 +353,26 @@ func clonePromptOverride(value *PromptOverride) *PromptOverride {
 }
 
 func configSnapshotsEqual(left, right ConfigSnapshot) bool {
-	if left.Version != right.Version || left.Model != right.Model || left.Prompt != right.Prompt || left.Permission != right.Permission {
+	if left.Version != right.Version || left.Model != right.Model || left.Prompt != right.Prompt ||
+		left.Permission.PolicyID != right.Permission.PolicyID || left.Permission.Revision != right.Permission.Revision ||
+		!capabilitySetsEqual(left.Permission.ModelCapabilities, right.Permission.ModelCapabilities) {
 		return false
 	}
 	if left.PromptOverride == nil || right.PromptOverride == nil {
 		return left.PromptOverride == nil && right.PromptOverride == nil
 	}
 	return *left.PromptOverride == *right.PromptOverride
+}
+
+func capabilitySetsEqual(left, right CapabilitySet) bool {
+	leftValues, rightValues := left.Values(), right.Values()
+	if len(leftValues) != len(rightValues) {
+		return false
+	}
+	for index := range leftValues {
+		if leftValues[index] != rightValues[index] {
+			return false
+		}
+	}
+	return true
 }

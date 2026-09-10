@@ -13,6 +13,7 @@ var builtinCommandRegistry = mustCommandRegistry([]command.Descriptor{
 	{Name: "info", Capability: policy.CapabilityCommandInfo},
 	{Name: "reset", Capability: policy.CapabilityHistoryReset},
 	{Name: "prompt", Capability: policy.CapabilityPromptWrite},
+	{Name: "permission", Aliases: []string{"permissions"}, Capability: policy.CapabilityPermissionWrite},
 })
 
 func mustCommandRegistry(descriptors []command.Descriptor) *command.Registry {

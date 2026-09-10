@@ -133,6 +133,62 @@ func TestToolCallsAreRejectedInPartOne(t *testing.T) {
 	}
 }
 
+func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
+	requests := make(chan completionRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var decoded completionRequest
+		if err := json.NewDecoder(request.Body).Decode(&decoded); err != nil {
+			t.Errorf("decode tool request: %v", err)
+		}
+		requests <- decoded
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"noted","tool_calls":[{"id":"call_react_1","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\"}"}}]}}]}`))
+	}))
+	defer server.Close()
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+	request := modelRequest(t, providerID)
+	currentMessageID, _ := identity.NewMessageID()
+	capabilities, _ := agent.NewCapabilitySet("message.react")
+	request.CurrentMessageID = currentMessageID
+	request.Capabilities = capabilities
+	result, err := client.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("generate tool response: %v", err)
+	}
+	if result.Text != "noted" || len(result.Effects) != 1 || result.Effects[0].CallID != "call_react_1" ||
+		result.Effects[0].Intent.Kind != agent.EffectReact || result.Effects[0].Intent.TargetMessageID != currentMessageID || result.Effects[0].Intent.Emoji != "✅" {
+		t.Fatalf("decoded typed effect = %#v", result)
+	}
+	encoded := <-requests
+	if len(encoded.Tools) != 1 || encoded.Tools[0].Type != "function" || encoded.Tools[0].Function.Name != "wazzap_react" {
+		t.Fatalf("tool schema = %#v", encoded.Tools)
+	}
+}
+
+func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	tests := []string{
+		`{"id":"call_1","type":"function","function":{"name":"wazzap_delete_current","arguments":"{}"}}`,
+		`{"id":"call_2","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\",\"target_message_id\":\"attacker\"}"}}`,
+		`{"id":"call_3","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\"} {}"}}`,
+	}
+	for _, toolCall := range tests {
+		t.Run(toolCall[:16], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"reply","tool_calls":[` + toolCall + `]}}]}`))
+			}))
+			defer server.Close()
+			client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+			request := modelRequest(t, providerID)
+			request.CurrentMessageID, _ = identity.NewMessageID()
+			request.Capabilities, _ = agent.NewCapabilitySet("message.react")
+			if _, err := client.Generate(context.Background(), request); err == nil {
+				t.Fatal("escalated or arbitrary-target tool call was accepted")
+			}
+		})
+	}
+}
+
 func TestConfiguredResponseLimitIsEnforced(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"123456"}}]}`))

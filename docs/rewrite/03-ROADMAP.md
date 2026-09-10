@@ -233,7 +233,8 @@ generik dari project lama tetap ditolak.
 - Permission recheck immediately before side effect.
 - Keep actor verification and authorization in application/policy/action layers, never inside Agent core methods.
 - Explicit command registry.
-- Typed actions untuk react, delete, mark-read, presence, dan chat context.
+- Typed actions untuk react, delete, mark-read, dan presence; narrow live
+  authority read untuk policy.
 - Durable receipt state machine and unknown-outcome reconciliation.
 - Provider fallback dan bounded retry policy.
 - Tolak generic model-generated `run_command`.
@@ -243,6 +244,18 @@ generik dari project lama tetap ditolak.
 - Model tidak dapat memperoleh owner/admin authority.
 - Setiap effect melewati validate -> authorize -> claim -> execute -> finalize.
 - Permission, replay, conflict, and unknown-outcome tests lulus.
+
+### Status implementasi 2026-09-10
+
+- Typed principal/capability registry, owner-only `/permission`, typed-effect
+  outbox, current-message-bound OpenAI tool bridge, live policy/authority
+  recheck, effect recovery, dan optional one-hop model fallback telah tersedia.
+- Default model capability tetap kosong. Hanya `react`, `mark-read`, dan
+  `presence` yang dapat diaktifkan owner per chat; model tidak pernah menerima
+  `/permission`, target message arbitrary, atau `run_command` generik.
+- Full local tests tersedia. Real-device capability canary, authority behavior
+  on real group, dan crash/network observation tetap pending sebelum tool
+  diaktifkan pada production account.
 
 ## Part 4 — Media dan rich context
 

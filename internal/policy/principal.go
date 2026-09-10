@@ -95,10 +95,11 @@ func (principal Principal) Validate() error {
 type Capability string
 
 const (
-	CapabilityCommandHelp  Capability = "chat.command.help"
-	CapabilityCommandInfo  Capability = "chat.command.info"
-	CapabilityHistoryReset Capability = "chat.history.reset"
-	CapabilityPromptWrite  Capability = "chat.prompt.write"
+	CapabilityCommandHelp     Capability = "chat.command.help"
+	CapabilityCommandInfo     Capability = "chat.command.info"
+	CapabilityHistoryReset    Capability = "chat.history.reset"
+	CapabilityPromptWrite     Capability = "chat.prompt.write"
+	CapabilityPermissionWrite Capability = "chat.permission.write"
 
 	CapabilityMessageReact    Capability = "message.react"
 	CapabilityMessageDelete   Capability = "message.delete"
@@ -132,7 +133,7 @@ func (set CapabilitySet) Values() []Capability { return append([]Capability(nil)
 
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityHistoryReset, CapabilityPromptWrite,
+	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite,
 		CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageMarkRead, CapabilityChatPresence, CapabilityChatContextRead:
 		return true
 	default:
@@ -193,4 +194,26 @@ func (authority ChatAuthority) Validate() error {
 // only typed authority facts, never a WhatsApp client or group metadata DTO.
 type ChatAuthorityReader interface {
 	ReadChatAuthority(context.Context, Principal) (ChatAuthority, error)
+}
+
+// EffectAuthorization is the narrow request policy receives immediately
+// before native execution. It deliberately contains no effect payload or
+// provider identity: those were already validated by the durable outbox.
+type EffectAuthorization struct {
+	Key        agent.Key
+	Principal  Principal
+	Capability Capability
+}
+
+func (request EffectAuthorization) Validate() error {
+	if err := request.Key.Validate(); err != nil {
+		return err
+	}
+	if err := request.Principal.Validate(); err != nil {
+		return err
+	}
+	if request.Principal.Key() != request.Key || !request.Capability.Valid() {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect authorization", fmt.Errorf("principal scope and capability are required"))
+	}
+	return nil
 }

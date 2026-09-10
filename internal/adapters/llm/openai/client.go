@@ -108,7 +108,7 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	}
 	defer func() { <-client.semaphore }()
 
-	messages, err := client.messages(request)
+	messages, tools, err := client.messages(request)
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
@@ -117,6 +117,7 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 		Messages:  messages,
 		MaxTokens: request.Model.MaxOutputTokens,
 		Stream:    false,
+		Tools:     tools,
 	})
 	if err != nil {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorInternal, "encode model request", err)
@@ -155,27 +156,29 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider returned no choices"))
 	}
 	message := decoded.Choices[0].Message
-	if len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]" {
-		return agent.ModelResult{}, agent.NewError(agent.ErrorUnsupported, "decode model response", fmt.Errorf("Part 2 does not accept tool calls"))
-	}
 	if message.Role != "" && message.Role != "assistant" {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("unexpected response role"))
 	}
 	if len(message.Content) > int(client.maxResponseBytes) {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider response exceeds configured byte limit"))
 	}
-	return agent.ModelResult{Text: message.Content}, nil
+	effects, err := decodeToolEffects(message.ToolCalls, request)
+	if err != nil {
+		return agent.ModelResult{}, err
+	}
+	return agent.ModelResult{Text: message.Content, Effects: effects}, nil
 }
 
-func (client *Client) messages(request agent.ModelRequest) ([]completionMessage, error) {
+func (client *Client) messages(request agent.ModelRequest) ([]completionMessage, []completionTool, error) {
 	if strings.TrimSpace(request.Model.Model) == "" || request.Model.MaxOutputTokens == 0 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "build model request", fmt.Errorf("model configuration is required"))
-	}
-	if len(request.Capabilities.Values()) != 0 {
-		return nil, agent.NewError(agent.ErrorUnsupported, "build model request", fmt.Errorf("Part 2 does not expose capabilities"))
+		return nil, nil, agent.NewError(agent.ErrorInvalidArgument, "build model request", fmt.Errorf("model configuration is required"))
 	}
 	if err := agent.ValidateModelMessages(request.Messages); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	tools, err := completionTools(request)
+	if err != nil {
+		return nil, nil, err
 	}
 	messages := []completionMessage{{Role: "system", Content: client.systemPolicy}}
 	for _, message := range request.Messages {
@@ -188,11 +191,11 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 		case agent.ModelAssistant:
 			role = "assistant"
 		default:
-			return nil, agent.NewError(agent.ErrorInvalidArgument, "build model request", fmt.Errorf("invalid model message role"))
+			return nil, nil, agent.NewError(agent.ErrorInvalidArgument, "build model request", fmt.Errorf("invalid model message role"))
 		}
 		messages = append(messages, completionMessage{Role: role, Content: message.Content})
 	}
-	return messages, nil
+	return messages, tools, nil
 }
 
 type completionRequest struct {
@@ -200,6 +203,7 @@ type completionRequest struct {
 	Messages  []completionMessage `json:"messages"`
 	MaxTokens uint32              `json:"max_tokens"`
 	Stream    bool                `json:"stream"`
+	Tools     []completionTool    `json:"tools,omitempty"`
 }
 
 type completionMessage struct {
@@ -212,6 +216,152 @@ type completionResponse struct {
 	Choices []struct {
 		Message completionMessage `json:"message"`
 	} `json:"choices"`
+}
+
+type completionTool struct {
+	Type     string             `json:"type"`
+	Function completionFunction `json:"function"`
+}
+
+type completionFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Arguments   json.RawMessage `json:"arguments,omitempty"`
+}
+
+type completionToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function completionFunction `json:"function"`
+}
+
+func completionTools(request agent.ModelRequest) ([]completionTool, error) {
+	capabilities := request.Capabilities.Values()
+	if len(capabilities) == 0 {
+		return nil, nil
+	}
+	if request.CurrentMessageID.IsZero() {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "build model tools", fmt.Errorf("current message identity is required for tools"))
+	}
+	tools := make([]completionTool, 0, len(capabilities))
+	for _, capability := range capabilities {
+		name, description, parameters, ok := toolSchema(capability)
+		if !ok {
+			return nil, agent.NewError(agent.ErrorUnsupported, "build model tools", fmt.Errorf("capability is not exposed to this provider"))
+		}
+		tools = append(tools, completionTool{Type: "function", Function: completionFunction{Name: name, Description: description, Parameters: parameters}})
+	}
+	return tools, nil
+}
+
+func toolSchema(capability agent.Capability) (string, string, json.RawMessage, bool) {
+	const emptyObject = `{"type":"object","properties":{},"additionalProperties":false}`
+	switch capability {
+	case "message.react":
+		return "wazzap_react", "React to the current inbound message.", json.RawMessage(`{"type":"object","properties":{"emoji":{"type":"string","maxLength":64}},"required":["emoji"],"additionalProperties":false}`), true
+	case "message.delete":
+		return "wazzap_delete_current", "Delete the current inbound message when policy permits.", json.RawMessage(emptyObject), true
+	case "message.mark-read":
+		return "wazzap_mark_read", "Mark the current inbound message as read.", json.RawMessage(emptyObject), true
+	case "chat.presence":
+		return "wazzap_set_presence", "Set composing or paused presence for this chat.", json.RawMessage(`{"type":"object","properties":{"state":{"type":"string","enum":["composing","paused"]}},"required":["state"],"additionalProperties":false}`), true
+	default:
+		return "", "", nil, false
+	}
+}
+
+func decodeToolEffects(raw json.RawMessage, request agent.ModelRequest) ([]agent.ModelEffect, error) {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return nil, nil
+	}
+	if len(request.Capabilities.Values()) == 0 {
+		return nil, agent.NewError(agent.ErrorUnsupported, "decode model response", fmt.Errorf("model returned tools without granted capabilities"))
+	}
+	if request.CurrentMessageID.IsZero() {
+		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model response", fmt.Errorf("tool response has no current message target"))
+	}
+	var calls []completionToolCall
+	if err := json.Unmarshal(raw, &calls); err != nil || len(calls) == 0 || len(calls) > agent.MaxModelEffects {
+		return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool calls are invalid or exceed the limit"))
+	}
+	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
+	for _, capability := range request.Capabilities.Values() {
+		allowed[capability] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(calls))
+	effects := make([]agent.ModelEffect, 0, len(calls))
+	for _, call := range calls {
+		if call.Type != "function" || strings.TrimSpace(call.ID) != call.ID || call.ID == "" || len(call.ID) > 128 {
+			return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call identity is invalid"))
+		}
+		if _, exists := seen[call.ID]; exists {
+			return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call ID is duplicated"))
+		}
+		seen[call.ID] = struct{}{}
+		intent, capability, err := decodeToolIntent(call.Function, request.CurrentMessageID)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := allowed[capability]; !exists {
+			return nil, agent.NewError(agent.ErrorPermissionDenied, "decode model response", fmt.Errorf("tool capability was not granted"))
+		}
+		effects = append(effects, agent.ModelEffect{CallID: call.ID, Intent: intent})
+	}
+	return effects, nil
+}
+
+func decodeToolIntent(function completionFunction, currentMessageID identity.MessageID) (agent.EffectIntent, agent.Capability, error) {
+	if len(function.Arguments) > 4*1024 {
+		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the limit"))
+	}
+	decode := func(value any) error {
+		var arguments string
+		if err := json.Unmarshal(function.Arguments, &arguments); err != nil || len(arguments) > 4*1024 {
+			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+		}
+		decoder := json.NewDecoder(strings.NewReader(arguments))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(value); err != nil {
+			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments contain extra values"))
+		}
+		return nil
+	}
+	switch function.Name {
+	case "wazzap_react":
+		var args struct {
+			Emoji string `json:"emoji"`
+		}
+		if err := decode(&args); err != nil {
+			return agent.EffectIntent{}, "", err
+		}
+		return agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: currentMessageID, Emoji: args.Emoji}, "message.react", nil
+	case "wazzap_delete_current":
+		var args struct{}
+		if err := decode(&args); err != nil {
+			return agent.EffectIntent{}, "", err
+		}
+		return agent.EffectIntent{Kind: agent.EffectDeleteMessage, TargetMessageID: currentMessageID}, "message.delete", nil
+	case "wazzap_mark_read":
+		var args struct{}
+		if err := decode(&args); err != nil {
+			return agent.EffectIntent{}, "", err
+		}
+		return agent.EffectIntent{Kind: agent.EffectMarkRead, TargetMessageID: currentMessageID}, "message.mark-read", nil
+	case "wazzap_set_presence":
+		var args struct {
+			State agent.PresenceState `json:"state"`
+		}
+		if err := decode(&args); err != nil {
+			return agent.EffectIntent{}, "", err
+		}
+		return agent.EffectIntent{Kind: agent.EffectSetChatPresence, Presence: args.State}, "chat.presence", nil
+	default:
+		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool name is not declared"))
+	}
 }
 
 func validateEndpoint(value string) (string, error) {

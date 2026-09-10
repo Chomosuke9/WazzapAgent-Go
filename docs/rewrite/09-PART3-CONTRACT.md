@@ -15,10 +15,10 @@ and tests before the next one is enabled:
 1. **3.0 Authority and command foundation**: typed principals, capability
    vocabulary, declarative command registry, and live authority read port.
 2. **3.1 Human command authorization**: migrate existing commands onto that
-   registry; add `/permission` only after its durable policy model exists.
+   registry; persist the model-tool opt-in behind owner-only `/permission`.
 3. **3.2 Typed effect outbox**: durable, idempotent `react`, `delete`,
-   `mark-read`, and chat-presence effects plus a typed `GetChatContext` read
-   use case. No string command is ever dispatched.
+   `mark-read`, and chat-presence effects. No string command is ever
+   dispatched.
 4. **3.3 Model tool bridge**: expose only explicitly granted typed tools to an
    OpenAI-compatible provider, validate the returned typed calls, atomically
    plan them with the response, then authorize again immediately before native
@@ -28,6 +28,14 @@ and tests before the next one is enabled:
 
 Until the corresponding slice is complete, an operation remains unavailable;
 the registry must deny it rather than emulate it with text or a generic command.
+
+### Implementation status — 2026-09-10
+
+Slices 3.0–3.4 have local implementation and test coverage. The default for a
+new chat remains **no model tools**. An owner must explicitly use
+`/permission set ...` for the three non-destructive model capabilities. The
+real-device canary gate remains pending; that is the only point at which an
+opt-in tool should be enabled for a live account.
 
 ## Non-negotiable invariants
 
@@ -93,6 +101,7 @@ chat.command.help
 chat.command.info
 chat.history.reset
 chat.prompt.write
+chat.permission.write
 
 message.react
 message.delete
@@ -101,11 +110,19 @@ chat.presence
 chat.context.read
 ```
 
-The initial model capability baseline is deliberately empty. A future model
-tool bridge may grant `message.react`, `message.mark-read`, and
-`chat.presence` per invocation only after policy resolves them. `message.delete`
-is destructive and is not granted to a model by default. Group moderation
-(kick, subject, description, invite, open/close) is out of this Part 3 scope.
+The initial model capability baseline is deliberately empty. The only model
+opt-ins are `message.react`, `message.mark-read`, and `chat.presence`; an
+owner changes them durably with:
+
+```text
+/permission view
+/permission set none
+/permission set react mark-read presence
+```
+
+`message.delete` is a typed outbox capability for a future explicitly
+authorized human flow, but is not a model privilege in Part 3. Group
+moderation (kick, subject, description, invite, open/close) is out of scope.
 
 The policy decision carries only the allowed set for this one request. It is
 not persisted as a standing role. The executor validates all of the following
@@ -140,12 +157,12 @@ type CommandDescriptor struct {
 }
 ```
 
-The Part 2 commands (`/help`, `/info`, `/reset`, `/prompt`) migrate first with
-their existing behavior. The future `/permission` command configures an
-explicit policy object; it does not copy the old implicit 0–3 model until its
-scope, ownership, and migration are specified. Unknown slash text remains
-ordinary chat text unless a future trigger policy explicitly changes that
-decision.
+The Part 2 commands (`/help`, `/info`, `/reset`, `/prompt`) retain their
+existing behavior. `/permission` is owner-only and alters only the durable
+allow-list above through config CAS plus an inbound mutation journal, so a
+crash after the config commit cannot apply it twice. It deliberately does not
+copy the old implicit 0–3 model. Unknown slash text remains ordinary chat text
+unless a future trigger policy explicitly changes that decision.
 
 ## Typed effect contract
 
@@ -175,10 +192,10 @@ type SetChatPresence struct {
 `React`, `DeleteMessage`, and `MarkRead` resolve the target through durable
 message ownership at execution; provider message IDs are resolved only by the
 provider adapter after authorization. `SetChatPresence` is chat-bound and has
-no arbitrary destination. `GetChatContext` is a separate live read operation
-returning typed, sanitized group metadata (chat kind, bot admin state, and
-allowed capability-relevant flags); it is not an action and cannot cause a
-side effect.
+no arbitrary destination. The current live read port is
+`ChatAuthorityReader`: it returns only chat kind and bot/actor admin facts for
+policy rechecks. A broader `GetChatContext` model read is intentionally
+deferred until its data-minimization contract has a caller.
 
 Each durable effect has its own idempotency identity and receipt. `react` and
 `delete` are treated as ambiguous after network/provider uncertainty and become
@@ -193,14 +210,32 @@ The provider request contains function/tool schemas generated from the
 capabilities actually granted for that invocation. The response decoder accepts
 only declared tool names and bounded JSON arguments, then turns them into the
 typed Go values above. It rejects unknown tools, duplicate call identifiers,
-cross-chat targets, malformed JSON, and tool calls not covered by the request's
-capability set.
+cross-chat targets, malformed/trailing JSON, and tool calls not covered by the
+request's capability set. The schemas deliberately expose no message ID,
+tenant, account, chat, or destination: each message-targeted call is bound to
+the current inbound `MessageID` by the decoder, then verified again by both
+`Agent` and `TurnStore` before the transaction commits.
 
 The model cannot call `/group`, `/permission`, `/prompt`, `/reset`, or any
 other human command. It cannot select a tenant, account, chat, principal,
 capability, action ID, retry policy, or raw WhatsApp address. A text reply may
 exist alongside zero or more planned typed effects; both are committed under
-the same claimed invocation before any provider call.
+the same claimed invocation before any provider call. A unique model call ID
+inside that transaction makes replay load the original effect refs rather than
+planning another native action. The effect dispatcher runs only after the
+same turn's text response has a durable success receipt; recovery therefore
+cannot react or mark-read while its companion reply is still pending or
+unknown.
+
+## Fallback boundary
+
+The primary OpenAI-compatible client is followed by one optional fallback
+candidate configured with `WAZZAP_LLM_FALLBACK_ENDPOINT` and
+`WAZZAP_LLM_FALLBACK_API_KEY`; it uses the same configured model name. The
+chain advances only after timeout, rate-limit, provider-unavailable, provider-
+failure, or internal client failures. Validation, permission, and cancellation
+failures stop immediately. Fallback is model-only: it never retries an
+ambiguous WhatsApp effect.
 
 ## Evidence taken from the old project
 

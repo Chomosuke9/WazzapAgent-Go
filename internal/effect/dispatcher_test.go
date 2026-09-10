@@ -15,7 +15,7 @@ import (
 func TestDispatcherNeverReplaysAmbiguousDurableEffect(t *testing.T) {
 	store := &memoryStore{}
 	authorizer := &recordingAuthorizer{}
-	sender := &recordingEffectSender{err: agent.NewError(agent.ErrorTimeout, "send fake", context.DeadlineExceeded)}
+	sender := &recordingEffectSender{ready: true, err: agent.NewError(agent.ErrorTimeout, "send fake", context.DeadlineExceeded)}
 	dispatcher, err := effect.NewDispatcher(store, authorizer, sender, agent.SystemClock{})
 	if err != nil {
 		t.Fatalf("create dispatcher: %v", err)
@@ -37,7 +37,7 @@ func TestDispatcherNeverReplaysAmbiguousDurableEffect(t *testing.T) {
 
 func TestDispatcherSkipsFailedEphemeralEffect(t *testing.T) {
 	store := &memoryStore{}
-	sender := &recordingEffectSender{err: agent.NewError(agent.ErrorUnavailable, "send fake", fmt.Errorf("offline"))}
+	sender := &recordingEffectSender{ready: true, err: agent.NewError(agent.ErrorUnavailable, "send fake", fmt.Errorf("offline"))}
 	dispatcher, err := effect.NewDispatcher(store, &recordingAuthorizer{}, sender, agent.SystemClock{})
 	if err != nil {
 		t.Fatalf("create dispatcher: %v", err)
@@ -54,6 +54,25 @@ func TestDispatcherSkipsFailedEphemeralEffect(t *testing.T) {
 	}
 	if err := dispatcher.Dispatch(context.Background(), request.Ref); !agent.IsCode(err, agent.ErrorUnsupported) {
 		t.Fatalf("skipped effect replay = %v, want unsupported", err)
+	}
+}
+
+func TestNotReadyEffectReturnsToPendingBeforeNativeExecution(t *testing.T) {
+	store := &memoryStore{}
+	sender := &recordingEffectSender{ready: false}
+	dispatcher, err := effect.NewDispatcher(store, &recordingAuthorizer{}, sender, agent.SystemClock{})
+	if err != nil {
+		t.Fatalf("create dispatcher: %v", err)
+	}
+	request := durablePlan(t)
+	if _, err := dispatcher.Plan(context.Background(), request); err != nil {
+		t.Fatalf("plan effect: %v", err)
+	}
+	if err := dispatcher.Dispatch(context.Background(), request.Ref); !agent.IsCode(err, agent.ErrorNotReady) {
+		t.Fatalf("not-ready dispatch = %v, want not_ready", err)
+	}
+	if store.stored.State != effect.StatePending || sender.calls != 0 {
+		t.Fatalf("not-ready state/native calls = %#v/%d", store.stored.State, sender.calls)
 	}
 }
 
@@ -79,6 +98,15 @@ func (store *memoryStore) Claim(_ context.Context, ref effect.Ref, _ time.Time) 
 		store.stored.Lease = "lease"
 	}
 	return store.stored, nil
+}
+
+func (store *memoryStore) Requeue(_ context.Context, ref effect.Ref, lease effect.Lease, _ time.Time) error {
+	if store.stored.Request.Ref != ref || store.stored.State != effect.StateClaimed || store.stored.Lease != lease {
+		return fmt.Errorf("invalid requeue claim")
+	}
+	store.stored.State = effect.StatePending
+	store.stored.Lease = ""
+	return nil
 }
 
 func (store *memoryStore) MarkExecuting(_ context.Context, ref effect.Ref, lease effect.Lease, _ time.Time) error {
@@ -116,7 +144,7 @@ func (store *memoryStore) finish(ref effect.Ref, lease effect.Lease, state effec
 
 type recordingAuthorizer struct{ calls int }
 
-func (authorizer *recordingAuthorizer) AuthorizeEffect(_ context.Context, _ effect.Stored) error {
+func (authorizer *recordingAuthorizer) AuthorizeEffect(_ context.Context, _ policy.EffectAuthorization) error {
 	authorizer.calls++
 	return nil
 }
@@ -124,9 +152,10 @@ func (authorizer *recordingAuthorizer) AuthorizeEffect(_ context.Context, _ effe
 type recordingEffectSender struct {
 	calls int
 	err   error
+	ready bool
 }
 
-func (*recordingEffectSender) Ready() bool { return true }
+func (sender *recordingEffectSender) Ready() bool { return sender.ready }
 func (sender *recordingEffectSender) ExecuteEffect(_ context.Context, _ effect.Stored) (string, error) {
 	sender.calls++
 	return "provider-receipt", sender.err

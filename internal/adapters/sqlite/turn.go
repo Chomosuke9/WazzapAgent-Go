@@ -13,7 +13,9 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 const maxGenerationAttempts = 3
@@ -89,6 +91,10 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	}
 	if row.actionID.Valid {
 		plan, err := row.plan(request.Key, request.Invocation.ID)
+		if err != nil {
+			return agent.TurnClaim{}, err
+		}
+		plan.Effects, err = loadModelEffectRefs(ctx, tx, request.Key, request.Invocation.ID)
 		if err != nil {
 			return agent.TurnClaim{}, err
 		}
@@ -196,6 +202,10 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		if plan.ConfigVersion != request.ConfigVersion || plan.Text != request.ResponseText {
 			return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("different plan already exists"))
 		}
+		plan.Effects, planErr = loadModelEffectRefs(ctx, tx, request.Key, request.InvocationID)
+		if planErr != nil {
+			return agent.StoredPlan{}, planErr
+		}
 		if err := tx.Commit(); err != nil {
 			return agent.StoredPlan{}, storageError("commit response replay", err)
 		}
@@ -210,6 +220,13 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	}
 	if row.configVersion.Valid && agent.ConfigVersion(row.configVersion.Int64) != request.ConfigVersion {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("config version changed"))
+	}
+	currentMessageID, err := identity.ParseMessageID(row.messageID)
+	if err != nil {
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response message ID", err)
+	}
+	if err := validateModelEffects(request.Effects, request.Capabilities, currentMessageID); err != nil {
+		return agent.StoredPlan{}, err
 	}
 	responseID, err := identity.NewMessageID()
 	if err != nil {
@@ -267,6 +284,10 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, storageError("insert pending assistant history", err)
 	}
+	effectRefs, err := insertModelEffectsTx(ctx, tx, request.Key, request.InvocationID, request.Effects, nowMS)
+	if err != nil {
+		return agent.StoredPlan{}, err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
         config_version = ?, turn_state = ?, response_id = ?, action_id = ?, response_text = ?,
         delivery_status = ?, generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
@@ -294,7 +315,134 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		Text:          request.ResponseText,
 		CreatedAt:     createdAt,
 		Dispatch:      agent.DispatchRef{Key: request.Key, ActionID: actionID},
+		Effects:       effectRefs,
 	}, nil
+}
+
+func validateModelEffects(effects []agent.ModelEffect, capabilities agent.CapabilitySet, currentMessageID identity.MessageID) error {
+	if len(effects) > agent.MaxModelEffects {
+		return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", fmt.Errorf("too many model effects"))
+	}
+	seen := make(map[string]struct{}, len(effects))
+	for _, planned := range effects {
+		if err := planned.Validate(capabilities); err != nil {
+			return err
+		}
+		if !planned.Intent.TargetMessageID.IsZero() && planned.Intent.TargetMessageID != currentMessageID {
+			return agent.NewError(agent.ErrorPermissionDenied, "commit response plan", fmt.Errorf("model effect is not bound to the current inbound message"))
+		}
+		if _, exists := seen[planned.CallID]; exists {
+			return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", fmt.Errorf("effect call IDs must be unique"))
+		}
+		seen[planned.CallID] = struct{}{}
+	}
+	return nil
+}
+
+func insertModelEffectsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	key agent.Key,
+	invocationID identity.InvocationID,
+	planned []agent.ModelEffect,
+	nowMS int64,
+) ([]agent.EffectDispatchRef, error) {
+	if len(planned) == 0 {
+		return nil, nil
+	}
+	principal, err := policy.ModelPrincipal(key, invocationID)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]agent.EffectDispatchRef, 0, len(planned))
+	for _, modelEffect := range planned {
+		effectID, err := identity.NewEffectID()
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorInternal, "create model effect ID", err)
+		}
+		payload, err := modelEffectPayload(modelEffect.Intent)
+		if err != nil {
+			return nil, err
+		}
+		request := effect.PlanRequest{
+			Ref:          effect.Ref{Key: key, EffectID: effectID},
+			InvocationID: invocationID,
+			Principal:    principal,
+			Effect:       payload,
+		}
+		digest, err := effect.DigestPlan(request)
+		if err != nil {
+			return nil, err
+		}
+		if target, targeted := effectTarget(payload); targeted {
+			if err := requireEffectTarget(ctx, tx, key, target); err != nil {
+				return nil, err
+			}
+		}
+		participantID, lid, principalInvocation := storedPrincipal(principal)
+		target, emoji, presence := storedEffect(payload)
+		_, err = tx.ExecContext(ctx, `INSERT INTO typed_effects(
+            tenant_id, account_id, chat_id, effect_id, invocation_id, model_call_id,
+            principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
+            effect_kind, target_message_id, emoji, presence_state, payload_digest, state,
+            created_at_ms, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), effectID.String(), invocationID.String(), modelEffect.CallID,
+			uint8(principal.Kind), participantID, lid, principalInvocation,
+			uint8(payload.Kind()), target, emoji, presence, digest[:], uint8(effect.StatePending), nowMS, nowMS,
+		)
+		if err != nil {
+			return nil, storageError("insert model typed effect", err)
+		}
+		refs = append(refs, agent.EffectDispatchRef{Key: key, EffectID: effectID})
+	}
+	return refs, nil
+}
+
+func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
+	switch intent.Kind {
+	case agent.EffectReact:
+		return effect.React{TargetMessageID: intent.TargetMessageID, Emoji: intent.Emoji}, nil
+	case agent.EffectDeleteMessage:
+		return effect.DeleteMessage{TargetMessageID: intent.TargetMessageID}, nil
+	case agent.EffectMarkRead:
+		return effect.MarkRead{TargetMessageID: intent.TargetMessageID}, nil
+	case agent.EffectSetChatPresence:
+		return effect.SetChatPresence{State: effect.PresenceState(intent.Presence)}, nil
+	default:
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", fmt.Errorf("effect kind is invalid"))
+	}
+}
+
+type effectRowsQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func loadModelEffectRefs(ctx context.Context, query effectRowsQuerier, key agent.Key, invocationID identity.InvocationID) ([]agent.EffectDispatchRef, error) {
+	rows, err := query.QueryContext(ctx, `SELECT effect_id FROM typed_effects
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND model_call_id IS NOT NULL
+      ORDER BY created_at_ms, effect_id`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String())
+	if err != nil {
+		return nil, storageError("load model typed effects", err)
+	}
+	defer rows.Close()
+	refs := make([]agent.EffectDispatchRef, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, storageError("scan model typed effect", err)
+		}
+		effectID, err := identity.ParseEffectID(raw)
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model typed effect", err)
+		}
+		refs = append(refs, agent.EffectDispatchRef{Key: key, EffectID: effectID})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("iterate model typed effects", err)
+	}
+	return refs, nil
 }
 
 func (store *TurnStore) FailGeneration(ctx context.Context, request agent.FailGenerationRequest) error {
@@ -364,6 +512,10 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 	record.MessageID = messageID
 	if row.actionID.Valid {
 		plan, err := row.plan(key, invocationID)
+		if err != nil {
+			return agent.TurnRecord{}, err
+		}
+		plan.Effects, err = loadModelEffectRefs(ctx, store.db, key, invocationID)
 		if err != nil {
 			return agent.TurnRecord{}, err
 		}
@@ -451,8 +603,7 @@ func matchesPreclaimedInbound(row turnRow, request agent.ClaimTurnRequest) bool 
 		invocation.Sender == nil || !row.participantID.Valid || !row.senderRef.Valid ||
 		row.participantID.String != invocation.Sender.ParticipantID.String() ||
 		row.senderRef.String != invocation.Sender.Ref.String() || row.senderName != invocation.Sender.DisplayName ||
-		row.inputText != flattenText(invocation.Input) || row.occurredAt != invocation.RequestedAt.UnixMilli() ||
-		len(invocation.Capabilities.Values()) != 0 {
+		row.inputText != flattenText(invocation.Input) || row.occurredAt != invocation.RequestedAt.UnixMilli() {
 		return false
 	}
 	return true

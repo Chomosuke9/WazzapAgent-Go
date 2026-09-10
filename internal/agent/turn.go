@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -46,11 +47,14 @@ type TurnClaim struct {
 }
 
 type CommitPlanRequest struct {
-	Key           Key
-	InvocationID  identity.InvocationID
-	Lease         TurnLease
-	ConfigVersion ConfigVersion
-	ResponseText  string
+	Key              Key
+	InvocationID     identity.InvocationID
+	CurrentMessageID identity.MessageID
+	Lease            TurnLease
+	ConfigVersion    ConfigVersion
+	ResponseText     string
+	Capabilities     CapabilitySet
+	Effects          []ModelEffect
 }
 
 type FailGenerationRequest struct {
@@ -75,6 +79,19 @@ type StoredPlan struct {
 	Text          string
 	CreatedAt     time.Time
 	Dispatch      DispatchRef
+	Effects       []EffectDispatchRef
+}
+
+type EffectDispatchRef struct {
+	Key      Key
+	EffectID identity.EffectID
+}
+
+func (ref EffectDispatchRef) Validate() error {
+	if err := ref.Key.Validate(); err != nil || ref.EffectID.IsZero() {
+		return NewError(ErrorInvalidArgument, "validate effect dispatch reference", fmt.Errorf("agent key and effect ID are required"))
+	}
+	return nil
 }
 
 type TurnRecord struct {
@@ -105,6 +122,10 @@ type ResponseDispatcher interface {
 	Dispatch(context.Context, DispatchRef) (DeliveryResult, error)
 }
 
+type EffectDispatcher interface {
+	DispatchEffect(context.Context, EffectDispatchRef) error
+}
+
 type InvokeResult struct {
 	InvocationID  identity.InvocationID
 	ConfigVersion ConfigVersion
@@ -119,5 +140,6 @@ func clonePlan(plan *StoredPlan) *StoredPlan {
 		return nil
 	}
 	copyPlan := *plan
+	copyPlan.Effects = append([]EffectDispatchRef(nil), plan.Effects...)
 	return &copyPlan
 }

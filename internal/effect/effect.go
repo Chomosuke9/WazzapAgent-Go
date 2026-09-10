@@ -198,6 +198,7 @@ type Stored struct {
 type Store interface {
 	Plan(context.Context, PlanRequest, time.Time) (Stored, error)
 	Claim(context.Context, Ref, time.Time) (Stored, error)
+	Requeue(context.Context, Ref, Lease, time.Time) error
 	MarkExecuting(context.Context, Ref, Lease, time.Time) error
 	Complete(context.Context, Ref, Lease, string, time.Time) error
 	FailTerminal(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
@@ -206,7 +207,7 @@ type Store interface {
 }
 
 type Authorizer interface {
-	AuthorizeEffect(context.Context, Stored) error
+	AuthorizeEffect(context.Context, policy.EffectAuthorization) error
 }
 
 type Sender interface {
@@ -256,12 +257,22 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch effect", fmt.Errorf("effect state is invalid"))
 	}
-	if err := dispatcher.authorizer.AuthorizeEffect(ctx, stored); err != nil {
+	// No provider call has happened while the row is merely claimed. A
+	// disconnected account therefore returns the row to pending rather than
+	// converting safe recovery into a terminal denial.
+	if !dispatcher.sender.Ready() {
+		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", fmt.Errorf("effect sender is not ready")))
+	}
+	if err := dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
+		Key: stored.Request.Ref.Key, Principal: stored.Request.Principal, Capability: stored.Request.Effect.Capability(),
+	}); err != nil {
+		if retryablePreExecutionError(err) {
+			return dispatcher.requeuePreExecution(stored, err)
+		}
 		return dispatcher.finalizePreExecution(stored, agent.CodeOf(err), err)
 	}
 	if !dispatcher.sender.Ready() {
-		readyErr := agent.NewError(agent.ErrorNotReady, "dispatch effect", fmt.Errorf("effect sender is not ready"))
-		return dispatcher.finalizePreExecution(stored, agent.ErrorNotReady, readyErr)
+		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", fmt.Errorf("effect sender is not ready")))
 	}
 	if err := dispatcher.store.MarkExecuting(ctx, ref, stored.Lease, dispatcher.clock.Now()); err != nil {
 		return err
@@ -286,6 +297,16 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	return nil
 }
 
+// DispatchEffect adapts the Agent-owned replay reference without exposing the
+// effect outbox's richer type to Agent. Both references contain only durable
+// internal IDs, never a provider address or raw payload.
+func (dispatcher *Dispatcher) DispatchEffect(ctx context.Context, ref agent.EffectDispatchRef) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	return dispatcher.Dispatch(ctx, Ref{Key: ref.Key, EffectID: ref.EffectID})
+}
+
 func (dispatcher *Dispatcher) finalizePreExecution(stored Stored, code agent.ErrorCode, resultErr error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -295,6 +316,24 @@ func (dispatcher *Dispatcher) finalizePreExecution(stored Stored, code agent.Err
 		_ = dispatcher.store.Skip(ctx, stored.Request.Ref, stored.Lease, code, dispatcher.clock.Now())
 	}
 	return resultErr
+}
+
+func (dispatcher *Dispatcher) requeuePreExecution(stored Stored, resultErr error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := dispatcher.store.Requeue(ctx, stored.Request.Ref, stored.Lease, dispatcher.clock.Now()); err != nil {
+		return err
+	}
+	return resultErr
+}
+
+func retryablePreExecutionError(err error) bool {
+	switch agent.CodeOf(err) {
+	case agent.ErrorNotReady, agent.ErrorTimeout, agent.ErrorUnavailable, agent.ErrorProviderFailure, agent.ErrorInternal:
+		return true
+	default:
+		return false
+	}
 }
 
 func terminalStateError(state State) error {

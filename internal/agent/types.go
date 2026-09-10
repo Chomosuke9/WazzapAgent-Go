@@ -144,15 +144,104 @@ type ModelMessage struct {
 }
 
 type ModelRequest struct {
-	Key           Key
-	InvocationID  identity.InvocationID
-	ConfigVersion ConfigVersion
-	Model         ModelConfig
-	Messages      []ModelMessage
-	Capabilities  CapabilitySet
+	Key              Key
+	InvocationID     identity.InvocationID
+	CurrentMessageID identity.MessageID
+	ConfigVersion    ConfigVersion
+	Model            ModelConfig
+	Messages         []ModelMessage
+	Capabilities     CapabilitySet
 }
 
-type ModelResult struct{ Text string }
+const MaxModelEffects = 8
+
+// EffectIntent is a closed, provider-neutral model output. Unlike a command
+// string or JSON blob, every variant is typed, chat-bound by the invocation,
+// and validated before a durable effect row can be planned.
+type EffectKind uint8
+
+const (
+	EffectReact EffectKind = iota + 1
+	EffectDeleteMessage
+	EffectMarkRead
+	EffectSetChatPresence
+)
+
+type PresenceState string
+
+const (
+	PresenceComposing PresenceState = "composing"
+	PresencePaused    PresenceState = "paused"
+)
+
+type EffectIntent struct {
+	Kind            EffectKind
+	TargetMessageID identity.MessageID
+	Emoji           string
+	Presence        PresenceState
+}
+
+func (intent EffectIntent) Capability() Capability {
+	switch intent.Kind {
+	case EffectReact:
+		return "message.react"
+	case EffectDeleteMessage:
+		return "message.delete"
+	case EffectMarkRead:
+		return "message.mark-read"
+	case EffectSetChatPresence:
+		return "chat.presence"
+	default:
+		return ""
+	}
+}
+
+func (intent EffectIntent) Durable() bool {
+	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage
+}
+
+func (intent EffectIntent) Validate() error {
+	switch intent.Kind {
+	case EffectReact:
+		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Presence != "" {
+			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))
+		}
+	case EffectDeleteMessage, EffectMarkRead:
+		if intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Presence != "" {
+			return NewError(ErrorInvalidArgument, "validate message effect intent", fmt.Errorf("only a target message is allowed"))
+		}
+	case EffectSetChatPresence:
+		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
+			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
+		}
+	default:
+		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("effect kind is invalid"))
+	}
+	return nil
+}
+
+type ModelEffect struct {
+	CallID string
+	Intent EffectIntent
+}
+
+func (effect ModelEffect) Validate(capabilities CapabilitySet) error {
+	if strings.TrimSpace(effect.CallID) != effect.CallID || len(effect.CallID) == 0 || len(effect.CallID) > 128 || !utf8.ValidString(effect.CallID) {
+		return NewError(ErrorInvalidArgument, "validate model effect", fmt.Errorf("tool call ID is invalid"))
+	}
+	if err := effect.Intent.Validate(); err != nil {
+		return err
+	}
+	if !capabilities.Has(effect.Intent.Capability()) {
+		return NewError(ErrorPermissionDenied, "validate model effect", fmt.Errorf("effect capability was not granted"))
+	}
+	return nil
+}
+
+type ModelResult struct {
+	Text    string
+	Effects []ModelEffect
+}
 
 type ModelInvoker interface {
 	Generate(context.Context, ModelRequest) (ModelResult, error)

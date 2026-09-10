@@ -19,6 +19,7 @@ type Dependencies struct {
 	HistoryWindow uint32
 	Model         ModelInvoker
 	Responses     ResponseDispatcher
+	Effects       EffectDispatcher
 	Events        ConfigEventSink
 	Clock         Clock
 }
@@ -32,6 +33,7 @@ type Agent struct {
 	context       ContextBuilder
 	historyWindow uint32
 	responses     ResponseDispatcher
+	effects       EffectDispatcher
 	clock         Clock
 	gate          *operationGate
 }
@@ -47,6 +49,9 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 	}
 	if dependencies.HistoryWindow == 0 || dependencies.HistoryWindow > MaxHistoryPageSize {
 		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("history window must be between 1 and %d", MaxHistoryPageSize))
+	}
+	if dependencies.Effects == nil {
+		dependencies.Effects = rejectedEffectDispatcher{}
 	}
 	config, err := newConfig(
 		ctx,
@@ -73,6 +78,7 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 		context:       dependencies.Context,
 		historyWindow: dependencies.HistoryWindow,
 		responses:     dependencies.Responses,
+		effects:       dependencies.Effects,
 		clock:         dependencies.Clock,
 		gate:          gate,
 	}
@@ -170,29 +176,33 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 	}
 
 	request := ModelRequest{
-		Key:           agent.key,
-		InvocationID:  invocation.ID,
-		ConfigVersion: snapshot.Version,
-		Model:         snapshot.Model,
-		Messages:      messages,
-		Capabilities:  CapabilitySet{values: invocation.Capabilities.Values()},
+		Key:              agent.key,
+		InvocationID:     invocation.ID,
+		CurrentMessageID: claim.MessageID,
+		ConfigVersion:    snapshot.Version,
+		Model:            snapshot.Model,
+		Messages:         messages,
+		Capabilities:     CapabilitySet{values: invocation.Capabilities.Values()},
 	}
 	generated, err := agent.model.Generate(ctx, request)
 	if err != nil {
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err
 	}
-	if err := validateModelResult(generated); err != nil {
+	if err := validateModelResult(generated, request.Capabilities, request.CurrentMessageID); err != nil {
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err
 	}
 
 	plan, err := agent.turns.CommitPlan(ctx, CommitPlanRequest{
-		Key:           agent.key,
-		InvocationID:  invocation.ID,
-		Lease:         claim.Lease,
-		ConfigVersion: snapshot.Version,
-		ResponseText:  generated.Text,
+		Key:              agent.key,
+		InvocationID:     invocation.ID,
+		CurrentMessageID: claim.MessageID,
+		Lease:            claim.Lease,
+		ConfigVersion:    snapshot.Version,
+		ResponseText:     generated.Text,
+		Capabilities:     request.Capabilities,
+		Effects:          cloneModelEffects(generated.Effects),
 	})
 	if err != nil {
 		return InvokeResult{}, err
@@ -271,7 +281,21 @@ func (agent *Agent) dispatchPlan(ctx context.Context, plan StoredPlan) (InvokeRe
 	default:
 		return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("dispatcher returned an invalid delivery status"))
 	}
+	if err != nil {
+		return result, err
+	}
+	for _, ref := range plan.Effects {
+		if err := agent.effects.DispatchEffect(ctx, ref); err != nil {
+			return result, err
+		}
+	}
 	return result, err
+}
+
+type rejectedEffectDispatcher struct{}
+
+func (rejectedEffectDispatcher) DispatchEffect(context.Context, EffectDispatchRef) error {
+	return NewError(ErrorPermissionDenied, "dispatch effect", fmt.Errorf("no effect executor is configured"))
 }
 
 func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease TurnLease, generationErr error) {
@@ -295,12 +319,28 @@ func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease Tur
 
 func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
-func validateModelResult(result ModelResult) error {
+func validateModelResult(result ModelResult, capabilities CapabilitySet, currentMessageID identity.MessageID) error {
 	if strings.TrimSpace(result.Text) == "" || !utf8.ValidString(result.Text) {
 		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned empty or invalid UTF-8 text"))
 	}
 	if len(result.Text) > MaxResponseBytes {
 		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider response exceeds %d bytes", MaxResponseBytes))
+	}
+	if len(result.Effects) > MaxModelEffects {
+		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned too many effects"))
+	}
+	callIDs := make(map[string]struct{}, len(result.Effects))
+	for _, planned := range result.Effects {
+		if err := planned.Validate(capabilities); err != nil {
+			return err
+		}
+		if !planned.Intent.TargetMessageID.IsZero() && planned.Intent.TargetMessageID != currentMessageID {
+			return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("model effect is not bound to the current inbound message"))
+		}
+		if _, exists := callIDs[planned.CallID]; exists {
+			return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider duplicated a tool call ID"))
+		}
+		callIDs[planned.CallID] = struct{}{}
 	}
 	return nil
 }
@@ -311,6 +351,10 @@ func cloneInvocation(invocation Invocation) Invocation {
 	invocation.Input = cloneContent(invocation.Input)
 	invocation.Capabilities = CapabilitySet{values: invocation.Capabilities.Values()}
 	return invocation
+}
+
+func cloneModelEffects(effects []ModelEffect) []ModelEffect {
+	return append([]ModelEffect(nil), effects...)
 }
 
 func contextError(operation string, err error) error {

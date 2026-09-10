@@ -66,6 +66,8 @@ type Snapshot struct {
 	allowlist           []string
 	llmEndpoint         string
 	llmAPIKey           string
+	llmFallbackEndpoint string
+	llmFallbackAPIKey   string
 	llmModel            string
 	llmProviderID       identity.ProviderID
 	llmTimeout          time.Duration
@@ -289,6 +291,8 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		agentEnabled:        agentEnabled,
 		llmAPIKey:           value(lookup, "WAZZAP_LLM_API_KEY"),
 		llmEndpoint:         value(lookup, "WAZZAP_LLM_ENDPOINT"),
+		llmFallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"),
+		llmFallbackAPIKey:   value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
 		llmModel:            value(lookup, "WAZZAP_LLM_MODEL"),
 		llmProviderID:       providerID,
 		llmTimeout:          llmTimeout,
@@ -379,6 +383,16 @@ func (snapshot Snapshot) validateEnabled() error {
 	if parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https" {
 		return fmt.Errorf("WAZZAP_LLM_ENDPOINT: must use HTTP or HTTPS")
 	}
+	if (snapshot.llmFallbackEndpoint == "") != (snapshot.llmFallbackAPIKey == "") {
+		return fmt.Errorf("WAZZAP_LLM_FALLBACK_ENDPOINT and WAZZAP_LLM_FALLBACK_API_KEY: must be configured together")
+	}
+	if snapshot.llmFallbackEndpoint != "" {
+		fallbackEndpoint, parseErr := url.Parse(snapshot.llmFallbackEndpoint)
+		if parseErr != nil || fallbackEndpoint.Scheme == "" || fallbackEndpoint.Host == "" ||
+			(fallbackEndpoint.Scheme != "http" && fallbackEndpoint.Scheme != "https") {
+			return fmt.Errorf("WAZZAP_LLM_FALLBACK_ENDPOINT: must be an absolute HTTP(S) URL")
+		}
+	}
 	if strings.TrimSpace(snapshot.basePrompt) == "" || len(snapshot.basePrompt) > 16*1024 {
 		return fmt.Errorf("WAZZAP_BASE_PROMPT: must be non-empty and at most 16384 bytes")
 	}
@@ -397,6 +411,8 @@ func (snapshot Snapshot) AccountID() identity.AccountID      { return snapshot.a
 func (snapshot Snapshot) OwnerAddress() string               { return snapshot.ownerAddress }
 func (snapshot Snapshot) LLMEndpoint() string                { return snapshot.llmEndpoint }
 func (snapshot Snapshot) LLMAPIKey() string                  { return snapshot.llmAPIKey }
+func (snapshot Snapshot) LLMFallbackEndpoint() string        { return snapshot.llmFallbackEndpoint }
+func (snapshot Snapshot) LLMFallbackAPIKey() string          { return snapshot.llmFallbackAPIKey }
 func (snapshot Snapshot) LLMModel() string                   { return snapshot.llmModel }
 func (snapshot Snapshot) LLMProviderID() identity.ProviderID { return snapshot.llmProviderID }
 func (snapshot Snapshot) LLMTimeout() time.Duration          { return snapshot.llmTimeout }
@@ -458,6 +474,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"allowlist_count":         len(snapshot.allowlist),
 		"llm_endpoint_configured": snapshot.llmEndpoint != "",
 		"llm_api_key_configured":  snapshot.llmAPIKey != "",
+		"llm_fallback_configured": snapshot.llmFallbackEndpoint != "",
 		"llm_model_configured":    snapshot.llmModel != "",
 		"llm_concurrency":         snapshot.llmConcurrency,
 		"max_response_bytes":      snapshot.maxResponseBytes,
