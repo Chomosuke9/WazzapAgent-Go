@@ -322,7 +322,7 @@ Part berikutnya dapat menambah `ImagePart`, `FilePart`, atau `SubagentResultPart
 
 Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-selected target.
 
-`ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt adalah system message trusted, sedangkan `PromptOverride` berasal dari user/config boundary dan menjadi user-role block dengan provenance terpisah. Seluruh history dirender menjadi satu final user-role message dengan provenance `ProvenanceHistoryTranscript`; setiap entry tetap dipisahkan dengan blank line di dalam content block, bukan menjadi message provider tersendiri. Format transcript compact kompatibel WazzapAgent lama, bukan envelope JSON:
+`ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt adalah system message trusted, sedangkan `PromptOverride` berasal dari user/config boundary dan menjadi user-role block dengan provenance terpisah. Seluruh history dirender menjadi satu final user-role message dengan provenance `ProvenanceHistoryTranscript`; setiap entry tetap dipisahkan dengan blank line di dalam content block, bukan menjadi message provider tersendiri. Format transcript compact yang dipakai V0 ini bukan envelope JSON:
 
 ```text
 【000040】 12:56
@@ -332,13 +332,13 @@ Alice 【012345】: lanjutkan
 
 Sequence ditampilkan sebagai enam digit (`000000`–`999999` dengan wrap tampilan), waktu sebagai `HH:MM` UTC pada Part 2 saat ini, dan assistant memakai identitas `You 【You】`. Metadata lengkap (message ID, timestamp, quote, delivery, dan sequence durable) tetap berada di History/SQLite dan tidak hilang dari penyimpanan. Raw sender name dan message text tetap untrusted karena berada pada final user history block yang terpisah dari policy system; jangan menggabungkan history dengan safety prompt menjadi satu system message. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan entry current invocation wajib menjadi entry terakhir di dalam block transcript. View di-anchor pada invocation yang sedang diproses agar passive message yang tiba sesudah trigger tidak menyusup ke context turn tersebut.
 
-`senderRef` canonical adalah tepat enam karakter lowercase base36 (`[0-9a-z]{6}`), seperti `012345` atau `1jq7a3`. Reference lama dengan prefix `u_` dinormalisasi secara transactional saat SQLite store dibuka; mapping `senderRef <-> LID` dan seluruh foreign references tetap dipertahankan.
+`senderRef` canonical adalah tepat enam karakter lowercase base36 (`[0-9a-z]{6}`), seperti `012345` atau `1jq7a3`. Hanya format ini yang diterima; mapping `senderRef <-> LID` dan seluruh foreign references tetap dipertahankan.
 
 `ModelInvoker` dibangun dengan non-overridable application safety/system policy dan provider credentials. Adapter selalu menaruh policy tersebut sebelum seluruh `ModelMessage`, lalu memvalidasi pasangan role/provenance. Config, history, atau output model tidak dapat mengganti policy itu. `ModelResult` hanya berisi candidate content—tidak pernah target, actor, action ID, atau authorization data.
 
 ### Invocation identity and durable replay
 
-`Invocation.ID` adalah idempotency identity untuk satu logical turn. Agent menghitung canonical SHA-256 `InvocationDigest` dari Agent key, cause/causation, trusted sender identity, optional canonical quote, ordered content parts, dan sorted capability IDs. Encoding is versioned and length-delimited; it never relies on map iteration or ambiguous string concatenation. Valid UTF-8 user text is hashed as exact bytes, without lossy normalization. Invocation tanpa quote mempertahankan encoding v1 agar turn Part 1 tetap replayable setelah upgrade; invocation ber-quote memakai encoding v2. `PolicyVersion`, `RequestedAt`, deadline, trace ID, serta retry-attempt metadata tidak masuk digest.
+`Invocation.ID` adalah idempotency identity untuk satu logical turn. Agent menghitung canonical SHA-256 `InvocationDigest` dari Agent key, cause/causation, trusted sender identity, optional canonical quote, ordered content parts, dan sorted capability IDs. Encoding saat ini adalah `wazzapagent.invocation.v2`, length-delimited, dan tidak bergantung pada map iteration atau ambiguous string concatenation. Valid UTF-8 user text di-hash sebagai exact bytes, tanpa lossy normalization. `PolicyVersion`, `RequestedAt`, deadline, trace ID, serta retry-attempt metadata tidak masuk digest.
 
 ```go
 type InvocationDigest [32]byte
@@ -1066,7 +1066,7 @@ Part 2 implements:
 - canonical internal quote resolution and group reply-to-bot trigger;
 - durable per-chat debounce/batching with bounded burst draining and restart recovery;
 - `/help`, `/info`, externally owner-authorized `/dump`, and `/reset`;
-- migration from the Part 1 schema and invocation-digest compatibility for unquoted stored turns;
+- migration from the Part 1 schema and one current invocation-digest encoding;
 - full-data offline backup, manifest verification, and restore into a new directory;
 - history/batch metrics and retention maintenance.
 
@@ -1114,7 +1114,7 @@ Required Part 2 additions:
 - full passive-group transcript followed by a mention/reply trigger, sequence ordering, sticker placeholder, and through-invocation stale-context boundary;
 - reset-vs-invoke exclusion and reset-vs-debounce race handling;
 - deterministic context golden serialization, injection-as-data, context bound, stale-order rejection, and exclusion of undelivered assistant output;
-- Part 1 digest compatibility plus quote-aware digest distinction;
+- one current invocation digest plus quote-aware digest distinction;
 - canonical quote lookup and group reply-to-bot behavior;
 - debounce coalescing, burst splitting without remainder loss, active-generation/pre-batch restart recovery, and same-chat ordering;
 - replayed response plan and assistant history use one normalized durable creation timestamp;

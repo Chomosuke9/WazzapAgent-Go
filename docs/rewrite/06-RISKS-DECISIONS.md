@@ -20,7 +20,7 @@ Canonical Go domain types menjadi kontrak internal. HTTP API memakai version bar
 
 **Status:** accepted.
 
-Internal identity tidak memakai absolute path atau JID. Tenant ID immutable dan semua dependency tenant-scoped. Bootstrap membuat tenant/account UUID sekali dan menyimpannya dalam versioned runtime identity record; environment IDs hanya didukung sebagai legacy adoption override.
+Internal identity tidak memakai absolute path atau JID. Tenant ID immutable dan semua dependency tenant-scoped. Bootstrap membuat tenant/account UUID sekali dan menyimpannya dalam runtime identity record; environment tidak dapat mengganti identity durable.
 
 ### D4 — Greenfield persistence
 

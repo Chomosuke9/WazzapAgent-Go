@@ -8,7 +8,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
+func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	builder, err := NewDeterministicContextBuilder(DefaultMaxContextBytes)
 	if err != nil {
 		t.Fatalf("create builder: %v", err)

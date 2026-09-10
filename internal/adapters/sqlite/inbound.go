@@ -546,43 +546,10 @@ func resolveParticipant(ctx context.Context, tx *sql.Tx, candidate conversation.
 		); err != nil {
 			return identity.ParticipantID{}, storageError("refresh participant mapping", err)
 		}
-		if err := bindParticipantLID(ctx, tx, candidate.TenantID, candidate.AccountID, participantID, candidate.SenderLID); err != nil {
-			return identity.ParticipantID{}, err
-		}
 		return participantID, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return identity.ParticipantID{}, storageError("resolve participant mapping", err)
-	}
-	// A phone alias may connect a pre-LID row during migration, but can never
-	// override an existing LID binding.
-	if candidate.ProviderSenderPhone != "" {
-		var existingLID sql.NullString
-		err = tx.QueryRowContext(ctx, `SELECT id, lid FROM participants
-		  WHERE tenant_id = ? AND account_id = ? AND phone_address = ?`,
-			candidate.TenantID.String(), candidate.AccountID.String(), candidate.ProviderSenderPhone,
-		).Scan(&value, &existingLID)
-		if err == nil {
-			if existingLID.Valid && existingLID.String != candidate.SenderLID.String() {
-				return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "bind participant LID", fmt.Errorf("phone alias is already bound to another LID"))
-			}
-			participantID, parseErr := identity.ParseParticipantID(value)
-			if parseErr != nil {
-				return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "decode participant mapping", parseErr)
-			}
-			if _, updateErr := tx.ExecContext(ctx, `UPDATE participants SET lid = ?, provider_address = ?, owner = ?
-			  WHERE tenant_id = ? AND account_id = ? AND id = ?`, candidate.SenderLID.String(), candidate.SenderLID.String(), boolInt(candidate.Owner),
-				candidate.TenantID.String(), candidate.AccountID.String(), participantID.String()); updateErr != nil {
-				return identity.ParticipantID{}, storageError("bind participant LID", updateErr)
-			}
-			if bindErr := bindParticipantLID(ctx, tx, candidate.TenantID, candidate.AccountID, participantID, candidate.SenderLID); bindErr != nil {
-				return identity.ParticipantID{}, bindErr
-			}
-			return participantID, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return identity.ParticipantID{}, storageError("resolve participant phone alias", err)
-		}
 	}
 	participantID, err := identity.NewParticipantID()
 	if err != nil {
@@ -594,23 +561,12 @@ func resolveParticipant(ctx context.Context, tx *sql.Tx, candidate conversation.
 		candidate.TenantID.String(), candidate.AccountID.String(), participantID.String(), candidate.SenderLID.String(), candidate.SenderLID.String(),
 		candidate.ProviderSenderPhone, boolInt(candidate.Owner), nowMS,
 	); err != nil {
+		if candidate.ProviderSenderPhone != "" && isUniqueConstraint(err) {
+			return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "create participant mapping", fmt.Errorf("phone alias is already bound to another LID"))
+		}
 		return identity.ParticipantID{}, storageError("create participant mapping", err)
 	}
 	return participantID, nil
-}
-
-func bindParticipantLID(ctx context.Context, tx *sql.Tx, tenantID identity.TenantID, accountID identity.AccountID, participantID identity.ParticipantID, lid identity.LID) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE sender_refs SET lid = ?
-	  WHERE tenant_id = ? AND account_id = ? AND participant_id = ? AND (lid IS NULL OR lid = ?)`,
-		lid.String(), tenantID.String(), accountID.String(), participantID.String(), lid.String()); err != nil {
-		return storageError("backfill senderRef LID mappings", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE inbound_events SET sender_lid = ?
-	  WHERE tenant_id = ? AND account_id = ? AND participant_id = ? AND sender_lid IS NULL`,
-		lid.String(), tenantID.String(), accountID.String(), participantID.String()); err != nil {
-		return storageError("backfill inbound sender LID", err)
-	}
-	return nil
 }
 
 func resolveSenderRef(

@@ -4,11 +4,11 @@
 
 Part 2 menambahkan conversation core text-only yang durable. Implementasinya tersedia untuk verifikasi lokal, tetapi belum menjadi stable release dan belum dianggap production-complete sebelum real-device canary, forced process-kill, network-loss observation, serta restore drill di bawah lulus.
 
-Gunakan dedicated WhatsApp test account, data directory, HTTP port, process/service, log destination, dan allowlist. Jangan arahkan binary ini ke session atau database project WazzapAgent lama. Upgrade yang dimaksud dalam dokumen ini hanya dari data WazzapAgent-Go Part 1.
+Gunakan dedicated WhatsApp test account, data directory, HTTP port, process/service, log destination, dan allowlist. Jangan arahkan binary ini ke session atau database project WazzapAgent lama, atau ke data directory yang berisi senderRef dari kontrak sebelumnya. V0 tidak melakukan migrasi data compatibility; gunakan data root baru bila kontrak berubah.
 
-## 1. Backup sebelum upgrade
+## 1. Backup sebelum perubahan
 
-Stop runtime Part 1 secara graceful terlebih dahulu. Binary Part 2 dapat membuat backup tanpa membuka atau memigrasikan database:
+Jika ingin menyimpan state saat ini, stop runtime secara graceful terlebih dahulu. Binary ini dapat membuat backup tanpa membuka atau mengubah database:
 
 ```text
 wazzapagent backup <destination-parent>
@@ -19,7 +19,7 @@ Perintah `backup` memuat `.env` dengan aturan runtime yang sama, tetapi hanya me
 
 Backup menyalin seluruh data root sebagai satu set, termasuk `runtime-identity.json`, application SQLite, dan Hypermeow device SQLite. Manifest menyimpan ukuran serta SHA-256 setiap file. Jangan menjalankan backup ketika runtime masih hidup; kedua database terpisah harus diambil pada operational point yang sama.
 
-Setelah backup terverifikasi, jalankan binary Part 2. Migration `002_part2_history.sql`, `003_full_transcript_quotes.sql`, dan `004_lid_identity.sql` diterapkan otomatis, lalu migration checksum lama diverifikasi. Migration 004 menjadikan LID identity canonical dan mempertahankan nomor sebagai alias. Row lama berbasis nomor baru diikat saat Hypermeow memberikan pasangan LID/nomor pertama; recovery tidak memproses row tanpa LID. Jangan mengubah migration yang sudah pernah diterapkan.
+Setelah backup terverifikasi, jalankan binary Part 2 pada data root yang memang dibuat untuk kontrak ini. Migration `002_part2_history.sql`, `003_full_transcript_quotes.sql`, dan `004_lid_identity.sql` diterapkan otomatis, lalu checksum migration diverifikasi. LID adalah identity canonical; nomor hanya alias addressing pada event baru. Row tanpa LID ditolak oleh intake. Jangan mengubah migration yang sudah pernah diterapkan.
 
 ## 2. Konfigurasi Part 2
 

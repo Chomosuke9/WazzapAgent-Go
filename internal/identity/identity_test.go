@@ -32,7 +32,7 @@ func TestSemanticUUIDsAndSenderRefs(t *testing.T) {
 		t.Fatalf("parse sender ref: %v", err)
 	}
 	if _, err := ParseSenderRef("u_01234567"); err == nil {
-		t.Fatal("accepted legacy prefixed sender ref")
+		t.Fatal("accepted prefixed sender ref")
 	}
 	if _, err := ParseSenderRef("u_ILOUBAD0"); err == nil {
 		t.Fatal("accepted malformed sender ref")

@@ -113,11 +113,7 @@ func LoadRuntime(lookup LookupEnv) (Snapshot, error) {
 	if !snapshot.whatsAppEnabled {
 		return snapshot, nil
 	}
-	tenantID, accountID, err := resolveRuntimeIdentity(
-		snapshot.dataDir,
-		value(mergedLookup, "WAZZAP_TENANT_ID"),
-		value(mergedLookup, "WAZZAP_ACCOUNT_ID"),
-	)
+	tenantID, accountID, err := resolveRuntimeIdentity(snapshot.dataDir)
 	if err != nil {
 		return Snapshot{}, err
 	}

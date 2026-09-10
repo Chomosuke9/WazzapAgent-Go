@@ -427,7 +427,7 @@ Canary hanya boleh dimulai bila:
 - error, reconnect, queue depth, LLM latency, dan duplicate count diamati;
 - minimal DM probe, group-mention probe, prompt set/clear, restart, dan duplicate replay lulus.
 
-Part 1 startup config membuat opaque tenant/account identity sekali lalu menyimpannya secara versioned di data root; legacy environment IDs hanya menjadi migration override dan conflict dengan identity durable wajib fail-fast. Owner identity, LLM endpoint/model/key, timeout/limit, dan canary allowlist tetap divalidasi saat runtime WhatsApp aktif. Jalur normal mengaktifkan WhatsApp dan Agent serta menampilkan QR session baru di terminal tanpa tiga environment switch; override disable tetap tersedia sebagai kill switch. Redacted config tidak boleh memuat ID mentah, secret, raw address, prompt, atau message content.
+Part 1 startup config membuat opaque tenant/account identity sekali lalu menyimpannya di data root; environment tidak mengoverride identity durable. Owner identity, LLM endpoint/model/key, timeout/limit, dan canary allowlist tetap divalidasi saat runtime WhatsApp aktif. Jalur normal mengaktifkan WhatsApp dan Agent serta menampilkan QR session baru di terminal tanpa tiga environment switch; override disable tetap tersedia sebagai kill switch. Redacted config tidak boleh memuat ID mentah, secret, raw address, prompt, atau message content.
 
 Canary hari ini membuktikan alur dan boundary. Canary tidak membuktikan long-run reliability. Jika gate ini belum lulus, Part 1 tetap belum selesai walaupun binary berhasil build.
 

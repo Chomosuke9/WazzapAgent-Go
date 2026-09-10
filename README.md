@@ -52,7 +52,7 @@ Termasuk:
 
 Belum termasuk media, keluarga command lain di luar moderasi `/group delete|mute|kick`, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
-Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact (`【id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) dalam satu final history block agar hemat token; setiap pesan tidak menjadi provider message terpisah. `senderRef` baru berbentuk 6 karakter lowercase base36; reference lama `u_...` dinormalisasi otomatis saat store dibuka. Metadata durable tetap disimpan terstruktur di SQLite.
+Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact (`【id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) dalam satu final history block agar hemat token; setiap pesan tidak menjadi provider message terpisah. `senderRef` berbentuk tepat 6 karakter lowercase base36; format lain tidak diterima. Metadata durable tetap disimpan terstruktur di SQLite.
 
 ## Mulai
 

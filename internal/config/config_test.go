@@ -163,40 +163,6 @@ func TestLoadRuntimeGeneratesAndReusesStableIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadRuntimeAdoptsConfiguredIdentityAndRejectsConflict(t *testing.T) {
-	t.Chdir(t.TempDir())
-	dataDir := filepath.Join(t.TempDir(), "runtime-data")
-	tenantID, _ := identity.NewTenantID()
-	accountID, _ := identity.NewAccountID()
-	values := enabledRuntimeValues(dataDir)
-	values["WAZZAP_TENANT_ID"] = tenantID.String()
-	values["WAZZAP_ACCOUNT_ID"] = accountID.String()
-
-	configured, err := LoadRuntime(mapLookup(values))
-	if err != nil {
-		t.Fatalf("adopt configured identity: %v", err)
-	}
-	if configured.TenantID() != tenantID || configured.AccountID() != accountID {
-		t.Fatal("configured identity was not adopted")
-	}
-
-	delete(values, "WAZZAP_TENANT_ID")
-	delete(values, "WAZZAP_ACCOUNT_ID")
-	persisted, err := LoadRuntime(mapLookup(values))
-	if err != nil {
-		t.Fatalf("load persisted identity: %v", err)
-	}
-	if persisted.TenantID() != tenantID || persisted.AccountID() != accountID {
-		t.Fatal("persisted identity did not replace removed legacy configuration")
-	}
-
-	differentTenantID, _ := identity.NewTenantID()
-	values["WAZZAP_TENANT_ID"] = differentTenantID.String()
-	if _, err := LoadRuntime(mapLookup(values)); err == nil || !strings.Contains(err.Error(), "conflicts with the durable runtime identity") {
-		t.Fatalf("identity conflict error = %v", err)
-	}
-}
-
 func TestLoadRuntimeRejectsCorruptIdentityWithoutRegenerating(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dataDir := filepath.Join(t.TempDir(), "runtime-data")

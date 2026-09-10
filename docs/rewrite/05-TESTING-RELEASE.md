@@ -120,7 +120,7 @@ Record library commit, Go version, OS/arch, client type, test account, timestamp
 ### SenderRef
 
 - random generation produces exactly six lowercase base36 characters;
-- legacy `u_...` references are normalized on store open without breaking LID resolution;
+- non-canonical `u_...` references are rejected; fresh data must use six-character sender refs;
 - collision is retried under unique constraint;
 - same participant/chat returns existing ref;
 - same provider participant in another chat has independent ref;
@@ -279,7 +279,7 @@ Part 1 is complete only after Stage D probes and rollback test pass.
 
 - [x] Durable history/context, batching, quote, reply trigger, reset, retention, metrics, dan backup/restore implementation tersedia.
 - [x] Format, tidy/verify, vet, full tests, race detector, host build, vulnerability scan, serta empat cross-build target lulus lokal.
-- [x] Schema upgrade dan invocation digest kompatibilitas Part 1 diuji.
+- [x] Schema upgrade dan current invocation digest diuji.
 - [x] Generation/action lease recovery, replay, unknown-outcome, reset race, dan same-chat ordering memiliki deterministic regression tests.
 - [ ] Exact canary artifact/commit dan checksum dicatat setelah konfigurasi operator siap.
 - [ ] Dedicated device/account, isolated data root/port/process/log, owner, serta allowlist disiapkan.

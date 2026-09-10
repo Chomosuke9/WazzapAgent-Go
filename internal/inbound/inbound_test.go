@@ -682,10 +682,46 @@ type fixture struct {
 	accountID  identity.AccountID
 	store      *appsqlite.Store
 	registry   *agent.Registry
-	handler    *inbound.Handler
+	handler    *directIngress
 	model      *echoModel
 	sender     *recordingSender
 	dispatcher *action.Dispatcher
+}
+
+// directIngress is a synchronous test harness for the two concrete lanes.
+// Production intake uses SplitDispatcher; this helper keeps unit tests
+// deterministic without reintroducing a combined production handler.
+type directIngress struct {
+	store    inbound.Store
+	command  *inbound.CommandHandler
+	ai       *inbound.AIHandler
+	observer inbound.Observer
+}
+
+func (handler *directIngress) Handle(ctx context.Context, candidate conversation.IncomingCandidate) error {
+	if err := candidate.Validate(); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "handle incoming candidate", err)
+	}
+	claimed, err := handler.store.ClaimAndResolveSender(ctx, candidate)
+	if err != nil {
+		return err
+	}
+	if claimed.Duplicate {
+		handler.observer.ObserveInboundDuplicate()
+	} else {
+		handler.observer.ObserveInboundClaimed()
+	}
+	if claimed.Handled {
+		return nil
+	}
+	return handler.Resume(ctx, claimed.Message)
+}
+
+func (handler *directIngress) Resume(ctx context.Context, message conversation.IncomingMessage) error {
+	if inbound.IsCommand(message.Text) {
+		return handler.command.Resume(ctx, message)
+	}
+	return handler.ai.Resume(ctx, message)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -746,16 +782,23 @@ func newFixtureAtPath(
 	if err != nil {
 		t.Fatalf("create command responder: %v", err)
 	}
-	handler, err := inbound.NewHandlerWithBatching(
+	commandHandler, err := inbound.NewCommandHandler(
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
+	)
+	if err != nil {
+		t.Fatalf("create command handler: %v", err)
+	}
+	aiHandler, err := inbound.NewAIHandler(
 		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
 		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
 	)
 	if err != nil {
-		t.Fatalf("create inbound handler: %v", err)
+		t.Fatalf("create AI handler: %v", err)
 	}
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
-		handler: handler, model: model, sender: sender, dispatcher: dispatcher,
+		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
+		model:   model, sender: sender, dispatcher: dispatcher,
 	}
 	t.Cleanup(func() {
 		_ = registry.Close(context.Background())

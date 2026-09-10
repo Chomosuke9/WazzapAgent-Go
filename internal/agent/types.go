@@ -278,14 +278,7 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 		return InvocationDigest{}, err
 	}
 	var canonical bytes.Buffer
-	// Preserve the exact Part 1 digest for invocations without a quote so
-	// durable turns remain replayable after upgrading. Quote-aware invocations
-	// use a new canonical version instead of silently changing v1.
-	if invocation.Quote == nil {
-		canonical.WriteString("wazzapagent.invocation.v1")
-	} else {
-		canonical.WriteString("wazzapagent.invocation.v2")
-	}
+	canonical.WriteString("wazzapagent.invocation.v2")
 	writeField(&canonical, key.TenantID.String())
 	writeField(&canonical, key.AccountID.String())
 	writeField(&canonical, key.ChatID.String())

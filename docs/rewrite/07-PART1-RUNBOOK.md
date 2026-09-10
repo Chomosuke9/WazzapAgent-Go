@@ -10,7 +10,7 @@ Canary nyata belum terbukti hanya karena unit test dan build lokal lulus. Catat 
 
 Salin `.env.example` menjadi `.env`, lalu batasi permission file. Binary membaca `.env` saat startup dari working directory process. Jika sebuah key sudah ada di process environment, nilai file tidak dipakai—termasuk ketika nilai process kosong; default atau validasi typed config kemudian tetap berlaku.
 
-Pengguna tidak perlu membuat UUID. Pada startup pertama, binary membuat `TenantID` dan `AccountID`, lalu menyimpannya dalam `<WAZZAP_DATA_DIR>/runtime-identity.json`. File ini menjadi source of truth dan wajib ikut backup. Runtime lama yang masih memiliki `WAZZAP_TENANT_ID` dan `WAZZAP_ACCOUNT_ID` akan mengadopsi nilai tersebut ketika file identity belum ada; jalankan binary baru sekali sebelum menghapus kedua variable lama. Nilai yang berbeda dari identity durable akan ditolak agar runtime tidak membuka state tenant/account yang salah.
+Pengguna tidak perlu membuat UUID. Pada startup pertama, binary membuat `TenantID` dan `AccountID`, lalu menyimpannya dalam `<WAZZAP_DATA_DIR>/runtime-identity.json`. File ini menjadi source of truth dan wajib ikut backup. `WAZZAP_TENANT_ID` dan `WAZZAP_ACCOUNT_ID` bukan bagian dari konfigurasi runtime; identity baru selalu diambil dari file durable atau dibuat otomatis jika file belum ada.
 
 Pada Linux/Android, batasi permission `.env`:
 

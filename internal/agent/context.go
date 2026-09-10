@@ -44,7 +44,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	// Model history is intentionally one logical user block. The transcript
 	// renderer is compact and already carries role/sender/quote markers, so
 	// turning every durable entry into a provider message wastes tokens and
-	// changes the prompt shape used by the legacy project.
+	// changes the compact prompt shape selected for this project.
 	messages := make([]ModelMessage, 0, 3)
 	if request.Config.PromptOverride == nil || request.Config.PromptOverride.Mode != PromptReplace {
 		messages = append(messages, ModelMessage{
@@ -130,18 +130,18 @@ func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 	text := flattenContent(entry.Content)
 	switch entry.Role {
 	case HistoryUser:
-		return formatLegacyHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text), nil
 	case HistoryAssistant:
-		return formatLegacyHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text), nil
 	case HistorySystem:
-		return formatLegacyHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text), nil
 	default:
 		return "", NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
 	}
 }
 
-// formatLegacyHistoryEntry deliberately keeps the compact transcript grammar
-// used by the original WazzapAgent. Durable storage still keeps structured
+// formatCompactHistoryEntry deliberately keeps the compact transcript grammar
+// used by the model context. Durable storage still keeps structured
 // identity, quote, delivery, and timestamp fields; this is only the view sent
 // to the model. Keeping the view compact matters because it is repeated on
 // every invocation.
@@ -151,22 +151,22 @@ func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 //	【000040】 12:56
 //	REPLYING TO 【000038】
 //	Alice 【012345】: lanjutkan
-func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
+func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	timestamp := entry.CreatedAt.UTC().Format("15:04")
 	if entry.Role == HistorySystem {
 		return fmt.Sprintf("【system】 %s\nSYSTEM: %s", timestamp, text)
 	}
 
-	contextID := formatLegacyContextID(entry.Sequence)
+	contextID := formatCompactContextID(entry.Sequence)
 	if entry.Role == HistoryAssistant && entry.Delivery != DeliverySucceeded {
 		// Pending/unknown assistant output is normally omitted from model
 		// context. Keep this marker for callers that render an entry directly,
-		// matching the legacy transcript while delivery is unresolved.
+		// matching the compact transcript while delivery is unresolved.
 		contextID = "pending"
 	}
 	lines := []string{fmt.Sprintf("【%s】 %s", contextID, timestamp)}
 	if entry.Quote != nil {
-		lines = append(lines, fmt.Sprintf("REPLYING TO 【%s】", formatLegacyContextID(entry.Quote.Sequence)))
+		lines = append(lines, fmt.Sprintf("REPLYING TO 【%s】", formatCompactContextID(entry.Quote.Sequence)))
 	}
 
 	if entry.Role == HistoryAssistant {
@@ -188,10 +188,10 @@ func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// Legacy context IDs are six decimal digits and wrap at 999999. The durable
+// Compact context IDs are six decimal digits and wrap at 999999. The durable
 // sequence remains the source of truth for ordering and lookup; this modulo
-// only preserves the old compact display representation.
-func formatLegacyContextID(sequence uint64) string {
+// only affects the display representation sent to the model.
+func formatCompactContextID(sequence uint64) string {
 	return fmt.Sprintf("%06d", sequence%1_000_000)
 }
 

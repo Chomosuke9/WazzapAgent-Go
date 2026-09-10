@@ -426,7 +426,7 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 		Messages: []agent.ModelMessage{
 			{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "base prompt"},
 			{Role: agent.ModelUser, Provenance: agent.ProvenanceCurrentUser,
-				Content: "【#000001】 00:00\nAlice 【" + senderRef.String() + "】: hello from user"},
+				Content: "【000001】 00:00\nAlice 【" + senderRef.String() + "】: hello from user"},
 		},
 		Capabilities:     capabilities,
 		CurrentMessageID: currentMessageID,

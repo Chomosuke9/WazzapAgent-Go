@@ -27,20 +27,11 @@ type runtimeIdentityDocument struct {
 	AccountID     string `json:"account_id"`
 }
 
-// resolveRuntimeIdentity adopts explicitly configured legacy IDs or creates a
-// new pair once. The durable record is the source of truth on later starts.
-func resolveRuntimeIdentity(dataDir, configuredTenant, configuredAccount string) (identity.TenantID, identity.AccountID, error) {
+// resolveRuntimeIdentity creates an opaque tenant/account pair once. The
+// durable record is the only source of truth on later starts.
+func resolveRuntimeIdentity(dataDir string) (identity.TenantID, identity.AccountID, error) {
 	runtimeIdentityMu.Lock()
 	defer runtimeIdentityMu.Unlock()
-
-	tenantID, tenantConfigured, err := parseOptionalTenantID(configuredTenant)
-	if err != nil {
-		return identity.TenantID{}, identity.AccountID{}, fmt.Errorf("WAZZAP_TENANT_ID: %w", err)
-	}
-	accountID, accountConfigured, err := parseOptionalAccountID(configuredAccount)
-	if err != nil {
-		return identity.TenantID{}, identity.AccountID{}, fmt.Errorf("WAZZAP_ACCOUNT_ID: %w", err)
-	}
 
 	path := filepath.Join(dataDir, runtimeIdentityFilename)
 	storedTenant, storedAccount, found, err := readRuntimeIdentity(path)
@@ -48,47 +39,21 @@ func resolveRuntimeIdentity(dataDir, configuredTenant, configuredAccount string)
 		return identity.TenantID{}, identity.AccountID{}, fmt.Errorf("load runtime identity: %w", err)
 	}
 	if found {
-		if tenantConfigured && tenantID != storedTenant {
-			return identity.TenantID{}, identity.AccountID{}, errors.New("WAZZAP_TENANT_ID conflicts with the durable runtime identity")
-		}
-		if accountConfigured && accountID != storedAccount {
-			return identity.TenantID{}, identity.AccountID{}, errors.New("WAZZAP_ACCOUNT_ID conflicts with the durable runtime identity")
-		}
 		return storedTenant, storedAccount, nil
 	}
 
-	if !tenantConfigured {
-		tenantID, err = identity.NewTenantID()
-		if err != nil {
-			return identity.TenantID{}, identity.AccountID{}, err
-		}
+	tenantID, err := identity.NewTenantID()
+	if err != nil {
+		return identity.TenantID{}, identity.AccountID{}, err
 	}
-	if !accountConfigured {
-		accountID, err = identity.NewAccountID()
-		if err != nil {
-			return identity.TenantID{}, identity.AccountID{}, err
-		}
+	accountID, err := identity.NewAccountID()
+	if err != nil {
+		return identity.TenantID{}, identity.AccountID{}, err
 	}
 	if err := writeRuntimeIdentity(path, tenantID, accountID); err != nil {
 		return identity.TenantID{}, identity.AccountID{}, fmt.Errorf("persist runtime identity: %w", err)
 	}
 	return tenantID, accountID, nil
-}
-
-func parseOptionalTenantID(value string) (identity.TenantID, bool, error) {
-	if value == "" {
-		return identity.TenantID{}, false, nil
-	}
-	parsed, err := identity.ParseTenantID(value)
-	return parsed, true, err
-}
-
-func parseOptionalAccountID(value string) (identity.AccountID, bool, error) {
-	if value == "" {
-		return identity.AccountID{}, false, nil
-	}
-	parsed, err := identity.ParseAccountID(value)
-	return parsed, true, err
 }
 
 func readRuntimeIdentity(path string) (identity.TenantID, identity.AccountID, bool, error) {

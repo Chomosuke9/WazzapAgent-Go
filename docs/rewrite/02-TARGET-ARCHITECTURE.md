@@ -199,7 +199,7 @@ Rules:
 - scoped oleh `(tenant_id, chat_id, participant_id)`;
 - unique di `(tenant_id, chat_id, sender_ref)`;
 - generation dan claim dilakukan dalam transaction dengan collision retry;
-- mapping survive restart/backup restore; legacy `u_...` values are rewritten transactionally to the canonical format when the store opens;
+- mapping survives restart/backup restore; only the current six-character format is accepted;
 - raw JID/phone tidak menjadi input generation dan tidak masuk model/log normal;
 - later mention/action resolution memakai durable mapping;
 - role/owner/admin selalu berasal dari current trusted identity/role resolver, never from sender ref.
