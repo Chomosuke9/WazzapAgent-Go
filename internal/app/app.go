@@ -359,7 +359,10 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		application.config.CommandQueue(), application.config.AIQueue(),
 		application.config.CommandWorkers(), application.config.AIWorkers(),
 		func(lane inbound.Lane, err error) {
-			application.logger.Error("inbound lane processing failed", "lane", lane, "code", agent.CodeOf(err))
+			// Error() is intentionally safe here: provider adapters redact response
+			// bodies and credentials before returning typed errors. The code alone is
+			// not actionable when diagnosing an endpoint or schema mismatch.
+			application.logger.Error("inbound lane processing failed", "lane", lane, "code", agent.CodeOf(err), "error", err)
 		},
 	)
 	if err != nil {

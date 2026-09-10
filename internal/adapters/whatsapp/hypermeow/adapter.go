@@ -919,7 +919,7 @@ func (adapter *Adapter) worker() {
 			return
 		case candidate := <-adapter.queue:
 			if err := adapter.handler.Handle(adapter.rootCtx, candidate); err != nil {
-				adapter.logger.Error("inbound processing failed", "code", agent.CodeOf(err))
+				adapter.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 			}
 		}
 	}
