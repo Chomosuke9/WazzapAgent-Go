@@ -352,7 +352,7 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 		if err := decode(&args); err != nil {
 			return agent.EffectIntent{}, "", err
 		}
-		target, ok := lookupContextMessage(request.ContextMessages, args.ContextMessageID)
+		target, ok := request.ContextMessages[args.ContextMessageID]
 		if !ok {
 			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reaction context message is not in the supplied history"))
 		}
@@ -378,7 +378,7 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 	var replyTarget identity.MessageID
 	if args.ContextMessageID != "none" {
 		var ok bool
-		replyTarget, ok = lookupContextMessage(request.ContextMessages, args.ContextMessageID)
+		replyTarget, ok = request.ContextMessages[args.ContextMessageID]
 		if !ok {
 			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
 		}
@@ -413,7 +413,7 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 			commandTarget = replyTarget
 		} else if contextRef := (*args.CommandContextMessageID)[index]; contextRef != "none" {
 			var ok bool
-			commandTarget, ok = lookupContextMessage(request.ContextMessages, contextRef)
+			commandTarget, ok = request.ContextMessages[contextRef]
 			if !ok {
 				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
 			}
@@ -425,16 +425,6 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunGroupCommand, TargetMessageID: target, Command: commandText}})
 	}
 	return args.Text, effects, nil
-}
-
-// lookupContextMessage accepts the compact numeric ID emitted in the prompt
-// both as 000123 and as the visually rendered #000123 form. The durable map
-// remains canonical and never exposes provider or WhatsApp identifiers.
-func lookupContextMessage(messages map[string]identity.MessageID, value string) (identity.MessageID, bool) {
-	value = strings.TrimSpace(value)
-	value = strings.TrimPrefix(value, "#")
-	target, ok := messages[value]
-	return target, ok
 }
 
 func decodeArguments(raw json.RawMessage, value any) error {
