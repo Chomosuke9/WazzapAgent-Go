@@ -142,13 +142,13 @@ func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, er
 //
 // Example:
 //
-//	【#000040】 12:56
-//	REPLYING TO 【#000038】
+//	【000040】 12:56
+//	REPLYING TO 【000038】
 //	Alice 【u_01234567】: lanjutkan
 func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
 	timestamp := entry.CreatedAt.UTC().Format("15:04")
 	if entry.Role == HistorySystem {
-		return fmt.Sprintf("【#system】 %s\nSYSTEM: %s", timestamp, text)
+		return fmt.Sprintf("【system】 %s\nSYSTEM: %s", timestamp, text)
 	}
 
 	contextID := formatLegacyContextID(entry.Sequence)
@@ -158,9 +158,9 @@ func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
 		// matching the legacy transcript while delivery is unresolved.
 		contextID = "pending"
 	}
-	lines := []string{fmt.Sprintf("【#%s】 %s", contextID, timestamp)}
+	lines := []string{fmt.Sprintf("【%s】 %s", contextID, timestamp)}
 	if entry.Quote != nil {
-		lines = append(lines, fmt.Sprintf("REPLYING TO 【#%s】", formatLegacyContextID(entry.Quote.Sequence)))
+		lines = append(lines, fmt.Sprintf("REPLYING TO 【%s】", formatLegacyContextID(entry.Quote.Sequence)))
 	}
 
 	if entry.Role == HistoryAssistant {

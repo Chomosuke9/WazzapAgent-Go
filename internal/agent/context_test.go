@@ -61,9 +61,9 @@ func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
 		{Role: ModelSystem, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "【#000004】 22:13\nAlice 【u_01234567】: halo"},
-		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "【#000005】 22:13\nYou 【You】: Hai!"},
-		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "【#000006】 22:13\nREPLYING TO 【#000005】\nAlice 【u_01234567】: lanjutkan"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "【000004】 22:13\nAlice 【u_01234567】: halo"},
+		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "【000005】 22:13\nYou 【You】: Hai!"},
+		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "【000006】 22:13\nREPLYING TO 【000005】\nAlice 【u_01234567】: lanjutkan"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)

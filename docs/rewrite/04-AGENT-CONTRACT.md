@@ -324,8 +324,8 @@ Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-se
 `ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt dan prompt override tetap menjadi system messages dengan provenance terpisah. History dirender menggunakan format transcript compact kompatibel WazzapAgent lama, bukan envelope JSON:
 
 ```text
-【#000040】 12:56
-REPLYING TO 【#000038】
+【000040】 12:56
+REPLYING TO 【000038】
 Alice 【u_01234567】: lanjutkan
 ```
 
