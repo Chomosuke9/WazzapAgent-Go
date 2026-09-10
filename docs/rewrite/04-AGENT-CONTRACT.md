@@ -19,6 +19,26 @@ Tujuannya:
 - authorization actor tetap berada di luar Agent;
 - object dapat di-recreate dan di-evict tanpa kehilangan state.
 
+## Kebijakan kompatibilitas selama V0
+
+Selama project masih berstatus V0, kontrak yang tertulis di sini adalah satu-satunya
+kontrak runtime. Breaking change diperbolehkan. Implementasi tidak boleh menambahkan
+backward compatibility untuk versi, API, schema, payload, atau format lama tanpa
+persetujuan eksplisit.
+
+Yang tidak boleh ditambahkan sebagai default:
+
+- alias parser/serializer atau fallback ke field lama;
+- facade/adapter yang mempertahankan API lama;
+- jalur dual-version atau replay/digest untuk versi lama;
+- migrasi atau normalisasi data lama hanya demi mempertahankan state lama;
+- test atau dokumentasi yang menjadikan perilaku lama sebagai kontrak runtime.
+
+Project lama tetap boleh digunakan sebagai referensi perilaku dan fixture pengujian,
+bukan sebagai target kompatibilitas runtime. Jika compatibility bridge benar-benar
+diperlukan, keputusan dan batas waktunya harus disetujui serta didokumentasikan
+terlebih dahulu.
+
 ## Object graph
 
 ```text

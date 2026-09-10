@@ -12,6 +12,7 @@ Rewrite bersifat greenfield:
 - setiap account melakukan pairing baru;
 - setiap Part menghasilkan vertical slice yang dapat dijalankan dan diuji;
 - fitur Part berikutnya menambah capability melalui port baru, bukan membongkar core Part sebelumnya.
+- selama status masih V0, backward compatibility tidak boleh ditambahkan tanpa persetujuan eksplisit; breaking change dan reset data diperbolehkan.
 
 ## Arti Part dan Release
 

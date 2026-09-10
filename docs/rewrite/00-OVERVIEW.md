@@ -22,6 +22,8 @@ Referensi: `../wazzapagents/wazzapagent/README.md:7-12`.
 
 Tidak ada compatibility requirement terhadap protocol Node/Python, bentuk database lama, raw Baileys response, path tenant lama, atau auth state lama. Bentuk lama boleh dipakai sebagai fixture pembanding perilaku, bukan kontrak runtime.
 
+Selama status masih V0, backward compatibility tidak boleh ditambahkan tanpa persetujuan eksplisit. Breaking change pada API, schema, payload, dan format internal diperbolehkan; jika kontrak berubah, gunakan data root baru atau reset data sesuai runbook.
+
 ## Sasaran akhir
 
 - Satu service Go untuk WhatsApp, config, account lifecycle, agent, LLM, jobs, persistence, control panel, dan observability.
