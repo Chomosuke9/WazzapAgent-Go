@@ -476,15 +476,25 @@ Exit: percakapan text survive restart, ordering benar, dan tidak bergantung pada
 
 ## Part 3 — Permission, Commands, dan Typed Actions
 
-- human, model, system, recovery, dan later scheduler principals;
-- current-role lookup dan permission recheck sebelum side effect;
-- explicit command registry;
-- typed action schema;
-- reaction, delete, mark-read, presence, dan chat-context actions;
+- principal eksplisit untuk human, model, system, dan recovery; scheduler tetap scope Part 6;
+- narrow current-chat authority lookup dan permission recheck sebelum native side effect;
+- command registry eksplisit, dimulai dari `/permission view` dan `/permission set`;
+- typed effect schema untuk reaction, delete, mark-read, dan presence; chat-context penuh tetap scope Part 4;
+- model default tidak memiliki tool; capability opt-in saat ini hanya `react`, `mark-read`, dan `presence` (bukan delete);
+- setiap tool model selalu terikat ke pesan inbound yang sedang diproses, dan baru dieksekusi setelah text response invocation yang sama berhasil terkirim;
 - provider fallback dan bounded retry policy;
 - model tidak dapat menjalankan generic `/command` atau memperoleh human authority.
 
 Exit: semua side effect melewati validation, authorization, durable claim, dan receipt state machine.
+
+### Status implementasi 2026-09-10
+
+- Contract model capability, command `/permission`, OpenAI-compatible function transport yang strict, fallback model, serta typed-effect outbox/recovery: implemented dan durable di SQLite.
+- Authorization command tetap berada di application/policy layer. Agent core menerima capability snapshot yang sudah diotorisasi dan tidak menerima actor atau permission DTO.
+- Effect model re-check capability, allowlist, policy revision, dan current chat authority tepat sebelum edge WhatsApp. Native effect tidak dapat berjalan sebelum response text invocation yang sama sukses.
+- Full chat context, media, scheduler, generic command execution, dan legacy moderation permission `0`–`3` sengaja tidak dibawa ke Part 3.
+- Local gate lulus: `go test ./...`, `go test -race ./...`, `go vet ./...`, `go build ./cmd/wazzapagent`, dan `git diff --check`.
+- Real-device canary untuk capability model masih pending; statusnya **Part 3 implementation complete locally**, bukan production-canary complete.
 
 ## Part 4 — Media dan Rich Context
 
