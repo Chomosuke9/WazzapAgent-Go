@@ -37,16 +37,16 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 		}
 	}
 	principalParticipant, principalLID, principalInvocation := storedPrincipal(request.Principal)
-	target, emoji, presence := storedEffect(request.Effect)
+	target, emoji, presence, commandText := storedEffect(request.Effect)
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO typed_effects(
         tenant_id, account_id, chat_id, effect_id, invocation_id,
         principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
-        effect_kind, target_message_id, emoji, presence_state, payload_digest, state,
+		effect_kind, target_message_id, emoji, presence_state, command_text, payload_digest, state,
         created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Ref.Key.TenantID.String(), request.Ref.Key.AccountID.String(), request.Ref.Key.ChatID.String(), request.Ref.EffectID.String(), request.InvocationID.String(),
 		uint8(request.Principal.Kind), principalParticipant, principalLID, principalInvocation,
-		uint8(request.Effect.Kind()), target, emoji, presence, digest[:], uint8(effect.StatePending), now.UTC().UnixMilli(), now.UTC().UnixMilli(),
+		uint8(request.Effect.Kind()), target, emoji, presence, commandText, digest[:], uint8(effect.StatePending), now.UTC().UnixMilli(), now.UTC().UnixMilli(),
 	)
 	if err != nil {
 		return effect.Stored{}, storageError("insert typed effect", err)
@@ -368,9 +368,14 @@ func effectTarget(value effect.Effect) (identity.MessageID, bool) {
 		return typed.TargetMessageID, true
 	case effect.MarkRead:
 		return typed.TargetMessageID, true
+	case effect.RunGroupCommand:
+		if !typed.TargetMessageID.IsZero() {
+			return typed.TargetMessageID, true
+		}
 	default:
 		return identity.MessageID{}, false
 	}
+	return identity.MessageID{}, false
 }
 
 func storedPrincipal(principal policy.Principal) (participantID, lid, invocationID any) {
@@ -384,19 +389,28 @@ func storedPrincipal(principal policy.Principal) (participantID, lid, invocation
 	}
 }
 
-func storedEffect(value effect.Effect) (target, emoji, presence any) {
+func storedEffect(value effect.Effect) (target, emoji, presence, commandText any) {
 	switch typed := value.(type) {
 	case effect.React:
-		return typed.TargetMessageID.String(), typed.Emoji, nil
+		return typed.TargetMessageID.String(), typed.Emoji, nil, nil
 	case effect.DeleteMessage:
-		return typed.TargetMessageID.String(), nil, nil
+		return typed.TargetMessageID.String(), nil, nil, nil
 	case effect.MarkRead:
-		return typed.TargetMessageID.String(), nil, nil
+		return typed.TargetMessageID.String(), nil, nil, nil
 	case effect.SetChatPresence:
-		return nil, nil, string(typed.State)
+		return nil, nil, string(typed.State), nil
+	case effect.RunGroupCommand:
+		return nullableMessageID(typed.TargetMessageID), nil, nil, typed.Command
 	default:
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
+}
+
+func nullableMessageID(value identity.MessageID) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.String()
 }
 
 type effectQuerier interface {
@@ -408,17 +422,17 @@ func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effec
 		invocationValue                                         string
 		principalParticipant, principalLID, principalInvocation sql.NullString
 		principalKind, effectKind, state                        int64
-		target, emoji, presence, lease, receipt                 sql.NullString
+		target, emoji, presence, commandText, lease, receipt    sql.NullString
 		payloadDigest                                           []byte
 		completedAt, leaseUntil                                 sql.NullInt64
 	)
 	err := query.QueryRowContext(ctx, `SELECT invocation_id, principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
-        effect_kind, target_message_id, emoji, presence_state, payload_digest, state, effect_lease,
+		effect_kind, target_message_id, emoji, presence_state, command_text, payload_digest, state, effect_lease,
         effect_lease_until_ms, provider_receipt, completed_at_ms
       FROM typed_effects WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
 	).Scan(&invocationValue, &principalKind, &principalParticipant, &principalLID, &principalInvocation,
-		&effectKind, &target, &emoji, &presence, &payloadDigest, &state, &lease, &leaseUntil, &receipt, &completedAt)
+		&effectKind, &target, &emoji, &presence, &commandText, &payloadDigest, &state, &lease, &leaseUntil, &receipt, &completedAt)
 	if err != nil {
 		return effect.Stored{}, leaseUntil, err
 	}
@@ -430,7 +444,7 @@ func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effec
 	if err != nil {
 		return effect.Stored{}, leaseUntil, err
 	}
-	payload, err := decodeStoredEffect(effect.Kind(effectKind), target, emoji, presence)
+	payload, err := decodeStoredEffect(effect.Kind(effectKind), target, emoji, presence, commandText)
 	if err != nil {
 		return effect.Stored{}, leaseUntil, err
 	}
@@ -479,7 +493,7 @@ func decodeEffectPrincipal(key agent.Key, kind policy.PrincipalKind, participant
 	return principal, nil
 }
 
-func decodeStoredEffect(kind effect.Kind, target, emoji, presence sql.NullString) (effect.Effect, error) {
+func decodeStoredEffect(kind effect.Kind, target, emoji, presence, commandText sql.NullString) (effect.Effect, error) {
 	switch kind {
 	case effect.KindReact:
 		messageID, err := identity.ParseMessageID(target.String)
@@ -501,6 +515,16 @@ func decodeStoredEffect(kind effect.Kind, target, emoji, presence sql.NullString
 		return effect.MarkRead{TargetMessageID: messageID}, nil
 	case effect.KindSetChatPresence:
 		return effect.SetChatPresence{State: effect.PresenceState(presence.String)}, nil
+	case effect.KindRunGroupCommand:
+		var messageID identity.MessageID
+		var err error
+		if target.Valid {
+			messageID, err = identity.ParseMessageID(target.String)
+			if err != nil {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode group command effect", err)
+			}
+		}
+		return effect.RunGroupCommand{Command: commandText.String, TargetMessageID: messageID}, nil
 	default:
 		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", fmt.Errorf("effect kind is invalid"))
 	}

@@ -162,11 +162,11 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	if len(message.Content) > int(client.maxResponseBytes) {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider response exceeds configured byte limit"))
 	}
-	effects, err := decodeToolEffects(message.ToolCalls, request)
+	text, effects, err := decodeModelOutput(message.Content, message.ToolCalls, request)
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
-	return agent.ModelResult{Text: message.Content, Effects: effects}, nil
+	return agent.ModelResult{Text: text, Effects: effects}, nil
 }
 
 func (client *Client) messages(request agent.ModelRequest) ([]completionMessage, []completionTool, error) {
@@ -238,17 +238,20 @@ type completionToolCall struct {
 
 func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 	capabilities := request.Capabilities.Values()
-	if len(capabilities) == 0 {
-		return nil, nil
-	}
 	if request.CurrentMessageID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "build model tools", fmt.Errorf("current message identity is required for tools"))
 	}
-	tools := make([]completionTool, 0, len(capabilities))
+	tools := []completionTool{{Type: "function", Function: completionFunction{
+		Name:        "reply_message",
+		Description: "Return the visible reply and optionally request /group delete, /group mute, or /group kick commands. Commands are separately parsed and authorized.",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"context_msg_id":{"type":"string"},"text":{"type":"string","minLength":1},"command":{"type":["array","null"],"items":{"type":"string"},"maxItems":8},"command_context_msg_id":{"type":["array","null"],"items":{"type":"string"},"maxItems":8}},"required":["context_msg_id","text","command","command_context_msg_id"],"additionalProperties":false}`),
+	}}}
 	for _, capability := range capabilities {
 		name, description, parameters, ok := toolSchema(capability)
 		if !ok {
-			return nil, agent.NewError(agent.ErrorUnsupported, "build model tools", fmt.Errorf("capability is not exposed to this provider"))
+			// Group command capabilities authorize command strings carried by
+			// reply_message. They are deliberately not standalone provider tools.
+			continue
 		}
 		tools = append(tools, completionTool{Type: "function", Function: completionFunction{Name: name, Description: description, Parameters: parameters}})
 	}
@@ -256,34 +259,27 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 }
 
 func toolSchema(capability agent.Capability) (string, string, json.RawMessage, bool) {
-	const emptyObject = `{"type":"object","properties":{},"additionalProperties":false}`
 	switch capability {
 	case "message.react":
-		return "wazzap_react", "React to the current inbound message.", json.RawMessage(`{"type":"object","properties":{"emoji":{"type":"string","maxLength":64}},"required":["emoji"],"additionalProperties":false}`), true
-	case "message.delete":
-		return "wazzap_delete_current", "Delete the current inbound message when policy permits.", json.RawMessage(emptyObject), true
-	case "message.mark-read":
-		return "wazzap_mark_read", "Mark the current inbound message as read.", json.RawMessage(emptyObject), true
-	case "chat.presence":
-		return "wazzap_set_presence", "Set composing or paused presence for this chat.", json.RawMessage(`{"type":"object","properties":{"state":{"type":"string","enum":["composing","paused"]}},"required":["state"],"additionalProperties":false}`), true
+		return "react_to_message", "React to one message from the supplied compact history.", json.RawMessage(`{"type":"object","properties":{"context_msg_id":{"type":"string","minLength":6,"maxLength":6},"emoji":{"type":"string","maxLength":64}},"required":["context_msg_id","emoji"],"additionalProperties":false}`), true
 	default:
 		return "", "", nil, false
 	}
 }
 
-func decodeToolEffects(raw json.RawMessage, request agent.ModelRequest) ([]agent.ModelEffect, error) {
+func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelRequest) (string, []agent.ModelEffect, error) {
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
-		return nil, nil
+		return content, nil, nil
 	}
 	if len(request.Capabilities.Values()) == 0 {
-		return nil, agent.NewError(agent.ErrorUnsupported, "decode model response", fmt.Errorf("model returned tools without granted capabilities"))
+		return "", nil, agent.NewError(agent.ErrorUnsupported, "decode model response", fmt.Errorf("model returned tools without granted capabilities"))
 	}
 	if request.CurrentMessageID.IsZero() {
-		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model response", fmt.Errorf("tool response has no current message target"))
+		return "", nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model response", fmt.Errorf("tool response has no current message target"))
 	}
 	var calls []completionToolCall
 	if err := json.Unmarshal(raw, &calls); err != nil || len(calls) == 0 || len(calls) > agent.MaxModelEffects {
-		return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool calls are invalid or exceed the limit"))
+		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool calls are invalid or exceed the limit"))
 	}
 	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
 	for _, capability := range request.Capabilities.Values() {
@@ -291,27 +287,44 @@ func decodeToolEffects(raw json.RawMessage, request agent.ModelRequest) ([]agent
 	}
 	seen := make(map[string]struct{}, len(calls))
 	effects := make([]agent.ModelEffect, 0, len(calls))
+	replyText := content
+	replySeen := false
 	for _, call := range calls {
 		if call.Type != "function" || strings.TrimSpace(call.ID) != call.ID || call.ID == "" || len(call.ID) > 128 {
-			return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call identity is invalid"))
+			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call identity is invalid"))
 		}
 		if _, exists := seen[call.ID]; exists {
-			return nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call ID is duplicated"))
+			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call ID is duplicated"))
 		}
 		seen[call.ID] = struct{}{}
-		intent, capability, err := decodeToolIntent(call.Function, request.CurrentMessageID)
+		if call.Function.Name == "reply_message" {
+			if replySeen {
+				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reply_message may only be called once"))
+			}
+			text, commands, err := decodeReplyMessage(call, request)
+			if err != nil {
+				return "", nil, err
+			}
+			if strings.TrimSpace(content) != "" && content != text {
+				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("content conflicts with reply_message text"))
+			}
+			replyText, replySeen = text, true
+			effects = append(effects, commands...)
+			continue
+		}
+		intent, capability, err := decodeToolIntent(call.Function, request)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		if _, exists := allowed[capability]; !exists {
-			return nil, agent.NewError(agent.ErrorPermissionDenied, "decode model response", fmt.Errorf("tool capability was not granted"))
+			return "", nil, agent.NewError(agent.ErrorPermissionDenied, "decode model response", fmt.Errorf("tool capability was not granted"))
 		}
 		effects = append(effects, agent.ModelEffect{CallID: call.ID, Intent: intent})
 	}
-	return effects, nil
+	return replyText, effects, nil
 }
 
-func decodeToolIntent(function completionFunction, currentMessageID identity.MessageID) (agent.EffectIntent, agent.Capability, error) {
+func decodeToolIntent(function completionFunction, request agent.ModelRequest) (agent.EffectIntent, agent.Capability, error) {
 	if len(function.Arguments) > 4*1024 {
 		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the limit"))
 	}
@@ -331,37 +344,103 @@ func decodeToolIntent(function completionFunction, currentMessageID identity.Mes
 		return nil
 	}
 	switch function.Name {
-	case "wazzap_react":
+	case "react_to_message":
 		var args struct {
-			Emoji string `json:"emoji"`
+			ContextMessageID string `json:"context_msg_id"`
+			Emoji            string `json:"emoji"`
 		}
 		if err := decode(&args); err != nil {
 			return agent.EffectIntent{}, "", err
 		}
-		return agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: currentMessageID, Emoji: args.Emoji}, "message.react", nil
-	case "wazzap_delete_current":
-		var args struct{}
-		if err := decode(&args); err != nil {
-			return agent.EffectIntent{}, "", err
+		target, ok := request.ContextMessages[args.ContextMessageID]
+		if !ok {
+			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reaction context message is not in the supplied history"))
 		}
-		return agent.EffectIntent{Kind: agent.EffectDeleteMessage, TargetMessageID: currentMessageID}, "message.delete", nil
-	case "wazzap_mark_read":
-		var args struct{}
-		if err := decode(&args); err != nil {
-			return agent.EffectIntent{}, "", err
-		}
-		return agent.EffectIntent{Kind: agent.EffectMarkRead, TargetMessageID: currentMessageID}, "message.mark-read", nil
-	case "wazzap_set_presence":
-		var args struct {
-			State agent.PresenceState `json:"state"`
-		}
-		if err := decode(&args); err != nil {
-			return agent.EffectIntent{}, "", err
-		}
-		return agent.EffectIntent{Kind: agent.EffectSetChatPresence, Presence: args.State}, "chat.presence", nil
+		return agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: target, Emoji: args.Emoji}, "message.react", nil
 	default:
 		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool name is not declared"))
 	}
+}
+
+func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (string, []agent.ModelEffect, error) {
+	var args struct {
+		ContextMessageID        string    `json:"context_msg_id"`
+		Text                    string    `json:"text"`
+		Commands                *[]string `json:"command"`
+		CommandContextMessageID *[]string `json:"command_context_msg_id"`
+	}
+	if err := decodeArguments(call.Function.Arguments, &args); err != nil {
+		return "", nil, err
+	}
+	if strings.TrimSpace(args.Text) == "" || len(args.Text) > agent.MaxResponseBytes {
+		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
+	}
+	var replyTarget identity.MessageID
+	if args.ContextMessageID != "none" {
+		var ok bool
+		replyTarget, ok = request.ContextMessages[args.ContextMessageID]
+		if !ok {
+			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
+		}
+	}
+	if args.Commands == nil {
+		if args.CommandContextMessageID != nil {
+			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command contexts require commands"))
+		}
+		return args.Text, nil, nil
+	}
+	commands := *args.Commands
+	if len(commands) == 0 || len(commands) > agent.MaxModelEffects || (args.CommandContextMessageID != nil && len(*args.CommandContextMessageID) != len(commands)) {
+		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands and command contexts must be aligned and bounded"))
+	}
+	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
+	for _, capability := range request.Capabilities.Values() {
+		allowed[capability] = struct{}{}
+	}
+	effects := make([]agent.ModelEffect, 0, len(commands))
+	for index, commandText := range commands {
+		commandText = strings.TrimSpace(commandText)
+		fields := strings.Fields(commandText)
+		if len(fields) < 2 || fields[0] != "/group" {
+			return "", nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("only /group moderation commands are enabled"))
+		}
+		capability := agent.Capability("group." + fields[1])
+		if _, ok := allowed[capability]; !ok {
+			return "", nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("group command exceeds current permission level"))
+		}
+		var commandTarget identity.MessageID
+		if args.CommandContextMessageID == nil {
+			commandTarget = replyTarget
+		} else if contextRef := (*args.CommandContextMessageID)[index]; contextRef != "none" {
+			var ok bool
+			commandTarget, ok = request.ContextMessages[contextRef]
+			if !ok {
+				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
+			}
+		}
+		var target identity.MessageID
+		if fields[1] == "delete" {
+			target = commandTarget
+		}
+		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunGroupCommand, TargetMessageID: target, Command: commandText}})
+	}
+	return args.Text, effects, nil
+}
+
+func decodeArguments(raw json.RawMessage, value any) error {
+	var arguments string
+	if err := json.Unmarshal(raw, &arguments); err != nil || len(arguments) > 4*1024 {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+	}
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments contain extra values"))
+	}
+	return nil
 }
 
 func validateEndpoint(value string) (string, error) {

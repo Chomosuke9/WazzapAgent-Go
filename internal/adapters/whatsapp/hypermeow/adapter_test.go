@@ -369,6 +369,14 @@ func (staticTargets) ReconcileAccountPolicy(context.Context, identity.TenantID, 
 	return nil
 }
 
+func (staticTargets) ResolveLID(context.Context, agent.Key, identity.SenderRef) (identity.LID, error) {
+	return identity.ParseLID("10000000000@lid")
+}
+
+func (staticTargets) SetChatMute(context.Context, agent.Key, identity.SenderRef, uint32, time.Time) error {
+	return nil
+}
+
 func normalizationAdapter(t *testing.T) (*Adapter, types.JID) {
 	t.Helper()
 	tenantID, _ := identity.NewTenantID()

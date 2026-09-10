@@ -183,13 +183,14 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		Model:            snapshot.Model,
 		Messages:         messages,
 		Capabilities:     CapabilitySet{values: invocation.Capabilities.Values()},
+		ContextMessages:  contextMessageMap(page.Entries),
 	}
 	generated, err := agent.model.Generate(ctx, request)
 	if err != nil {
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err
 	}
-	if err := validateModelResult(generated, request.Capabilities, request.CurrentMessageID); err != nil {
+	if err := validateModelResult(generated, request.Capabilities, request.ContextMessages); err != nil {
 		agent.failGeneration(invocation.ID, claim.Lease, err)
 		return InvokeResult{}, err
 	}
@@ -208,6 +209,16 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		return InvokeResult{}, err
 	}
 	return agent.dispatchPlan(ctx, plan)
+}
+
+func contextMessageMap(entries []HistoryEntry) map[string]identity.MessageID {
+	result := make(map[string]identity.MessageID, len(entries))
+	for _, entry := range entries {
+		if entry.Sequence > 0 && entry.Sequence <= 999999 && !entry.MessageID.IsZero() {
+			result[fmt.Sprintf("%06d", entry.Sequence)] = entry.MessageID
+		}
+	}
+	return result
 }
 
 func userHistoryEntry(messageID identity.MessageID, invocation Invocation) HistoryEntry {
@@ -319,7 +330,7 @@ func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease Tur
 
 func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
-func validateModelResult(result ModelResult, capabilities CapabilitySet, currentMessageID identity.MessageID) error {
+func validateModelResult(result ModelResult, capabilities CapabilitySet, contextMessages map[string]identity.MessageID) error {
 	if strings.TrimSpace(result.Text) == "" || !utf8.ValidString(result.Text) {
 		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned empty or invalid UTF-8 text"))
 	}
@@ -330,12 +341,18 @@ func validateModelResult(result ModelResult, capabilities CapabilitySet, current
 		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned too many effects"))
 	}
 	callIDs := make(map[string]struct{}, len(result.Effects))
+	allowedTargets := make(map[identity.MessageID]struct{}, len(contextMessages))
+	for _, messageID := range contextMessages {
+		allowedTargets[messageID] = struct{}{}
+	}
 	for _, planned := range result.Effects {
 		if err := planned.Validate(capabilities); err != nil {
 			return err
 		}
-		if !planned.Intent.TargetMessageID.IsZero() && planned.Intent.TargetMessageID != currentMessageID {
-			return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("model effect is not bound to the current inbound message"))
+		if !planned.Intent.TargetMessageID.IsZero() {
+			if _, ok := allowedTargets[planned.Intent.TargetMessageID]; !ok {
+				return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("model effect target is outside supplied history"))
+			}
 		}
 		if _, exists := callIDs[planned.CallID]; exists {
 			return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider duplicated a tool call ID"))

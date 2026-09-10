@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -41,11 +40,11 @@ func (store *ConfigStore) LoadOrCreate(ctx context.Context, key agent.Key, defau
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_configs(
         tenant_id, account_id, chat_id, version, provider_id, model,
         max_output_tokens, prompt, prompt_override_mode, prompt_override_text,
-        policy_id, policy_revision, model_capabilities, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		policy_id, policy_revision, model_capabilities, moderation_level, updated_at_ms
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(agent.InitialConfigVersion),
 		defaults.Model.ProviderID.String(), defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
-		mode, text, defaults.Permission.PolicyID.String(), defaults.Permission.Revision, encodeModelCapabilities(defaults.Permission.ModelToolCapabilities()), store.clock.Now().UnixMilli(),
+		mode, text, defaults.Permission.PolicyID.String(), defaults.Permission.Revision, "[]", uint8(defaults.Permission.ModerationLevel), store.clock.Now().UnixMilli(),
 	)
 	if err != nil {
 		return agent.ConfigSnapshot{}, storageError("create agent config", err)
@@ -95,10 +94,10 @@ func (store *ConfigStore) CompareAndSwap(
         version = version + 1,
         provider_id = ?, model = ?, max_output_tokens = ?, prompt = ?,
         prompt_override_mode = ?, prompt_override_text = ?,
-        policy_id = ?, policy_revision = ?, model_capabilities = ?, updated_at_ms = ?
+		policy_id = ?, policy_revision = ?, model_capabilities = '[]', moderation_level = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND version = ?`,
 		values.Model.ProviderID.String(), values.Model.Model, values.Model.MaxOutputTokens, values.Prompt,
-		mode, text, values.Permission.PolicyID.String(), values.Permission.Revision, encodeModelCapabilities(values.Permission.ModelToolCapabilities()), store.clock.Now().UnixMilli(),
+		mode, text, values.Permission.PolicyID.String(), values.Permission.Revision, uint8(values.Permission.ModerationLevel), store.clock.Now().UnixMilli(),
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(expected),
 	)
 	if err != nil {
@@ -136,22 +135,22 @@ type configQuerier interface {
 
 func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.ConfigSnapshot, error) {
 	var (
-		version           uint64
-		providerValue     string
-		model             string
-		maxOutputTokens   uint32
-		prompt            string
-		overrideMode      sql.NullInt64
-		overrideText      sql.NullString
-		policyValue       string
-		policyRevision    uint64
-		modelCapabilities string
+		version         uint64
+		providerValue   string
+		model           string
+		maxOutputTokens uint32
+		prompt          string
+		overrideMode    sql.NullInt64
+		overrideText    sql.NullString
+		policyValue     string
+		policyRevision  uint64
+		moderationLevel uint8
 	)
 	err := query.QueryRowContext(ctx, `SELECT version, provider_id, model, max_output_tokens,
-        prompt, prompt_override_mode, prompt_override_text, policy_id, policy_revision, model_capabilities
+        prompt, prompt_override_mode, prompt_override_text, policy_id, policy_revision, moderation_level
       FROM agent_configs WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
-	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &modelCapabilities)
+	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &moderationLevel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "load agent config", fmt.Errorf("config does not exist"))
 	}
@@ -165,10 +164,6 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 	policyID, err := identity.ParsePolicyID(policyValue)
 	if err != nil {
 		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "decode agent config", err)
-	}
-	capabilities, err := decodeModelCapabilities(modelCapabilities)
-	if err != nil {
-		return agent.ConfigSnapshot{}, err
 	}
 	var override *agent.PromptOverride
 	if overrideMode.Valid != overrideText.Valid {
@@ -187,42 +182,11 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 		Prompt:         prompt,
 		PromptOverride: override,
 		Permission: agent.PermissionConfig{
-			PolicyID:          policyID,
-			Revision:          policyRevision,
-			ModelCapabilities: capabilities,
+			PolicyID:        policyID,
+			Revision:        policyRevision,
+			ModerationLevel: agent.ModerationLevel(moderationLevel),
 		},
 	}, nil
-}
-
-func encodeModelCapabilities(capabilities agent.CapabilitySet) string {
-	values := capabilities.Values()
-	encoded := make([]string, len(values))
-	for index, value := range values {
-		encoded[index] = string(value)
-	}
-	// CapabilitySet is already bounded and canonical. json.Marshal cannot fail
-	// for a []string, so an empty list is the only safe fallback.
-	encodedJSON, err := json.Marshal(encoded)
-	if err != nil {
-		return "[]"
-	}
-	return string(encodedJSON)
-}
-
-func decodeModelCapabilities(value string) (agent.CapabilitySet, error) {
-	var raw []string
-	if err := json.Unmarshal([]byte(value), &raw); err != nil {
-		return agent.CapabilitySet{}, agent.NewError(agent.ErrorIntegrityFailure, "decode agent config", fmt.Errorf("model capabilities are invalid"))
-	}
-	capabilities := make([]agent.Capability, len(raw))
-	for index, capability := range raw {
-		capabilities[index] = agent.Capability(capability)
-	}
-	result, err := agent.NewCapabilitySet(capabilities...)
-	if err != nil {
-		return agent.CapabilitySet{}, agent.NewError(agent.ErrorIntegrityFailure, "decode agent config", err)
-	}
-	return result, nil
 }
 
 func nullableOverride(value *agent.PromptOverride) (any, any) {

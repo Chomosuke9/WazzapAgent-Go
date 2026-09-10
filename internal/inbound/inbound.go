@@ -28,6 +28,7 @@ type Store interface {
 	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
+	IsChatMuted(context.Context, agent.Key, identity.SenderRef, time.Time) (bool, error)
 	StageBatch(context.Context, conversation.IncomingMessage, time.Time) (BatchStage, error)
 	ClaimBatch(context.Context, conversation.IncomingMessage, time.Time, uint32) (BatchClaim, error)
 }
@@ -48,7 +49,20 @@ type BatchOptions struct {
 	Debounce time.Duration
 	BurstCap uint32
 	Clock    agent.Clock
+	Activity AIActivity
 }
+
+// AIActivity owns best-effort WhatsApp UX signals. They are runtime behavior,
+// not model tools and not permission-controlled moderation commands.
+type AIActivity interface {
+	MarkRead(context.Context, agent.Key, identity.MessageID) error
+	SetComposing(context.Context, agent.Key, bool) error
+}
+
+type discardAIActivity struct{}
+
+func (discardAIActivity) MarkRead(context.Context, agent.Key, identity.MessageID) error { return nil }
+func (discardAIActivity) SetComposing(context.Context, agent.Key, bool) error           { return nil }
 
 type IgnoreReason string
 
@@ -58,11 +72,12 @@ const (
 	IgnoreNotAllowlisted    IgnoreReason = "not_allowlisted"
 	IgnoreGroupNotMentioned IgnoreReason = "group_not_mentioned"
 	IgnorePolicyDenied      IgnoreReason = "policy_denied"
+	IgnoreMuted             IgnoreReason = "muted"
 )
 
 func (reason IgnoreReason) Valid() bool {
 	switch reason {
-	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied:
+	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted:
 		return true
 	default:
 		return false
@@ -134,6 +149,9 @@ func NewHandlerWithBatching(
 	}
 	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 || options.Clock == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound handler", fmt.Errorf("valid batching bounds and clock are required"))
+	}
+	if options.Activity == nil {
+		options.Activity = discardAIActivity{}
 	}
 	return &Handler{store: store, agents: agents, policy: policy, responses: responses, observer: observer, batch: options}, nil
 }
@@ -366,6 +384,16 @@ func (handler *Handler) processBatch(
 	if err != nil {
 		return err
 	}
+	key := agent.Key{TenantID: messages[0].TenantID, AccountID: messages[0].AccountID, ChatID: messages[0].ChatID}
+	for _, message := range messages {
+		_ = handler.batch.Activity.MarkRead(ctx, key, message.ID)
+	}
+	_ = handler.batch.Activity.SetComposing(ctx, key, true)
+	defer func() {
+		pauseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = handler.batch.Activity.SetComposing(pauseCtx, key, false)
+	}()
 	for _, message := range messages[:len(messages)-1] {
 		invocation, err := invocationFromMessage(message, snapshot.Version, capabilities)
 		if err != nil {
@@ -447,7 +475,7 @@ func (handler *Handler) handleControl(
 	response := ""
 	switch command {
 	case ControlHelp:
-		response = "Perintah: /help, /info, /reset, /prompt view, /prompt set <teks>, /prompt clear, /permission view, /permission set <react|mark-read|presence|none>."
+		response = "Perintah: /help, /info, /reset, /prompt view, /prompt set <teks>, /prompt clear, /permission <0-3>."
 	case ControlInfo:
 		page, err := currentAgent.History().List(ctx, snapshot.Version, agent.HistoryQuery{Limit: 1})
 		if err != nil {
@@ -582,15 +610,15 @@ func (handler *Handler) handlePermission(
 ) error {
 	switch command.Kind {
 	case PermissionView:
-		return handler.responses.Reply(ctx, message, snapshot.Version, "Izin tool model saat ini: "+formatModelCapabilities(snapshot.Permission.ModelToolCapabilities())+".")
+		return handler.responses.Reply(ctx, message, snapshot.Version, formatModerationLevel(snapshot.Permission.ModerationLevel))
 	case PermissionSet:
 		updated, err := handler.applyPermissionMutation(ctx, currentAgent, snapshot, message, command)
 		if err != nil {
 			return err
 		}
-		return handler.responses.Reply(ctx, message, updated, "Izin tool model diperbarui: "+formatModelCapabilities(command.Capabilities)+".")
+		return handler.responses.Reply(ctx, message, updated, "Permission diperbarui. "+formatModerationLevel(command.Level))
 	case PermissionInvalid:
-		return handler.responses.Reply(ctx, message, snapshot.Version, "Format: /permission view atau /permission set <react|mark-read|presence|none>.")
+		return handler.responses.Reply(ctx, message, snapshot.Version, "Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("unknown command kind"))
 	}
@@ -620,7 +648,7 @@ func (handler *Handler) applyPermissionMutation(
 		return 0, agent.NewError(agent.ErrorConflict, "apply permission mutation", fmt.Errorf("config changed after command authorization; resend the command"))
 	}
 	permission := snapshot.Permission
-	permission.ModelCapabilities = command.Capabilities
+	permission.ModerationLevel = command.Level
 	updated, err := currentAgent.Config().SetPermission(ctx, snapshot.Version, permission)
 	if err != nil {
 		return 0, err
@@ -643,20 +671,7 @@ func promptMutationMatches(snapshot agent.ConfigSnapshot, command PromptCommand)
 }
 
 func permissionMutationMatches(snapshot agent.ConfigSnapshot, command PermissionCommand) bool {
-	return command.Kind == PermissionSet && capabilitySetsEqual(snapshot.Permission.ModelToolCapabilities(), command.Capabilities)
-}
-
-func capabilitySetsEqual(left, right agent.CapabilitySet) bool {
-	leftValues, rightValues := left.Values(), right.Values()
-	if len(leftValues) != len(rightValues) {
-		return false
-	}
-	for index := range leftValues {
-		if leftValues[index] != rightValues[index] {
-			return false
-		}
-	}
-	return true
+	return command.Kind == PermissionSet && snapshot.Permission.ModerationLevel == command.Level
 }
 
 type PermissionCommandKind uint8
@@ -668,65 +683,30 @@ const (
 )
 
 type PermissionCommand struct {
-	Kind         PermissionCommandKind
-	Capabilities agent.CapabilitySet
+	Kind  PermissionCommandKind
+	Level agent.ModerationLevel
 }
 
 func ParsePermissionCommand(text string) (PermissionCommand, bool) {
 	if text == "/permission" || text == "/permission view" {
 		return PermissionCommand{Kind: PermissionView}, true
 	}
-	const prefix = "/permission set "
-	if !strings.HasPrefix(text, prefix) {
-		if text == "/permission set" || strings.HasPrefix(text, "/permission ") {
-			return PermissionCommand{Kind: PermissionInvalid}, true
-		}
+	if !strings.HasPrefix(text, "/permission ") {
 		return PermissionCommand{}, false
 	}
-	terms := strings.Fields(strings.TrimPrefix(text, prefix))
-	if len(terms) == 0 || len(terms) > 3 {
-		return PermissionCommand{Kind: PermissionInvalid}, true
+	argument := strings.TrimSpace(strings.TrimPrefix(text, "/permission "))
+	if len(argument) == 1 && argument[0] >= '0' && argument[0] <= '3' {
+		return PermissionCommand{Kind: PermissionSet, Level: agent.ModerationLevel(argument[0] - '0')}, true
 	}
-	if len(terms) == 1 && terms[0] == "none" {
-		capabilities, _ := agent.NewCapabilitySet()
-		return PermissionCommand{Kind: PermissionSet, Capabilities: capabilities}, true
-	}
-	values := make([]agent.Capability, 0, len(terms))
-	for _, term := range terms {
-		switch term {
-		case "react":
-			values = append(values, "message.react")
-		case "mark-read":
-			values = append(values, "message.mark-read")
-		case "presence":
-			values = append(values, "chat.presence")
-		default:
-			return PermissionCommand{Kind: PermissionInvalid}, true
-		}
-	}
-	capabilities, err := agent.NewCapabilitySet(values...)
-	if err != nil {
-		return PermissionCommand{Kind: PermissionInvalid}, true
-	}
-	return PermissionCommand{Kind: PermissionSet, Capabilities: capabilities}, true
+	return PermissionCommand{Kind: PermissionInvalid}, true
 }
 
-func formatModelCapabilities(capabilities agent.CapabilitySet) string {
-	labels := make([]string, 0, len(capabilities.Values()))
-	for _, capability := range capabilities.Values() {
-		switch capability {
-		case "message.react":
-			labels = append(labels, "react")
-		case "message.mark-read":
-			labels = append(labels, "mark-read")
-		case "chat.presence":
-			labels = append(labels, "presence")
-		}
+func formatModerationLevel(level agent.ModerationLevel) string {
+	labels := [...]string{"Level 0: moderasi nonaktif.", "Level 1: delete.", "Level 2: delete dan mute.", "Level 3: delete, mute, dan kick."}
+	if !level.Valid() {
+		return "Permission tidak valid."
 	}
-	if len(labels) == 0 {
-		return "none"
-	}
-	return strings.Join(labels, ", ")
+	return labels[level]
 }
 
 type PromptCommandKind uint8

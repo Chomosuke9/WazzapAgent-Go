@@ -40,16 +40,17 @@ Termasuk:
 - durable per-chat debounce/batching dengan burst cap dan stale-context guard;
 - recovery turn lama tetap diproses lebih dahulu; pesan baru tidak menyalip turn yang masih generating, retryable, atau menunggu delivery;
 - `/help`, `/info`, dan owner-only `/reset`;
-- owner-only `/permission view` dan `/permission set <react|mark-read|presence|none>` untuk capability model per-chat yang default-nya kosong;
-- typed model tools untuk react, mark-read, dan presence yang tidak menerima target/chat/raw WhatsApp ID, di-commit atomik dengan reply, lalu direcheck terhadap policy dan authority provider saat eksekusi;
-- typed effect recovery: operasi durable ambigu menjadi `unknown_outcome`, sedangkan read/presence yang ephemeral tidak direplay;
+- owner-only `/permission [view|0|1|2|3]`: level 0 tanpa moderasi, level 1 delete, level 2 delete+mute, dan level 3 delete+mute+kick;
+- model selalu memperoleh `reply_message` dan `react_to_message`; delete/mute/kick tetap command keluarga `/group *` yang dibawa secara silent oleh `reply_message`, bukan tool terpisah;
+- mark-read dan composing presence otomatis pada AI lane, tanpa permission atau model tool;
+- typed effect recovery untuk reaction dan model-generated `/group *`; operasi durable ambigu menjadi `unknown_outcome`, sedangkan read/presence yang ephemeral tidak direplay;
 - optional one-hop fallback LLM untuk timeout/rate-limit/provider failure; fallback tidak pernah mengulang native effect;
 - checksum-verified offline backup/restore serta history retention;
 - fail-closed allowlist, external send reauthorization, response kill switch, bounded queues/concurrency/timeouts;
 - `/health/live`, `/health/ready`, dan Prometheus text `/metrics` pada loopback secara default;
 - scrub content terminal setelah 24 jam, bounded history, dan hapus terminal turn/action setelah 30 hari.
 
-Belum termasuk media, generic command/tool execution, model delete/moderation, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
+Belum termasuk media, keluarga command lain di luar moderasi `/group delete|mute|kick`, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
 Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact kompatibel format lama (`【#id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) agar hemat token. Metadata durable tetap disimpan terstruktur di SQLite.
 

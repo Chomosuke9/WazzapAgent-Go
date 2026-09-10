@@ -120,7 +120,7 @@ func TestProviderFailuresAreTypedAndRedacted(t *testing.T) {
 	}
 }
 
-func TestToolCallsAreRejectedInPartOne(t *testing.T) {
+func TestMalformedToolCallsAreRejected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"unsafe"}]}}]}`))
 	}))
@@ -128,8 +128,8 @@ func TestToolCallsAreRejectedInPartOne(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
 	_, err := client.Generate(context.Background(), modelRequest(t, providerID))
-	if !agent.IsCode(err, agent.ErrorUnsupported) {
-		t.Fatalf("tool-call error = %v, want unsupported", err)
+	if !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("tool-call error = %v, want provider_failure", err)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 			t.Errorf("decode tool request: %v", err)
 		}
 		requests <- decoded
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"noted","tool_calls":[{"id":"call_react_1","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\"}"}}]}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"noted","tool_calls":[{"id":"call_react_1","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"000001\",\"emoji\":\"✅\"}"}}]}}]}`))
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
@@ -150,6 +150,7 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	currentMessageID, _ := identity.NewMessageID()
 	capabilities, _ := agent.NewCapabilitySet("message.react")
 	request.CurrentMessageID = currentMessageID
+	request.ContextMessages = map[string]identity.MessageID{"000001": currentMessageID}
 	request.Capabilities = capabilities
 	result, err := client.Generate(context.Background(), request)
 	if err != nil {
@@ -160,7 +161,7 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 		t.Fatalf("decoded typed effect = %#v", result)
 	}
 	encoded := <-requests
-	if len(encoded.Tools) != 1 || encoded.Tools[0].Type != "function" || encoded.Tools[0].Function.Name != "wazzap_react" {
+	if len(encoded.Tools) != 2 || encoded.Tools[0].Type != "function" || encoded.Tools[0].Function.Name != "reply_message" || encoded.Tools[1].Function.Name != "react_to_message" {
 		t.Fatalf("tool schema = %#v", encoded.Tools)
 	}
 }
@@ -168,9 +169,9 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	tests := []string{
-		`{"id":"call_1","type":"function","function":{"name":"wazzap_delete_current","arguments":"{}"}}`,
-		`{"id":"call_2","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\",\"target_message_id\":\"attacker\"}"}}`,
-		`{"id":"call_3","type":"function","function":{"name":"wazzap_react","arguments":"{\"emoji\":\"✅\"} {}"}}`,
+		`{"id":"call_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[\"000001\"]}"}}`,
+		`{"id":"call_2","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"attacker\",\"emoji\":\"✅\"}"}}`,
+		`{"id":"call_3","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"000001\",\"emoji\":\"✅\"} {}"}}`,
 	}
 	for _, toolCall := range tests {
 		t.Run(toolCall[:16], func(t *testing.T) {
@@ -181,11 +182,53 @@ func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
 			client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
 			request := modelRequest(t, providerID)
 			request.CurrentMessageID, _ = identity.NewMessageID()
+			request.ContextMessages = map[string]identity.MessageID{"000001": request.CurrentMessageID}
 			request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 			if _, err := client.Generate(context.Background(), request); err == nil {
 				t.Fatal("escalated or arbitrary-target tool call was accepted")
 			}
 		})
+	}
+}
+
+func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTools(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	target := request.ContextMessages["000001"]
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "group.mute", "group.kick")
+
+	tools, err := completionTools(request)
+	if err != nil {
+		t.Fatalf("build tools: %v", err)
+	}
+	if len(tools) != 2 || tools[0].Function.Name != "reply_message" || tools[1].Function.Name != "react_to_message" {
+		t.Fatalf("provider tools = %#v", tools)
+	}
+
+	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (u_abcdef12) 15\",\"/group kick @Bob (u_12345678)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
+	text, effects, err := decodeModelOutput("", raw, request)
+	if err != nil {
+		t.Fatalf("decode reply command: %v", err)
+	}
+	if text != "done" || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
+		effects[0].Intent.Capability() != "group.delete" || effects[1].Intent.Capability() != "group.mute" || effects[2].Intent.Capability() != "group.kick" {
+		t.Fatalf("decoded reply command = %q, %#v", text, effects)
+	}
+}
+
+func TestReplyMessageDefaultsDeleteAnchorAndRejectsUnknownReplyContext(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
+	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
+	_, effects, err := decodeModelOutput("", raw, request)
+	if err != nil || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
+		t.Fatalf("default command anchor = %#v, %v", effects, err)
+	}
+
+	bad := json.RawMessage(`[{"id":"reply_2","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	if _, _, err := decodeModelOutput("", bad, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("unknown reply context error = %v", err)
 	}
 }
 
@@ -346,7 +389,8 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 	chatID, _ := identity.NewChatID()
 	invocationID, _ := identity.NewInvocationID()
 	senderRef, _ := identity.NewSenderRef()
-	capabilities, _ := agent.NewCapabilitySet()
+	currentMessageID, _ := identity.NewMessageID()
+	capabilities, _ := agent.NewCapabilitySet("message.react")
 	return agent.ModelRequest{
 		Key:           agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID},
 		InvocationID:  invocationID,
@@ -357,6 +401,8 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 			{Role: agent.ModelUser, Provenance: agent.ProvenanceCurrentUser,
 				Content: "【#000001】 00:00\nAlice 【" + senderRef.String() + "】: hello from user"},
 		},
-		Capabilities: capabilities,
+		Capabilities:     capabilities,
+		CurrentMessageID: currentMessageID,
+		ContextMessages:  map[string]identity.MessageID{"000001": currentMessageID},
 	}
 }

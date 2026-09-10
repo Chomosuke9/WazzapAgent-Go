@@ -166,13 +166,5 @@ func promptCommandDigest(message conversation.IncomingMessage, command inbound.P
 }
 
 func permissionCommandDigest(message conversation.IncomingMessage, command inbound.PermissionCommand) [32]byte {
-	values := command.Capabilities.Values()
-	canonical := make([]byte, 0, 128)
-	canonical = append(canonical, "wazzapagent.permission.v1\x00"...)
-	canonical = append(canonical, message.InvocationID.String()...)
-	for _, capability := range values {
-		canonical = append(canonical, '\x00')
-		canonical = append(canonical, string(capability)...)
-	}
-	return sha256.Sum256(canonical)
+	return sha256.Sum256([]byte(fmt.Sprintf("wazzapagent.permission.v2\x00%s\x00%d", message.InvocationID.String(), command.Level)))
 }

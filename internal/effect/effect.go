@@ -26,6 +26,7 @@ const (
 	KindDeleteMessage
 	KindMarkRead
 	KindSetChatPresence
+	KindRunGroupCommand
 )
 
 type PresenceState string
@@ -98,6 +99,36 @@ func (effect SetChatPresence) Validate() error {
 	return nil
 }
 
+type RunGroupCommand struct {
+	Command         string
+	TargetMessageID identity.MessageID
+}
+
+func (RunGroupCommand) isEffect()     {}
+func (RunGroupCommand) Kind() Kind    { return KindRunGroupCommand }
+func (RunGroupCommand) Durable() bool { return true }
+func (command RunGroupCommand) Capability() policy.Capability {
+	fields := strings.Fields(command.Command)
+	if len(fields) >= 2 && fields[0] == "/group" {
+		return policy.Capability("group." + fields[1])
+	}
+	return ""
+}
+func (command RunGroupCommand) Validate() error {
+	fields := strings.Fields(command.Command)
+	if len(command.Command) > 1024 || len(fields) < 2 || fields[0] != "/group" ||
+		(fields[1] != "delete" && fields[1] != "mute" && fields[1] != "kick") {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("unsupported group command"))
+	}
+	if fields[1] == "delete" && command.TargetMessageID.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("delete requires a target message"))
+	}
+	if fields[1] != "delete" && !command.TargetMessageID.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("only delete accepts a target message"))
+	}
+	return nil
+}
+
 type Ref struct {
 	Key      agent.Key
 	EffectID identity.EffectID
@@ -146,6 +177,9 @@ func DigestPlan(request PlanRequest) ([32]byte, error) {
 		writeDigestField(&canonical, typed.TargetMessageID.String())
 	case SetChatPresence:
 		writeDigestField(&canonical, string(typed.State))
+	case RunGroupCommand:
+		writeDigestField(&canonical, typed.Command)
+		writeDigestField(&canonical, typed.TargetMessageID.String())
 	default:
 		return [32]byte{}, agent.NewError(agent.ErrorInvalidArgument, "digest effect plan", fmt.Errorf("effect type is not supported"))
 	}

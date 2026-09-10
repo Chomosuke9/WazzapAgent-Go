@@ -785,6 +785,49 @@ func (store *InboundStore) ResolveLID(ctx context.Context, key agent.Key, ref id
 	return lid, nil
 }
 
+func (store *InboundStore) SetChatMute(ctx context.Context, key agent.Key, ref identity.SenderRef, durationMinutes uint32, now time.Time) error {
+	if err := key.Validate(); err != nil || ref.IsZero() || now.IsZero() || durationMinutes > 43200 {
+		return agent.NewError(agent.ErrorInvalidArgument, "set chat mute", fmt.Errorf("valid scope, senderRef, time, and bounded duration are required"))
+	}
+	if durationMinutes == 0 {
+		_, err := store.db.ExecContext(ctx, `DELETE FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String())
+		return storageError("remove chat mute", err)
+	}
+	until := now.Add(time.Duration(durationMinutes) * time.Minute).UnixMilli()
+	result, err := store.db.ExecContext(ctx, `INSERT INTO chat_mutes(tenant_id, account_id, chat_id, sender_ref, muted_until_ms, updated_at_ms)
+		SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (
+			SELECT 1 FROM sender_refs WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?
+		) ON CONFLICT(tenant_id, account_id, chat_id, sender_ref) DO UPDATE SET muted_until_ms = excluded.muted_until_ms, updated_at_ms = excluded.updated_at_ms`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String(), until, now.UnixMilli(),
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String())
+	if err := requireOne(result, err, "persist chat mute"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (store *InboundStore) IsChatMuted(ctx context.Context, key agent.Key, ref identity.SenderRef, now time.Time) (bool, error) {
+	if err := key.Validate(); err != nil || ref.IsZero() || now.IsZero() {
+		return false, agent.NewError(agent.ErrorInvalidArgument, "read chat mute", fmt.Errorf("valid scope, senderRef, and time are required"))
+	}
+	var until int64
+	err := store.db.QueryRowContext(ctx, `SELECT muted_until_ms FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String()).Scan(&until)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, storageError("read chat mute", err)
+	}
+	if until <= now.UnixMilli() {
+		_, _ = store.db.ExecContext(ctx, `DELETE FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String())
+		return false, nil
+	}
+	return true, nil
+}
+
 // ResolveSenderRef performs the public LID -> senderRef half of the identity contract.
 func (store *InboundStore) ResolveSenderRef(ctx context.Context, key agent.Key, lid identity.LID) (identity.SenderRef, error) {
 	if err := key.Validate(); err != nil || lid.IsZero() {

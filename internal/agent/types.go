@@ -151,6 +151,7 @@ type ModelRequest struct {
 	Model            ModelConfig
 	Messages         []ModelMessage
 	Capabilities     CapabilitySet
+	ContextMessages  map[string]identity.MessageID
 }
 
 const MaxModelEffects = 8
@@ -165,6 +166,7 @@ const (
 	EffectDeleteMessage
 	EffectMarkRead
 	EffectSetChatPresence
+	EffectRunGroupCommand
 )
 
 type PresenceState string
@@ -179,6 +181,7 @@ type EffectIntent struct {
 	TargetMessageID identity.MessageID
 	Emoji           string
 	Presence        PresenceState
+	Command         string
 }
 
 func (intent EffectIntent) Capability() Capability {
@@ -191,28 +194,45 @@ func (intent EffectIntent) Capability() Capability {
 		return "message.mark-read"
 	case EffectSetChatPresence:
 		return "chat.presence"
+	case EffectRunGroupCommand:
+		fields := strings.Fields(intent.Command)
+		if len(fields) >= 2 && fields[0] == "/group" {
+			return Capability("group." + fields[1])
+		}
+		return ""
 	default:
 		return ""
 	}
 }
 
 func (intent EffectIntent) Durable() bool {
-	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage
+	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage || intent.Kind == EffectRunGroupCommand
 }
 
 func (intent EffectIntent) Validate() error {
 	switch intent.Kind {
 	case EffectReact:
-		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Presence != "" {
+		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Presence != "" || intent.Command != "" {
 			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))
 		}
 	case EffectDeleteMessage, EffectMarkRead:
-		if intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Presence != "" {
+		if intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Presence != "" || intent.Command != "" {
 			return NewError(ErrorInvalidArgument, "validate message effect intent", fmt.Errorf("only a target message is allowed"))
 		}
 	case EffectSetChatPresence:
-		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
+		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Command != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
 			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
+		}
+	case EffectRunGroupCommand:
+		fields := strings.Fields(intent.Command)
+		if len(intent.Command) > 1024 || len(fields) < 2 || fields[0] != "/group" || (fields[1] != "delete" && fields[1] != "mute" && fields[1] != "kick") || intent.Emoji != "" || intent.Presence != "" {
+			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("only bounded /group delete, mute, or kick commands are allowed"))
+		}
+		if fields[1] == "delete" && intent.TargetMessageID.IsZero() {
+			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("group delete requires a message anchor"))
+		}
+		if fields[1] != "delete" && !intent.TargetMessageID.IsZero() {
+			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("only group delete accepts a message anchor"))
 		}
 	default:
 		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("effect kind is invalid"))

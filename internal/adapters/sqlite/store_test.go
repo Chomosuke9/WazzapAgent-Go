@@ -34,8 +34,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 7 {
-		t.Fatalf("migration count = %d, want 7", migrations)
+	if migrations != 9 {
+		t.Fatalf("migration count = %d, want 9", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -91,8 +91,8 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 7 {
-		t.Fatalf("upgraded migration count = %d, want 7", migrations)
+	if migrations != 9 {
+		t.Fatalf("upgraded migration count = %d, want 9", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
@@ -169,7 +169,7 @@ func TestConfigCASAndTenantChatIsolation(t *testing.T) {
 	}
 }
 
-func TestConfigPersistsCanonicalModelToolCapabilities(t *testing.T) {
+func TestConfigPersistsModerationLevelAndAlwaysDerivesReactionTool(t *testing.T) {
 	store := openTestStore(t)
 	key := testKey(t)
 	snapshot, err := store.Configs().LoadOrCreate(context.Background(), key, testDefaults(t))
@@ -177,20 +177,23 @@ func TestConfigPersistsCanonicalModelToolCapabilities(t *testing.T) {
 		t.Fatalf("create config: %v", err)
 	}
 	values := snapshot.Values()
-	values.Permission.ModelCapabilities, _ = agent.NewCapabilitySet("message.react", "chat.presence")
+	values.Permission.ModerationLevel = agent.ModerationDeleteMute
 	updated, err := store.Configs().CompareAndSwap(context.Background(), key, snapshot.Version, values)
 	if err != nil {
-		t.Fatalf("persist model capabilities: %v", err)
+		t.Fatalf("persist moderation level: %v", err)
 	}
 	reloaded, err := store.Configs().Load(context.Background(), key)
-	if err != nil || !reloaded.Permission.ModelToolCapabilities().Has("message.react") ||
-		!reloaded.Permission.ModelToolCapabilities().Has("chat.presence") || reloaded.Version != updated.Version {
-		t.Fatalf("reloaded model capabilities = %#v, %v", reloaded.Permission.ModelToolCapabilities().Values(), err)
+	if err != nil || reloaded.Permission.ModerationLevel != agent.ModerationDeleteMute ||
+		!reloaded.Permission.ModelToolCapabilities().Has("message.react") ||
+		!reloaded.Permission.ModelToolCapabilities().Has("group.delete") ||
+		!reloaded.Permission.ModelToolCapabilities().Has("group.mute") ||
+		reloaded.Permission.ModelToolCapabilities().Has("group.kick") || reloaded.Version != updated.Version {
+		t.Fatalf("reloaded permission = %#v, %v", reloaded.Permission, err)
 	}
 	values = updated.Values()
-	values.Permission.ModelCapabilities, _ = agent.NewCapabilitySet("message.delete")
+	values.Permission.ModerationLevel = 4
 	if _, err := store.Configs().CompareAndSwap(context.Background(), key, updated.Version, values); err == nil {
-		t.Fatal("model delete capability was accepted into durable config")
+		t.Fatal("invalid moderation level was accepted into durable config")
 	}
 }
 

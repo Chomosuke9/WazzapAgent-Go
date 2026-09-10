@@ -39,30 +39,46 @@ type PromptOverride struct {
 }
 
 type PermissionConfig struct {
-	PolicyID          identity.PolicyID
-	Revision          uint64
-	ModelCapabilities CapabilitySet
+	PolicyID        identity.PolicyID
+	Revision        uint64
+	ModerationLevel ModerationLevel
 }
 
-// ModelToolCapabilities is the intentionally small set that a chat owner may
-// opt in for the model. Human-command and administrative capabilities never
-// cross the Agent/model boundary. Message deletion is deliberately excluded:
-// it stays available to a future explicitly-authorized human feature, but is
-// not a model privilege in Part 3.
+type ModerationLevel uint8
+
+const (
+	ModerationNone ModerationLevel = iota
+	ModerationDelete
+	ModerationDeleteMute
+	ModerationDeleteMuteKick
+)
+
+func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMuteKick }
+
+// ModelToolCapabilities is the complete model-output capability set. Only
+// message.react becomes a provider tool; group capabilities authorize command
+// strings carried inside reply_message, never moderation function tools.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	return CapabilitySet{values: permission.ModelCapabilities.Values()}
+	values := []Capability{"message.react"}
+	if permission.ModerationLevel >= ModerationDelete {
+		values = append(values, "group.delete")
+	}
+	if permission.ModerationLevel >= ModerationDeleteMute {
+		values = append(values, "group.mute")
+	}
+	if permission.ModerationLevel >= ModerationDeleteMuteKick {
+		values = append(values, "group.kick")
+	}
+	result, _ := NewCapabilitySet(values...)
+	return result
 }
 
 func (permission PermissionConfig) Validate() error {
 	if permission.PolicyID.IsZero() || permission.Revision == 0 {
 		return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("permission policy reference is required"))
 	}
-	for _, capability := range permission.ModelCapabilities.Values() {
-		switch capability {
-		case "message.react", "message.mark-read", "chat.presence":
-		default:
-			return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("model capability is not allowed"))
-		}
+	if !permission.ModerationLevel.Valid() {
+		return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("moderation level must be 0-3"))
 	}
 	return nil
 }
@@ -340,7 +356,6 @@ func cloneConfigSnapshot(snapshot ConfigSnapshot) ConfigSnapshot {
 }
 
 func clonePermissionConfig(value PermissionConfig) PermissionConfig {
-	value.ModelCapabilities = CapabilitySet{values: value.ModelCapabilities.Values()}
 	return value
 }
 
@@ -355,24 +370,11 @@ func clonePromptOverride(value *PromptOverride) *PromptOverride {
 func configSnapshotsEqual(left, right ConfigSnapshot) bool {
 	if left.Version != right.Version || left.Model != right.Model || left.Prompt != right.Prompt ||
 		left.Permission.PolicyID != right.Permission.PolicyID || left.Permission.Revision != right.Permission.Revision ||
-		!capabilitySetsEqual(left.Permission.ModelCapabilities, right.Permission.ModelCapabilities) {
+		left.Permission.ModerationLevel != right.Permission.ModerationLevel {
 		return false
 	}
 	if left.PromptOverride == nil || right.PromptOverride == nil {
 		return left.PromptOverride == nil && right.PromptOverride == nil
 	}
 	return *left.PromptOverride == *right.PromptOverride
-}
-
-func capabilitySetsEqual(left, right CapabilitySet) bool {
-	leftValues, rightValues := left.Values(), right.Values()
-	if len(leftValues) != len(rightValues) {
-		return false
-	}
-	for index := range leftValues {
-		if leftValues[index] != rightValues[index] {
-			return false
-		}
-	}
-	return true
 }

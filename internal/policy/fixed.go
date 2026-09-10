@@ -107,8 +107,9 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	if err := authority.Validate(); err != nil {
 		return err
 	}
-	if authority.ChatKind == conversation.ChatGroup && request.Capability == CapabilityMessageDelete && !authority.BotIsAdmin {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("bot is not a current group admin"))
+	moderation := request.Capability == CapabilityGroupDelete || request.Capability == CapabilityGroupMute || request.Capability == CapabilityGroupKick
+	if moderation && (authority.ChatKind != conversation.ChatGroup || !authority.BotIsAdmin) {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("bot group command requires current group-admin authority"))
 	}
 	return nil
 }

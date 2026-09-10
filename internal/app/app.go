@@ -344,6 +344,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			Debounce: application.config.MessageDebounce(),
 			BurstCap: application.config.MessageBurstCap(),
 			Clock:    agent.SystemClock{},
+			Activity: waAdapter,
 		},
 	)
 	if err != nil {
@@ -362,6 +363,9 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		},
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := inboundDispatch.EnableMuteEnforcement(waAdapter, agent.SystemClock{}); err != nil {
 		return nil, err
 	}
 	if err := waAdapter.BindHandler(inboundDispatch); err != nil {

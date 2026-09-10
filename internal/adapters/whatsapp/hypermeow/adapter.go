@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,8 @@ type TargetStore interface {
 	ResolveChatAddress(context.Context, agent.Key) (string, error)
 	ResolveMessageTarget(context.Context, agent.Key, identity.MessageID) (chatAddress, providerMessageID, senderAddress string, occurredAt time.Time, err error)
 	ReconcileAccountPolicy(context.Context, identity.TenantID, identity.AccountID, string, []string) error
+	ResolveLID(context.Context, agent.Key, identity.SenderRef) (identity.LID, error)
+	SetChatMute(context.Context, agent.Key, identity.SenderRef, uint32, time.Time) error
 }
 
 type PairingSink interface {
@@ -335,6 +338,63 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
 }
 
+// MarkRead is automatic AI-lane feedback. It is intentionally not exposed as
+// an LLM tool and failures remain best-effort so provider UX cannot fail a
+// durable conversation turn.
+func (adapter *Adapter) MarkRead(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
+	if !adapter.ready.Load() {
+		return agent.NewError(agent.ErrorNotReady, "mark WhatsApp message read", fmt.Errorf("account is not connected"))
+	}
+	chat, providerMessageID, sender, occurredAt, err := adapter.resolveEffectTarget(ctx, key, messageID)
+	if err != nil {
+		return err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	if err := adapter.client.MarkRead(requestCtx, []types.MessageID{providerMessageID}, occurredAt, chat, sender); err != nil {
+		return nativeEffectError(requestCtx, "send automatic WhatsApp read receipt", err)
+	}
+	return nil
+}
+
+// SetComposing automatically brackets model generation with composing/paused.
+func (adapter *Adapter) SetComposing(ctx context.Context, key agent.Key, composing bool) error {
+	if !adapter.ready.Load() {
+		return agent.NewError(agent.ErrorNotReady, "set WhatsApp composing state", fmt.Errorf("account is not connected"))
+	}
+	target, err := adapter.resolveChatTarget(ctx, key)
+	if err != nil {
+		return err
+	}
+	state := types.ChatPresencePaused
+	if composing {
+		state = types.ChatPresenceComposing
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	if err := adapter.client.SendChatPresence(requestCtx, target, state, types.ChatPresenceMediaText); err != nil {
+		return nativeEffectError(requestCtx, "send automatic WhatsApp presence", err)
+	}
+	return nil
+}
+
+func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
+	if !adapter.ready.Load() {
+		return agent.NewError(agent.ErrorNotReady, "delete WhatsApp message", fmt.Errorf("account is not connected"))
+	}
+	chat, providerMessageID, sender, _, err := adapter.resolveEffectTarget(ctx, key, messageID)
+	if err != nil {
+		return err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	_, err = adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, providerMessageID))
+	if err != nil {
+		return nativeEffectError(requestCtx, "delete muted WhatsApp message", err)
+	}
+	return nil
+}
+
 // ExecuteEffect is the native edge for a typed effect. The effect package
 // carries only internal IDs; provider message IDs and JIDs are resolved here,
 // after the dispatcher has completed its policy recheck.
@@ -385,8 +445,99 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 			}
 			return "ephemeral-read", nil
 		}
+	case effect.RunGroupCommand:
+		return adapter.executeGroupCommand(requestCtx, stored.Request.Ref.Key, typed)
 	}
 	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", fmt.Errorf("effect type is invalid"))
+}
+
+func (adapter *Adapter) executeGroupCommand(ctx context.Context, key agent.Key, command effect.RunGroupCommand) (string, error) {
+	fields := strings.Fields(command.Command)
+	if len(fields) < 2 {
+		return "", agent.NewError(agent.ErrorIntegrityFailure, "execute group command", fmt.Errorf("command is malformed"))
+	}
+	switch fields[1] {
+	case "delete":
+		chat, messageID, sender, _, err := adapter.resolveEffectTarget(ctx, key, command.TargetMessageID)
+		if err != nil {
+			return "", err
+		}
+		response, err := adapter.client.SendMessage(ctx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
+		if err != nil {
+			return "", nativeEffectError(ctx, "execute /group delete", err)
+		}
+		return string(response.ID), nil
+	case "mute":
+		ref, duration, err := parseMuteCommand(fields[2:])
+		if err != nil {
+			return "", err
+		}
+		if err := adapter.targets.SetChatMute(ctx, key, ref, duration, time.Now().UTC()); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("local-mute-%s-%d", ref.String(), duration), nil
+	case "kick":
+		ref, err := parseKickCommand(fields[2:])
+		if err != nil {
+			return "", err
+		}
+		lid, err := adapter.targets.ResolveLID(ctx, key, ref)
+		if err != nil {
+			return "", err
+		}
+		chat, err := adapter.resolveChatTarget(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		participant, err := types.ParseJID(lid.String())
+		if err != nil || participant.IsEmpty() {
+			return "", agent.NewError(agent.ErrorIntegrityFailure, "execute /group kick", fmt.Errorf("stored LID is invalid"))
+		}
+		results, err := adapter.client.UpdateGroupParticipants(ctx, chat, []types.JID{participant.ToNonAD()}, whatsmeow.ParticipantChangeRemove)
+		if err != nil {
+			return "", nativeEffectError(ctx, "execute /group kick", err)
+		}
+		if len(results) != 1 {
+			return "", agent.NewError(agent.ErrorProviderFailure, "execute /group kick", fmt.Errorf("provider returned no participant result"))
+		}
+		return "group-kick-" + ref.String(), nil
+	default:
+		return "", agent.NewError(agent.ErrorUnsupported, "execute group command", fmt.Errorf("subcommand is not supported"))
+	}
+}
+
+func parseMuteCommand(fields []string) (identity.SenderRef, uint32, error) {
+	if len(fields) < 2 {
+		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", fmt.Errorf("senderRef and duration are required"))
+	}
+	ref, err := parseCommandSenderRef(fields[len(fields)-2])
+	if err != nil {
+		return identity.SenderRef{}, 0, err
+	}
+	duration, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
+	if err != nil || duration > 43200 {
+		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", fmt.Errorf("duration must be 0-43200 minutes"))
+	}
+	return ref, uint32(duration), nil
+}
+
+func parseKickCommand(fields []string) (identity.SenderRef, error) {
+	if len(fields) < 1 {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse /group kick", fmt.Errorf("senderRef is required"))
+	}
+	return parseCommandSenderRef(fields[len(fields)-1])
+}
+
+func parseCommandSenderRef(value string) (identity.SenderRef, error) {
+	value = strings.Trim(value, "()")
+	if len(value) < 3 || !strings.EqualFold(value[:2], "u_") {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse group command senderRef", fmt.Errorf("senderRef is invalid"))
+	}
+	ref, err := identity.ParseSenderRef("u_" + strings.ToUpper(value[2:]))
+	if err != nil {
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse group command senderRef", err)
+	}
+	return ref, nil
 }
 
 // ReadChatAuthority obtains a fresh provider observation for policy. It does

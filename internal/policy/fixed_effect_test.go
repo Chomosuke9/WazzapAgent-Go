@@ -11,12 +11,11 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-func TestFixedGateRechecksCurrentModelCapabilityAndLiveAuthority(t *testing.T) {
+func TestFixedGateAlwaysAllowsReactionCapabilityAndReadsLiveAuthority(t *testing.T) {
 	key := fixedEffectKey(t)
 	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
-	capabilities, _ := agent.NewCapabilitySet("message.react")
 	configs := &fixedConfigReader{snapshot: agent.ConfigSnapshot{Version: 1, Permission: agent.PermissionConfig{
-		PolicyID: policyID, Revision: 1, ModelCapabilities: capabilities,
+		PolicyID: policyID, Revision: 1, ModerationLevel: agent.ModerationNone,
 	}}}
 	chats := fixedChatAccess{}
 	authority := &fixedAuthority{value: policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}}
@@ -36,13 +35,12 @@ func TestFixedGateRechecksCurrentModelCapabilityAndLiveAuthority(t *testing.T) {
 	if authority.calls != 1 {
 		t.Fatalf("live authority calls = %d, want 1", authority.calls)
 	}
-	noCapabilities, _ := agent.NewCapabilitySet()
-	configs.snapshot.Permission.ModelCapabilities = noCapabilities
-	if err := gate.AuthorizeEffect(context.Background(), request); !agent.IsCode(err, agent.ErrorPermissionDenied) {
-		t.Fatalf("revoked capability authorization = %v, want permission_denied", err)
+	configs.snapshot.Permission.ModerationLevel = agent.ModerationDeleteMuteKick
+	if err := gate.AuthorizeEffect(context.Background(), request); err != nil {
+		t.Fatalf("moderation level changed reaction authorization: %v", err)
 	}
-	if authority.calls != 1 {
-		t.Fatalf("authority was read after an already revoked capability: %d", authority.calls)
+	if authority.calls != 2 {
+		t.Fatalf("live authority calls = %d, want 2", authority.calls)
 	}
 }
 

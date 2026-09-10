@@ -106,6 +106,9 @@ const (
 	CapabilityMessageMarkRead Capability = "message.mark-read"
 	CapabilityChatPresence    Capability = "chat.presence"
 	CapabilityChatContextRead Capability = "chat.context.read"
+	CapabilityGroupDelete     Capability = "group.delete"
+	CapabilityGroupMute       Capability = "group.mute"
+	CapabilityGroupKick       Capability = "group.kick"
 )
 
 type CapabilitySet struct{ values []Capability }
@@ -135,6 +138,8 @@ func (capability Capability) Valid() bool {
 	switch capability {
 	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite,
 		CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageMarkRead, CapabilityChatPresence, CapabilityChatContextRead:
+		return true
+	case CapabilityGroupDelete, CapabilityGroupMute, CapabilityGroupKick:
 		return true
 	default:
 		return false
