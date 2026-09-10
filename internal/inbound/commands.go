@@ -11,6 +11,7 @@ import (
 var builtinCommandRegistry = mustCommandRegistry([]command.Descriptor{
 	{Name: "help", Aliases: []string{"menu"}, Capability: policy.CapabilityCommandHelp},
 	{Name: "info", Capability: policy.CapabilityCommandInfo},
+	{Name: "dump", Capability: policy.CapabilityChatContextRead},
 	{Name: "reset", Capability: policy.CapabilityHistoryReset},
 	{Name: "prompt", Capability: policy.CapabilityPromptWrite},
 	{Name: "permission", Aliases: []string{"permissions"}, Capability: policy.CapabilityPermissionWrite},

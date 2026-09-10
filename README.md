@@ -39,7 +39,7 @@ Termasuk:
 - canonical quoted-message lookup serta group trigger melalui mention atau reply ke bot;
 - durable per-chat debounce/batching dengan burst cap dan stale-context guard;
 - recovery turn lama tetap diproses lebih dahulu; pesan baru tidak menyalip turn yang masih generating, retryable, atau menunggu delivery;
-- `/help`, `/info`, dan owner-only `/reset`;
+- `/help`, `/info`, owner-only `/dump` untuk menampilkan input context Agent yang benar-benar dibangun, serta owner-only `/reset`;
 - owner-only `/permission [view|0|1|2|3]`: level 0 tanpa moderasi, level 1 delete, level 2 delete+mute, dan level 3 delete+mute+kick;
 - model selalu memperoleh `reply_message` dan `react_to_message`; delete/mute/kick tetap command keluarga `/group *` yang dibawa secara silent oleh `reply_message`, bukan tool terpisah;
 - mark-read dan composing presence otomatis pada AI lane, tanpa permission atau model tool;

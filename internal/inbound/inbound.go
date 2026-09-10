@@ -279,7 +279,7 @@ func (handler *Handler) resumeCommand(
 			return agent.NewError(agent.ErrorIntegrityFailure, "dispatch registered command", fmt.Errorf("prompt command was not parsed"))
 		}
 		return handler.handlePrompt(ctx, currentAgent, snapshot, message, parsed)
-	case "help", "info", "reset":
+	case "help", "info", "reset", "dump":
 		parsed, valid := parseControlRequest(request)
 		if !valid {
 			return handler.responses.Reply(ctx, message, snapshot.Version, invalidControlReply(request))
@@ -308,6 +308,8 @@ func commandDeniedReply(capability policy.Capability) string {
 		return "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi."
 	case policy.CapabilityHistoryReset:
 		return "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi."
+	case policy.CapabilityChatContextRead:
+		return "Perintah /dump hanya dapat digunakan oleh owner yang dikonfigurasi."
 	case policy.CapabilityPermissionWrite:
 		return "Perintah /permission hanya dapat digunakan oleh owner yang dikonfigurasi."
 	default:
@@ -323,6 +325,8 @@ func controlCapability(command ControlCommandKind) policy.Capability {
 		return policy.CapabilityCommandInfo
 	case ControlReset:
 		return policy.CapabilityHistoryReset
+	case ControlDump:
+		return policy.CapabilityChatContextRead
 	default:
 		return ""
 	}
@@ -450,6 +454,7 @@ const (
 	ControlHelp ControlCommandKind = iota + 1
 	ControlInfo
 	ControlReset
+	ControlDump
 )
 
 func ParseControlCommand(text string) (ControlCommandKind, bool) {
@@ -460,6 +465,8 @@ func ParseControlCommand(text string) (ControlCommandKind, bool) {
 		return ControlInfo, true
 	case "/reset":
 		return ControlReset, true
+	case "/dump":
+		return ControlDump, true
 	default:
 		return 0, false
 	}
@@ -475,7 +482,7 @@ func (handler *Handler) handleControl(
 	response := ""
 	switch command {
 	case ControlHelp:
-		response = "Perintah: /help, /info, /reset, /prompt view, /prompt set <teks>, /prompt clear, /permission <0-3>."
+		response = "Perintah: /help, /info, /dump, /reset, /prompt view, /prompt set <teks>, /prompt clear, /permission <0-3>."
 	case ControlInfo:
 		page, err := currentAgent.History().List(ctx, snapshot.Version, agent.HistoryQuery{Limit: 1})
 		if err != nil {
@@ -491,6 +498,12 @@ func (handler *Handler) handleControl(
 			return err
 		}
 		response = "History percakapan berhasil direset."
+	case ControlDump:
+		input, err := currentAgent.BuildInput(ctx, snapshot.Version, message.InvocationID)
+		if err != nil {
+			return err
+		}
+		response = agent.SerializeModelMessages(input)
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle control command", fmt.Errorf("unknown control command"))
 	}

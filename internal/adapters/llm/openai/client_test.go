@@ -232,6 +232,24 @@ func TestReplyMessageDefaultsDeleteAnchorAndRejectsUnknownReplyContext(t *testin
 	}
 }
 
+func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
+
+	empty := json.RawMessage(`[{"id":"reply_empty","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"plain reply\",\"command\":[],\"command_context_msg_id\":[]}"}}]`)
+	text, effects, err := decodeModelOutput("", empty, request)
+	if err != nil || text != "plain reply" || len(effects) != 0 {
+		t.Fatalf("empty command arrays = %q, %#v, %v", text, effects, err)
+	}
+
+	shortContexts := json.RawMessage(`[{"id":"reply_short","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[]}"}}]`)
+	_, effects, err = decodeModelOutput("", shortContexts, request)
+	if err != nil || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
+		t.Fatalf("short command contexts = %#v, %v", effects, err)
+	}
+}
+
 func TestConfiguredResponseLimitIsEnforced(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"123456"}}]}`))

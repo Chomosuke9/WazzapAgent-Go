@@ -468,7 +468,7 @@ Menambah kemampuan percakapan tanpa tool berbahaya:
 - per-chat batching/debounce dan burst cap;
 - context builder deterministic dan golden tests;
 - prompt injection boundary dan structured provenance;
-- `/help`, `/info`, dan `/reset`;
+- `/help`, `/info`, owner-only `/dump` untuk inspeksi exact Agent input, dan `/reset`;
 - action reconciliation, backup/restore, retention, dan richer metrics;
 - network-loss, process-kill, replay, dan concurrent-chat tests.
 

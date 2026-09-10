@@ -66,6 +66,24 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	}
 }
 
+func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
+	fixture := newFixture(t)
+	dump := fixture.candidate("dump-1", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")
+	dump.Owner = true
+	if err := fixture.handler.Handle(context.Background(), dump); err != nil {
+		t.Fatalf("handle dump: %v", err)
+	}
+	output := fixture.sender.last().Text
+	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
+		!strings.Contains(output, "=== USER ===\n") ||
+		!strings.Contains(output, "/dump") || strings.Contains(output, "#000") {
+		t.Fatalf("dump output = %q", output)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("dump invoked model %d times", fixture.model.calls.Load())
+	}
+}
+
 func TestFullGroupTranscriptIncludesPassiveMessagesInNextInvocation(t *testing.T) {
 	fixture := newFixture(t)
 	chat := "120363000000000002@g.us"

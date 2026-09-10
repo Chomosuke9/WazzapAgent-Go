@@ -19,6 +19,11 @@ not model tools either: they are `/group delete`, `/group mute`, and
 The implementation is complete locally. A real-device production canary is
 still required.
 
+Owner-only `/dump` uses the Agent's own context builder without invoking the
+model, then serializes every resulting role/content message into the chat. It
+therefore cannot drift from the bounded prompt/history input used by
+`Agent.Invoke`.
+
 ## Permission levels
 
 `/permission` is owner-only and stores one moderation level per chat:

@@ -212,6 +212,25 @@ func cloneModelMessages(messages []ModelMessage) []ModelMessage {
 	return append([]ModelMessage(nil), messages...)
 }
 
+// SerializeModelMessages renders the exact role/content list built for a
+// model invocation in a human-readable form used by /dump.
+func SerializeModelMessages(messages []ModelMessage) string {
+	sections := make([]string, 0, len(messages))
+	for _, message := range messages {
+		role := "UNKNOWN"
+		switch message.Role {
+		case ModelSystem:
+			role = "SYSTEM"
+		case ModelUser:
+			role = "USER"
+		case ModelAssistant:
+			role = "ASSISTANT"
+		}
+		sections = append(sections, fmt.Sprintf("=== %s ===\n%s", role, message.Content))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
 // ValidateModelMessages enforces that only known typed provenance can occupy a
 // model role. Adapters call it before translating to provider-specific DTOs.
 func ValidateModelMessages(messages []ModelMessage) error {

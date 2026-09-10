@@ -1062,7 +1062,7 @@ Part 2 implements:
 - deterministic bounded context view through the triggering invocation with sequence/timestamp/quote provenance, typed roles, and non-overridable adapter policy;
 - canonical internal quote resolution and group reply-to-bot trigger;
 - durable per-chat debounce/batching with bounded burst draining and restart recovery;
-- `/help`, `/info`, and externally owner-authorized `/reset`;
+- `/help`, `/info`, externally owner-authorized `/dump`, and `/reset`;
 - migration from the Part 1 schema and invocation-digest compatibility for unquoted stored turns;
 - full-data offline backup, manifest verification, and restore into a new directory;
 - history/batch metrics and retention maintenance.

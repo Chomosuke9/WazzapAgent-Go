@@ -383,15 +383,12 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
 		}
 	}
-	if args.Commands == nil {
-		if args.CommandContextMessageID != nil {
-			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command contexts require commands"))
-		}
+	if args.Commands == nil || len(*args.Commands) == 0 {
 		return args.Text, nil, nil
 	}
 	commands := *args.Commands
-	if len(commands) == 0 || len(commands) > agent.MaxModelEffects || (args.CommandContextMessageID != nil && len(*args.CommandContextMessageID) != len(commands)) {
-		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands and command contexts must be aligned and bounded"))
+	if len(commands) > agent.MaxModelEffects {
+		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands exceed the allowed limit"))
 	}
 	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
 	for _, capability := range request.Capabilities.Values() {
@@ -409,13 +406,17 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 			return "", nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("group command exceeds current permission level"))
 		}
 		var commandTarget identity.MessageID
-		if args.CommandContextMessageID == nil {
-			commandTarget = replyTarget
-		} else if contextRef := (*args.CommandContextMessageID)[index]; contextRef != "none" {
-			var ok bool
-			commandTarget, ok = request.ContextMessages[contextRef]
-			if !ok {
-				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
+		commandTarget = replyTarget
+		if args.CommandContextMessageID != nil && index < len(*args.CommandContextMessageID) {
+			contextRef := (*args.CommandContextMessageID)[index]
+			if contextRef == "none" {
+				commandTarget = identity.MessageID{}
+			} else {
+				var ok bool
+				commandTarget, ok = request.ContextMessages[contextRef]
+				if !ok {
+					return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
+				}
 			}
 		}
 		var target identity.MessageID

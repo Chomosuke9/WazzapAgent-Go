@@ -64,7 +64,7 @@ func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal
 	requiresOwner := false
 	switch capability {
 	case CapabilityCommandHelp, CapabilityCommandInfo:
-	case CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite:
+	case CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite, CapabilityChatContextRead:
 		requiresOwner = true
 	default:
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("command capability is not enabled"))

@@ -89,6 +89,35 @@ func (agent *Agent) Key() Key          { return agent.key }
 func (agent *Agent) Config() *Config   { return agent.config }
 func (agent *Agent) History() *History { return agent.history }
 
+// BuildInput returns the same bounded message list produced by the Agent's
+// context builder, without invoking the model. Authorization for exposing this
+// potentially sensitive data remains outside Agent.
+func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, currentInvocationID identity.InvocationID) ([]ModelMessage, error) {
+	if version == 0 || currentInvocationID.IsZero() {
+		return nil, NewError(ErrorInvalidArgument, "build agent input", fmt.Errorf("config version and current invocation are required"))
+	}
+	if err := agent.gate.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer agent.gate.release()
+	snapshot, err := agent.config.Refresh(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.Version != version {
+		return nil, NewError(ErrorConflict, "build agent input", fmt.Errorf("authorized config version changed"))
+	}
+	page, err := agent.history.List(ctx, version, HistoryQuery{
+		Limit: agent.historyWindow, ThroughInvocationID: currentInvocationID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return agent.context.Build(ContextBuildRequest{
+		Config: snapshot, History: page.Entries, CurrentInvocationID: currentInvocationID,
+	})
+}
+
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
 	if err := agent.gate.acquire(ctx); err != nil {
 		return InvokeResult{}, err
