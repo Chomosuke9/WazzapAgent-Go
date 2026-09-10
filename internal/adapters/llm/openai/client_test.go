@@ -66,8 +66,17 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 		encoded.Messages[2].Content != "chat override" || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
-	if !strings.Contains(encoded.Messages[3].Content, "【u_") || strings.Contains(encoded.Messages[3].Content, "participant") {
-		t.Fatalf("compact user context leaked internal identity or omitted sender ref: %q", encoded.Messages[3].Content)
+	content := encoded.Messages[3].Content
+	parts := strings.SplitN(content, "Alice 【", 2)
+	if len(parts) != 2 || strings.Contains(content, "participant") {
+		t.Fatalf("compact user context leaked internal identity or omitted sender ref: %q", content)
+	}
+	refText, _, ok := strings.Cut(parts[1], "】")
+	if !ok {
+		t.Fatalf("compact user context omitted sender ref terminator: %q", content)
+	}
+	if _, err := identity.ParseSenderRef(refText); err != nil {
+		t.Fatalf("compact user context sender ref = %q: %v", refText, err)
 	}
 }
 
@@ -205,7 +214,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 		t.Fatalf("provider tools = %#v", tools)
 	}
 
-	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (u_abcdef12) 15\",\"/group kick @Bob (u_12345678)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
+	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (abcdef) 15\",\"/group kick @Bob (123456)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
 	text, effects, err := decodeModelOutput("", raw, request)
 	if err != nil {
 		t.Fatalf("decode reply command: %v", err)

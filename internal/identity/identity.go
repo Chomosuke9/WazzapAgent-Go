@@ -5,7 +5,7 @@ package identity
 
 import (
 	"crypto/rand"
-	"encoding/base32"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"regexp"
@@ -30,9 +30,14 @@ type ProviderID struct{ value string }
 type PolicyID struct{ value string }
 
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,62}$`)
-var senderRefPattern = regexp.MustCompile(`^u_[0-9A-HJKMNP-TV-Z]{8}$`)
+var senderRefPattern = regexp.MustCompile(`^[0-9a-z]{6}$`)
 var lidPattern = regexp.MustCompile(`^[0-9]{1,32}@(hosted\.)?lid$`)
-var crockfordEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
+
+const (
+	senderRefAlphabet      = "0123456789abcdefghijklmnopqrstuvwxyz"
+	senderRefSpace         = uint64(36 * 36 * 36 * 36 * 36 * 36)
+	senderRefSamplingLimit = (uint64(1) << 32) - (uint64(1)<<32)%senderRefSpace
+)
 
 func ParseTenantID(value string) (TenantID, error) {
 	value, err := parseUUID("tenant ID", value)
@@ -81,7 +86,7 @@ func ParseCausationID(value string) (CausationID, error) {
 
 func ParseSenderRef(value string) (SenderRef, error) {
 	if !senderRefPattern.MatchString(value) {
-		return SenderRef{}, errors.New("sender ref must use u_ plus 8 Crockford Base32 characters")
+		return SenderRef{}, errors.New("sender ref must use 6 lowercase base36 characters")
 	}
 	return SenderRef{value: value}, nil
 }
@@ -120,11 +125,26 @@ func NewInvocationID() (InvocationID, error) {
 func NewCausationID() (CausationID, error) { value, err := newUUIDv7(); return CausationID{value}, err }
 
 func NewSenderRef() (SenderRef, error) {
-	buffer := make([]byte, 5)
-	if _, err := rand.Read(buffer); err != nil {
-		return SenderRef{}, fmt.Errorf("generate sender ref: %w", err)
+	// Generate a uniform six-character lowercase base36 token. Rejection
+	// sampling avoids the modulo bias that would otherwise be introduced by
+	// mapping the full uint32 range onto 36^6 possible references.
+	var buffer [4]byte
+	for {
+		if _, err := rand.Read(buffer[:]); err != nil {
+			return SenderRef{}, fmt.Errorf("generate sender ref: %w", err)
+		}
+		number := uint64(binary.BigEndian.Uint32(buffer[:]))
+		if number >= senderRefSamplingLimit {
+			continue
+		}
+		number %= senderRefSpace
+		var value [6]byte
+		for index := len(value) - 1; index >= 0; index-- {
+			value[index] = senderRefAlphabet[number%36]
+			number /= 36
+		}
+		return ParseSenderRef(string(value[:]))
 	}
-	return ParseSenderRef("u_" + crockfordEncoding.EncodeToString(buffer))
 }
 
 func (id TenantID) String() string      { return id.value }

@@ -190,7 +190,7 @@ func (r SenderRef) String() string
 Part 1 format recommendation:
 
 ```text
-u_<8 Crockford Base32 characters>
+[0-9a-z]{6} lowercase base36 characters
 ```
 
 Rules:
@@ -199,7 +199,7 @@ Rules:
 - scoped oleh `(tenant_id, chat_id, participant_id)`;
 - unique di `(tenant_id, chat_id, sender_ref)`;
 - generation dan claim dilakukan dalam transaction dengan collision retry;
-- mapping survive restart/backup restore;
+- mapping survive restart/backup restore; legacy `u_...` values are rewritten transactionally to the canonical format when the store opens;
 - raw JID/phone tidak menjadi input generation dan tidak masuk model/log normal;
 - later mention/action resolution memakai durable mapping;
 - role/owner/admin selalu berasal dari current trusted identity/role resolver, never from sender ref.

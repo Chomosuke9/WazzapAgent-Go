@@ -327,10 +327,12 @@ Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-se
 ```text
 【000040】 12:56
 REPLYING TO 【000038】
-Alice 【u_01234567】: lanjutkan
+Alice 【012345】: lanjutkan
 ```
 
 Sequence ditampilkan sebagai enam digit (`000000`–`999999` dengan wrap tampilan), waktu sebagai `HH:MM` UTC pada Part 2 saat ini, dan assistant memakai identitas `You 【You】`. Metadata lengkap (message ID, timestamp, quote, delivery, dan sequence durable) tetap berada di History/SQLite dan tidak hilang dari penyimpanan. Raw sender name dan message text tetap untrusted karena berada pada final user history block yang terpisah dari policy system; jangan menggabungkan history dengan safety prompt menjadi satu system message. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan entry current invocation wajib menjadi entry terakhir di dalam block transcript. View di-anchor pada invocation yang sedang diproses agar passive message yang tiba sesudah trigger tidak menyusup ke context turn tersebut.
+
+`senderRef` canonical adalah tepat enam karakter lowercase base36 (`[0-9a-z]{6}`), seperti `012345` atau `1jq7a3`. Reference lama dengan prefix `u_` dinormalisasi secara transactional saat SQLite store dibuka; mapping `senderRef <-> LID` dan seluruh foreign references tetap dipertahankan.
 
 `ModelInvoker` dibangun dengan non-overridable application safety/system policy dan provider credentials. Adapter selalu menaruh policy tersebut sebelum seluruh `ModelMessage`, lalu memvalidasi pasangan role/provenance. Config, history, atau output model tidak dapat mengganti policy itu. `ModelResult` hanya berisi candidate content—tidak pernah target, actor, action ID, atau authorization data.
 

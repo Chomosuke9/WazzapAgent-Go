@@ -17,7 +17,7 @@ func TestUnquotedInvocationDigestRemainsPart1Compatible(t *testing.T) {
 	invocationID, _ := identity.ParseInvocationID("018f0000-0000-7000-8000-000000000004")
 	causationID, _ := identity.ParseCausationID("018f0000-0000-7000-8000-000000000005")
 	participantID, _ := identity.ParseParticipantID("018f0000-0000-7000-8000-000000000006")
-	senderRef, _ := identity.ParseSenderRef("u_01234567")
+	senderRef, _ := identity.ParseSenderRef("012345")
 	key := Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}
 	invocation := Invocation{
 		ID: invocationID, Causation: CausationRef{Kind: CausationMessage, ID: causationID},

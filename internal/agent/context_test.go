@@ -16,7 +16,7 @@ func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part2-chat-gate.v1")
 	participantID, _ := identity.ParseParticipantID("018f0000-0000-7000-8000-000000000001")
-	senderRef, _ := identity.ParseSenderRef("u_01234567")
+	senderRef, _ := identity.ParseSenderRef("012345")
 	previousInvocation, _ := identity.ParseInvocationID("018f0000-0000-7000-8000-000000000002")
 	currentInvocation, _ := identity.ParseInvocationID("018f0000-0000-7000-8000-000000000003")
 	userMessage, _ := identity.ParseMessageID("018f0000-0000-7000-8000-000000000004")
@@ -61,7 +61,7 @@ func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "【000004】 22:13\nAlice 【u_01234567】: halo\n\n【000005】 22:13\nYou 【You】: Hai!\n\n【000006】 22:13\nREPLYING TO 【000005】\nAlice 【u_01234567】: lanjutkan"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "【000004】 22:13\nAlice 【012345】: halo\n\n【000005】 22:13\nYou 【You】: Hai!\n\n【000006】 22:13\nREPLYING TO 【000005】\nAlice 【012345】: lanjutkan"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)

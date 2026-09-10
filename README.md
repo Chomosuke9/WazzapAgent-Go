@@ -31,7 +31,7 @@ Termasuk:
 - eligible DM dan group mention/reply text; semua inbound text/sticker pada chat allowlisted tetap masuk transcript, sedangkan group pasif tidak memicu respons;
 - LID sebagai canonical sender identity; nomor telepon hanya alias addressing/policy, dan mapping durable `senderRef ⇄ LID` diverifikasi dua arah sebelum transaksi intake commit;
 - dua handler serta worker pool independen untuk command dan AI; model yang macet tidak menghabiskan worker command;
-- durable dedup, opaque per-chat `senderRef`, generation lease, action outbox, receipt, dan restart recovery;
+- durable dedup, opaque per-chat `senderRef` (6 karakter lowercase base36), generation lease, action outbox, receipt, dan restart recovery;
 - `/prompt view`, `/prompt set <teks>`, dan `/prompt clear`, hanya untuk configured owner;
 - full durable transcript untuk chat allowlisted (DM dan group), termasuk pesan group pasif yang tidak memicu balasan; model tetap menerima bounded context yang bertahan setelah restart;
 - setiap entry memiliki sequence ordering, timestamp, opaque senderRef, dan canonical quote metadata; sticker text-only disimpan sebagai placeholder `【sticker】`;
@@ -52,7 +52,7 @@ Termasuk:
 
 Belum termasuk media, keluarga command lain di luar moderasi `/group delete|mute|kick`, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
-Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact (`【id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) dalam satu final history block agar hemat token; setiap pesan tidak menjadi provider message terpisah. Metadata durable tetap disimpan terstruktur di SQLite.
+Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact (`【id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) dalam satu final history block agar hemat token; setiap pesan tidak menjadi provider message terpisah. `senderRef` baru berbentuk 6 karakter lowercase base36; reference lama `u_...` dinormalisasi otomatis saat store dibuka. Metadata durable tetap disimpan terstruktur di SQLite.
 
 ## Mulai
 

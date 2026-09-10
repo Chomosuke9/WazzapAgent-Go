@@ -119,7 +119,8 @@ Record library commit, Go version, OS/arch, client type, test account, timestamp
 
 ### SenderRef
 
-- random generation produces allowed format;
+- random generation produces exactly six lowercase base36 characters;
+- legacy `u_...` references are normalized on store open without breaking LID resolution;
 - collision is retried under unique constraint;
 - same participant/chat returns existing ref;
 - same provider participant in another chat has independent ref;

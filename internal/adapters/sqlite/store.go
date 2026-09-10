@@ -104,6 +104,10 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		_ = db.Close()
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "open application store", fmt.Errorf("lease TTLs must be positive"))
 	}
+	if err := normalizeLegacySenderRefs(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Store{
 		db: db, generationTTL: options.GenerationLeaseTTL, actionTTL: options.ActionLeaseTTL,
 		clock: options.Clock, senderRefs: options.SenderRefFactory,

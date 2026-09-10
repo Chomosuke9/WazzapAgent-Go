@@ -530,10 +530,7 @@ func parseKickCommand(fields []string) (identity.SenderRef, error) {
 
 func parseCommandSenderRef(value string) (identity.SenderRef, error) {
 	value = strings.Trim(value, "()")
-	if len(value) < 3 || !strings.EqualFold(value[:2], "u_") {
-		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse group command senderRef", fmt.Errorf("senderRef is invalid"))
-	}
-	ref, err := identity.ParseSenderRef("u_" + strings.ToUpper(value[2:]))
+	ref, err := identity.ParseSenderRef(strings.ToLower(value))
 	if err != nil {
 		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse group command senderRef", err)
 	}

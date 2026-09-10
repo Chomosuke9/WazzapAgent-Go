@@ -78,7 +78,7 @@ func validSplitMessage(t *testing.T, text string) conversation.IncomingMessage {
 	chatID, _ := identity.NewChatID()
 	participantID, _ := identity.NewParticipantID()
 	lid, _ := identity.ParseLID("10000000001@lid")
-	ref, _ := identity.ParseSenderRef("u_01234567")
+	ref, _ := identity.ParseSenderRef("012345")
 	now := time.Now().UTC()
 	return conversation.IncomingMessage{
 		ID: messageID, InvocationID: invocationID, CausationID: causationID,

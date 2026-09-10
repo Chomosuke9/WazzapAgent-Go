@@ -150,7 +150,7 @@ func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 //
 //	【000040】 12:56
 //	REPLYING TO 【000038】
-//	Alice 【u_01234567】: lanjutkan
+//	Alice 【012345】: lanjutkan
 func formatLegacyHistoryEntry(entry HistoryEntry, text string) string {
 	timestamp := entry.CreatedAt.UTC().Format("15:04")
 	if entry.Role == HistorySystem {

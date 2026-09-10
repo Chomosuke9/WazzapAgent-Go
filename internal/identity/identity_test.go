@@ -25,11 +25,17 @@ func TestSemanticUUIDsAndSenderRefs(t *testing.T) {
 	if first == second {
 		t.Fatalf("two random sender refs collided: %s", first.String())
 	}
+	if len(first.String()) != 6 {
+		t.Fatalf("sender ref length = %d, want 6", len(first.String()))
+	}
 	if _, err := ParseSenderRef(first.String()); err != nil {
 		t.Fatalf("parse sender ref: %v", err)
 	}
+	if _, err := ParseSenderRef("u_01234567"); err == nil {
+		t.Fatal("accepted legacy prefixed sender ref")
+	}
 	if _, err := ParseSenderRef("u_ILOUBAD0"); err == nil {
-		t.Fatal("accepted ambiguous sender-ref alphabet")
+		t.Fatal("accepted malformed sender ref")
 	}
 }
 

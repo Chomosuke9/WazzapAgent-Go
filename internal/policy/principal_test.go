@@ -18,7 +18,7 @@ func TestHumanPrincipalCarriesOnlyVerifiedInboundIdentity(t *testing.T) {
 	invocationID, _ := identity.NewInvocationID()
 	causationID, _ := identity.NewCausationID()
 	lid, _ := identity.ParseLID("10000000001@lid")
-	ref, _ := identity.ParseSenderRef("u_01234567")
+	ref, _ := identity.ParseSenderRef("012345")
 	now := time.Now().UTC()
 	message := conversation.IncomingMessage{
 		ID: messageID, InvocationID: invocationID, CausationID: causationID,
