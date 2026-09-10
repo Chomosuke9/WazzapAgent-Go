@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
@@ -21,35 +22,160 @@ type laneResumer interface {
 	Resume(context.Context, conversation.IncomingMessage) error
 }
 
-type CommandHandler struct{ core *Handler }
-type AIHandler struct{ core *Handler }
-
-func NewCommandHandler(core *Handler) (*CommandHandler, error) {
-	if core == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create command handler", fmt.Errorf("core handler is required"))
-	}
-	return &CommandHandler{core: core}, nil
+type CommandHandler struct {
+	handlerServices
 }
 
-func NewAIHandler(core *Handler) (*AIHandler, error) {
-	if core == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create AI handler", fmt.Errorf("core handler is required"))
+type AIHandler struct {
+	handlerServices
+	batch BatchOptions
+}
+
+func newHandlerServices(
+	store Store,
+	agents Registry,
+	policy Policy,
+	responses ResponseWriter,
+	observer Observer,
+) (handlerServices, error) {
+	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
+		return handlerServices{}, agent.NewError(agent.ErrorInvalidArgument, "create inbound lane services", fmt.Errorf("store, registry, policy, response writer, and observer are required"))
 	}
-	return &AIHandler{core: core}, nil
+	return handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer}, nil
+}
+
+func newCommandHandler(services handlerServices) (*CommandHandler, error) {
+	services.stripes = new([64]sync.Mutex)
+	return &CommandHandler{handlerServices: services}, nil
+}
+
+func newAIHandler(services handlerServices, options BatchOptions) (*AIHandler, error) {
+	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 || options.Clock == nil {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create AI handler", fmt.Errorf("valid batching bounds and clock are required"))
+	}
+	if options.Activity == nil {
+		options.Activity = discardAIActivity{}
+	}
+	services.stripes = new([64]sync.Mutex)
+	return &AIHandler{handlerServices: services, batch: options}, nil
+}
+
+// NewCommandHandler constructs the command lane without constructing or
+// depending on the AI lane.
+func NewCommandHandler(
+	store Store,
+	agents Registry,
+	policy Policy,
+	responses ResponseWriter,
+	observer Observer,
+) (*CommandHandler, error) {
+	services, err := newHandlerServices(store, agents, policy, responses, observer)
+	if err != nil {
+		return nil, err
+	}
+	return newCommandHandler(services)
+}
+
+// NewAIHandler constructs the AI lane without constructing or depending on
+// the command lane.
+func NewAIHandler(
+	store Store,
+	agents Registry,
+	policy Policy,
+	responses ResponseWriter,
+	observer Observer,
+	options BatchOptions,
+) (*AIHandler, error) {
+	services, err := newHandlerServices(store, agents, policy, responses, observer)
+	if err != nil {
+		return nil, err
+	}
+	return newAIHandler(services, options)
 }
 
 func (handler *CommandHandler) Resume(ctx context.Context, message conversation.IncomingMessage) error {
-	if !IsCommand(message.Text) {
-		return agent.NewError(agent.ErrorInvalidArgument, "run command handler", fmt.Errorf("message is not a command"))
+	if err := message.Validate(); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "resume command message", err)
 	}
-	return handler.core.Resume(ctx, message)
+	if !IsCommand(message.Text) {
+		return agent.NewError(agent.ErrorInvalidArgument, "run command handler", fmt.Errorf("message is not a registered command"))
+	}
+	switch {
+	case message.FromMe:
+		return handler.ignore(ctx, message, IgnoreFromMe)
+	case message.ChatKind == conversation.ChatStatus:
+		return handler.ignore(ctx, message, IgnoreStatus)
+	case !message.Allowlisted:
+		return handler.ignore(ctx, message, IgnoreNotAllowlisted)
+	}
+	request, descriptor, recognized := parseRegisteredCommand(message.Text)
+	if !recognized {
+		return agent.NewError(agent.ErrorIntegrityFailure, "run command handler", fmt.Errorf("registered command disappeared during dispatch"))
+	}
+	return handler.resumeCommand(ctx, message, request, descriptor)
 }
 
 func (handler *AIHandler) Resume(ctx context.Context, message conversation.IncomingMessage) error {
-	if IsCommand(message.Text) {
-		return agent.NewError(agent.ErrorInvalidArgument, "run AI handler", fmt.Errorf("command cannot enter AI lane"))
+	if err := message.Validate(); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "resume AI message", err)
 	}
-	return handler.core.Resume(ctx, message)
+	if IsCommand(message.Text) {
+		return agent.NewError(agent.ErrorInvalidArgument, "run AI handler", fmt.Errorf("registered command cannot enter AI lane"))
+	}
+	switch {
+	case message.FromMe:
+		return handler.ignore(ctx, message, IgnoreFromMe)
+	case message.ChatKind == conversation.ChatStatus:
+		return handler.ignore(ctx, message, IgnoreStatus)
+	case !message.Allowlisted:
+		return handler.ignore(ctx, message, IgnoreNotAllowlisted)
+	case message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot:
+		return handler.ignore(ctx, message, IgnoreGroupNotMentioned)
+	}
+
+	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
+	if err != nil {
+		return err
+	}
+	if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot.Permission); err != nil {
+		return handler.ignore(ctx, message, IgnorePolicyDenied)
+	}
+	if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
+		return err
+	}
+	stage, err := handler.store.StageBatch(ctx, message, handler.batch.Clock.Now().Add(handler.batch.Debounce))
+	if err != nil || stage.Handled || !stage.Wait {
+		return err
+	}
+	readyAt := stage.ReadyAt
+	for {
+		if err := handler.waitUntil(ctx, readyAt); err != nil {
+			return err
+		}
+		stripe := handler.stripe(message.ChatID)
+		stripe.Lock()
+		claim, claimErr := handler.store.ClaimBatch(ctx, message, handler.batch.Clock.Now(), handler.batch.BurstCap)
+		if claimErr != nil {
+			stripe.Unlock()
+			return claimErr
+		}
+		if claim.Handled {
+			stripe.Unlock()
+			return nil
+		}
+		if !claim.ReadyAt.IsZero() {
+			readyAt = claim.ReadyAt
+			stripe.Unlock()
+			continue
+		}
+		handler.observer.ObserveInboundBatch(uint32(len(claim.Messages)))
+		err = handler.processBatch(ctx, currentAgent, claim.Messages)
+		stripe.Unlock()
+		if err != nil {
+			return err
+		}
+		readyAt = handler.batch.Clock.Now()
+	}
 }
 
 // SplitDispatcher owns the durable intake boundary and two independent

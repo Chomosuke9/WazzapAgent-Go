@@ -66,6 +66,20 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	}
 }
 
+func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
+	fixture := newFixture(t)
+	command := fixture.candidate("group-command", "120363000000000001@g.us", conversation.ChatGroup, "/help")
+	if err := fixture.handler.Handle(context.Background(), command); err != nil {
+		t.Fatalf("handle group command: %v", err)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("group command invoked model %d times", fixture.model.calls.Load())
+	}
+	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "/help") {
+		t.Fatalf("group command response count/text = %d/%q", fixture.sender.count(), fixture.sender.last().Text)
+	}
+}
+
 func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	fixture := newFixture(t)
 	dump := fixture.candidate("dump-1", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")

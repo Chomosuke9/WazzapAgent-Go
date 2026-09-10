@@ -328,17 +328,13 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	commandCore, err := inbound.NewHandler(
+	commandHandler, err := inbound.NewCommandHandler(
 		store.Inbound(), registry, gate, commandResponses, application.metrics,
 	)
 	if err != nil {
 		return nil, err
 	}
-	commandHandler, err := inbound.NewCommandHandler(commandCore)
-	if err != nil {
-		return nil, err
-	}
-	aiCore, err := inbound.NewHandlerWithBatching(
+	aiHandler, err := inbound.NewAIHandler(
 		store.Inbound(), registry, gate, commandResponses, application.metrics,
 		inbound.BatchOptions{
 			Debounce: application.config.MessageDebounce(),
@@ -347,10 +343,6 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			Activity: waAdapter,
 		},
 	)
-	if err != nil {
-		return nil, err
-	}
-	aiHandler, err := inbound.NewAIHandler(aiCore)
 	if err != nil {
 		return nil, err
 	}

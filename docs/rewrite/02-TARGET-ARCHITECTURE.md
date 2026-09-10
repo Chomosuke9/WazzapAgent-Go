@@ -34,20 +34,19 @@ WhatsApp <-> Hypermeow   | account connector        |
             adapter ---->| canonical message source |
                          +------------+-------------+
                                       |
-                                inbound.Handler
+                           Inbound Receiver
+                         normalize + durable claim
                                       |
-                       identity + dedup + senderRef
+                             SplitDispatcher
+                         /                    \
+              CommandQueue                  AIQueue
+                    |                          |
+             CommandHandler                AIHandler
+                    |                          |
+             command policy              AI policy + batching
+                    \                          /
+                     Agent/Config/History/LLM
                                       |
-                   AgentRegistry.AgentFor(chat key)
-                                      |
-                       Config.Refresh + external policy
-                                      |
-                               Agent(chat).Invoke
-                         /            |             \
-                     Config        History         ModelInvoker
-                       |           Part 2               |
-                 SQLite CAS       SQLite          LLM adapter
-                         \            |             /
                          TurnStore + ResponseDispatcher
                                       |
                          durable outbox / action worker
@@ -256,7 +255,7 @@ type InboundStore interface {
 - claims provider dedup key;
 - stores normalized text needed for safe restart replay and, in Part 2, appends the allowlisted chat's canonical transcript entry atomically;
 
-Duplicate claim returns a typed duplicate result, not a second `IncomingMessage`, dan replay dengan sender identity berbeda gagal tertutup. Setelah durable intake, dispatcher mengklasifikasikan pesan secara deterministik ke `CommandHandler` atau `AIHandler`. Keduanya memakai bounded queue, worker pool, dan serialization stripes terpisah, sehingga model call yang macet tidak menahan jalur command. Recovery merutekan ulang row durable melalui dispatcher yang sama.
+Duplicate claim returns a typed duplicate result, not a second `IncomingMessage`, dan replay dengan sender identity berbeda gagal tertutup. Setelah durable intake, dispatcher mengklasifikasikan pesan secara deterministik ke `CommandHandler` atau `AIHandler`. Keduanya adalah concrete handler terpisah dengan dependency, state, dan serialization stripes masing-masing—bukan wrapper atas `Handler` bersama. Adapter tetap memiliki satu native event subscription agar normalisasi LID, senderRef, raw payload, dan deduplikasi dilakukan satu kali; pemisahan terjadi setelah immutable inbound message tersedia. Keduanya memakai bounded queue dan worker pool terpisah, sehingga model call yang macet tidak menahan jalur command. Recovery merutekan ulang row durable melalui dispatcher yang sama.
 
 ### Agent
 
@@ -629,7 +628,8 @@ Domain IDs, action/inbound state machines, and authorization rules remain shared
 - generic repository abstraction hiding transaction boundaries;
 - direct SQL from handlers/domain;
 - raw provider object passed through application layers;
-- several independent listeners for the same inbound event;
+- several native listeners for the same inbound event (the adapter subscribes
+  once, then fans out immutable durable messages into independent logical lanes);
 - model-generated generic command execution;
 - fake owner/admin flags;
 - in-memory-only correctness queue;

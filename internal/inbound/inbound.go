@@ -120,14 +120,27 @@ func (DiscardObserver) ObserveInboundIgnored()     {}
 func (DiscardObserver) ObserveInboundBatch(uint32) {}
 func (DiscardObserver) ObserveHistoryReset()       {}
 
-type Handler struct {
+// handlerServices contains only infrastructure shared by the two independent
+// lanes. It deliberately contains no routing or lane-specific orchestration.
+// CommandHandler and AIHandler each receive their own value of this type, so
+// their serialization stripes and runtime state are not shared.
+type handlerServices struct {
 	store     Store
 	agents    Registry
 	policy    Policy
 	responses ResponseWriter
 	observer  Observer
-	batch     BatchOptions
-	stripes   [64]sync.Mutex
+	stripes   *[64]sync.Mutex
+}
+
+// Handler is a backwards-compatible convenience facade for tests and callers
+// that still submit a candidate directly. Production wiring uses
+// CommandHandler and AIHandler independently through SplitDispatcher.
+type Handler struct {
+	store    Store
+	observer Observer
+	command  *CommandHandler
+	ai       *AIHandler
 }
 
 func NewHandler(store Store, agents Registry, policy Policy, responses ResponseWriter, observer Observer) (*Handler, error) {
@@ -144,16 +157,19 @@ func NewHandlerWithBatching(
 	observer Observer,
 	options BatchOptions,
 ) (*Handler, error) {
-	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound handler", fmt.Errorf("store, registry, policy, response writer, and observer are required"))
+	services, err := newHandlerServices(store, agents, policy, responses, observer)
+	if err != nil {
+		return nil, err
 	}
-	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 || options.Clock == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound handler", fmt.Errorf("valid batching bounds and clock are required"))
+	command, err := newCommandHandler(services)
+	if err != nil {
+		return nil, err
 	}
-	if options.Activity == nil {
-		options.Activity = discardAIActivity{}
+	ai, err := newAIHandler(services, options)
+	if err != nil {
+		return nil, err
 	}
-	return &Handler{store: store, agents: agents, policy: policy, responses: responses, observer: observer, batch: options}, nil
+	return &Handler{store: store, observer: observer, command: command, ai: ai}, nil
 }
 
 func (handler *Handler) Handle(ctx context.Context, candidate conversation.IncomingCandidate) error {
@@ -176,73 +192,13 @@ func (handler *Handler) Handle(ctx context.Context, candidate conversation.Incom
 }
 
 func (handler *Handler) Resume(ctx context.Context, message conversation.IncomingMessage) error {
-	if err := message.Validate(); err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "resume incoming message", err)
+	if IsCommand(message.Text) {
+		return handler.command.Resume(ctx, message)
 	}
-	switch {
-	case message.FromMe:
-		return handler.ignore(ctx, message, IgnoreFromMe)
-	case message.ChatKind == conversation.ChatStatus:
-		return handler.ignore(ctx, message, IgnoreStatus)
-	case !message.Allowlisted:
-		return handler.ignore(ctx, message, IgnoreNotAllowlisted)
-	case message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot:
-		return handler.ignore(ctx, message, IgnoreGroupNotMentioned)
-	}
-
-	if request, descriptor, recognized := parseRegisteredCommand(message.Text); recognized {
-		return handler.resumeCommand(ctx, message, request, descriptor)
-	}
-
-	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
-	if err != nil {
-		return err
-	}
-	if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot.Permission); err != nil {
-		return handler.ignore(ctx, message, IgnorePolicyDenied)
-	}
-	if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
-		return err
-	}
-	stage, err := handler.store.StageBatch(ctx, message, handler.batch.Clock.Now().Add(handler.batch.Debounce))
-	if err != nil || stage.Handled || !stage.Wait {
-		return err
-	}
-	readyAt := stage.ReadyAt
-	for {
-		if err := handler.waitUntil(ctx, readyAt); err != nil {
-			return err
-		}
-		stripe := handler.stripe(message.ChatID)
-		stripe.Lock()
-		claim, claimErr := handler.store.ClaimBatch(ctx, message, handler.batch.Clock.Now(), handler.batch.BurstCap)
-		if claimErr != nil {
-			stripe.Unlock()
-			return claimErr
-		}
-		if claim.Handled {
-			stripe.Unlock()
-			return nil
-		}
-		if !claim.ReadyAt.IsZero() {
-			readyAt = claim.ReadyAt
-			stripe.Unlock()
-			continue
-		}
-		handler.observer.ObserveInboundBatch(uint32(len(claim.Messages)))
-		err = handler.processBatch(ctx, currentAgent, claim.Messages)
-		stripe.Unlock()
-		if err != nil {
-			return err
-		}
-		// The one elected waiter drains every ready burst-cap-sized batch. Other
-		// inbound workers return after durable staging, so a hot chat cannot
-		// occupy one worker per message during the debounce window.
-		readyAt = handler.batch.Clock.Now()
-	}
+	return handler.ai.Resume(ctx, message)
 }
 
-func (handler *Handler) resumeCommand(
+func (handler *CommandHandler) resumeCommand(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 	request command.Request,
@@ -332,12 +288,12 @@ func controlCapability(command ControlCommandKind) policy.Capability {
 	}
 }
 
-func (handler *Handler) loadAgent(
+func (services *handlerServices) loadAgent(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 ) (*agent.Agent, agent.ConfigSnapshot, error) {
 	key := agent.Key{TenantID: message.TenantID, AccountID: message.AccountID, ChatID: message.ChatID}
-	currentAgent, err := handler.agents.AgentFor(ctx, key)
+	currentAgent, err := services.agents.AgentFor(ctx, key)
 	if err != nil {
 		return nil, agent.ConfigSnapshot{}, err
 	}
@@ -348,7 +304,7 @@ func (handler *Handler) loadAgent(
 	return currentAgent, snapshot, nil
 }
 
-func (handler *Handler) waitUntil(ctx context.Context, readyAt time.Time) error {
+func (handler *AIHandler) waitUntil(ctx context.Context, readyAt time.Time) error {
 	delay := readyAt.Sub(handler.batch.Clock.Now())
 	if delay <= 0 {
 		return nil
@@ -367,7 +323,7 @@ func (handler *Handler) waitUntil(ctx context.Context, readyAt time.Time) error 
 	}
 }
 
-func (handler *Handler) processBatch(
+func (handler *AIHandler) processBatch(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	messages []conversation.IncomingMessage,
@@ -472,7 +428,7 @@ func ParseControlCommand(text string) (ControlCommandKind, bool) {
 	}
 }
 
-func (handler *Handler) handleControl(
+func (handler *CommandHandler) handleControl(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	snapshot agent.ConfigSnapshot,
@@ -522,21 +478,21 @@ func (handler *Handler) handleControl(
 	return handler.responses.Reply(ctx, message, snapshot.Version, response)
 }
 
-func (handler *Handler) ignore(ctx context.Context, message conversation.IncomingMessage, reason IgnoreReason) error {
-	if err := handler.store.MarkIgnored(ctx, message, reason); err != nil {
+func (services *handlerServices) ignore(ctx context.Context, message conversation.IncomingMessage, reason IgnoreReason) error {
+	if err := services.store.MarkIgnored(ctx, message, reason); err != nil {
 		return err
 	}
-	handler.observer.ObserveInboundIgnored()
+	services.observer.ObserveInboundIgnored()
 	return nil
 }
 
-func (handler *Handler) stripe(chatID identity.ChatID) *sync.Mutex {
+func (services *handlerServices) stripe(chatID identity.ChatID) *sync.Mutex {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(chatID.String()))
-	return &handler.stripes[hash.Sum32()%uint32(len(handler.stripes))]
+	return &services.stripes[hash.Sum32()%uint32(len(services.stripes))]
 }
 
-func (handler *Handler) handlePrompt(
+func (handler *CommandHandler) handlePrompt(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	snapshot agent.ConfigSnapshot,
@@ -573,7 +529,7 @@ func (handler *Handler) handlePrompt(
 	return handler.responses.Reply(ctx, message, snapshot.Version, response)
 }
 
-func (handler *Handler) applyPromptMutation(
+func (handler *CommandHandler) applyPromptMutation(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	snapshot agent.ConfigSnapshot,
@@ -614,7 +570,7 @@ func (handler *Handler) applyPromptMutation(
 	return updated.Version, nil
 }
 
-func (handler *Handler) handlePermission(
+func (handler *CommandHandler) handlePermission(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	snapshot agent.ConfigSnapshot,
@@ -637,7 +593,7 @@ func (handler *Handler) handlePermission(
 	}
 }
 
-func (handler *Handler) applyPermissionMutation(
+func (handler *CommandHandler) applyPermissionMutation(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	snapshot agent.ConfigSnapshot,

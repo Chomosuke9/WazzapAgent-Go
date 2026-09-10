@@ -799,7 +799,7 @@ Rules:
 
 `IncomingCandidate.SenderLID` adalah identity provider canonical dan wajib ada. Phone JID hanya optional alias untuk delivery serta pencocokan konfigurasi; ia tidak boleh dipakai membuat participant atau senderRef. Durable intake mempertahankan internal `ParticipantID`, tetapi mapping authoritative adalah `(tenant, account, chat, LID) ⇄ senderRef`. Kedua arah wajib unik dan diverifikasi dalam transaksi yang sama sebelum inbound event commit. Event tanpa LID, binding ambigu, collision, atau replay provider-message ID dengan sender berbeda gagal tertutup.
 
-Setelah claim durable, `SplitDispatcher` merutekan pesan yang dikenali parser ke `CommandHandler`; semua pesan lainnya ke `AIHandler`. Kedua handler mempunyai bounded queue, worker pool, dan handler instance/serialization stripes sendiri. Saturasi atau model call yang macet pada AI lane tidak boleh menunggu atau memakai kapasitas command lane. Jika queue penuh, row tetap durable dan recovery mencoba routing lagi; jangan memindahkan message langsung antar-lane sebagai fallback.
+Setelah claim durable, `SplitDispatcher` merutekan pesan yang dikenali parser ke `CommandHandler`; semua pesan lainnya ke `AIHandler`. Keduanya adalah concrete handler terpisah dengan dependency, state, dan serialization stripes masing-masing—bukan wrapper atas `Handler` bersama. Adapter menormalisasi event dan melakukan durable claim satu kali, lalu router menyerahkan immutable `IncomingMessage` ke lane yang sesuai. Saturasi atau model call yang macet pada AI lane tidak boleh menunggu atau memakai kapasitas command lane. Jika queue penuh, row tetap durable dan recovery mencoba routing lagi; jangan memindahkan message langsung antar-lane sebagai fallback.
 
 ### Invoke path
 
