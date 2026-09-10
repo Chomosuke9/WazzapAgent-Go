@@ -391,9 +391,11 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 
 func TestSnapshotRedactsSecret(t *testing.T) {
 	secret := "secret-value-that-must-not-leak"
+	langSmithSecret := "ls-secret-value-that-must-not-leak"
 	cfg, err := Load(mapLookup(map[string]string{
 		"WAZZAP_WHATSAPP_ENABLED": "false",
 		"WAZZAP_LLM_API_KEY":      secret,
+		"LANGSMITH_API_KEY":       langSmithSecret,
 		"WAZZAP_SHUTDOWN_TIMEOUT": "12s",
 	}))
 	if err != nil {
@@ -402,12 +404,18 @@ func TestSnapshotRedactsSecret(t *testing.T) {
 	if cfg.LLMAPIKey() != secret {
 		t.Fatal("secret accessor did not return configured value")
 	}
+	if cfg.LangSmithAPIKey() != langSmithSecret {
+		t.Fatal("LangSmith secret accessor did not return configured value")
+	}
 	redacted := cfg.Redacted()
 	if redacted["llm_api_key_configured"] != true {
 		t.Fatalf("configured marker = %#v, want true", redacted["llm_api_key_configured"])
 	}
+	if redacted["langsmith_configured"] != true {
+		t.Fatalf("LangSmith marker = %#v, want true", redacted["langsmith_configured"])
+	}
 	for _, value := range redacted {
-		if value == secret {
+		if value == secret || value == langSmithSecret {
 			t.Fatal("redacted config exposed secret")
 		}
 	}

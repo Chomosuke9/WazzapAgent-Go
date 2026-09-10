@@ -281,6 +281,7 @@ const (
     ProvenanceHistoryAssistant
     ProvenanceHistorySystem
     ProvenanceCurrentUser
+    ProvenanceHistoryTranscript
 )
 
 type ModelMessage struct {
@@ -321,7 +322,7 @@ Part berikutnya dapat menambah `ImagePart`, `FilePart`, atau `SubagentResultPart
 
 Input tidak boleh menggunakan `any`, raw provider DTO, local path, atau model-selected target.
 
-`ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt dan prompt override tetap menjadi system messages dengan provenance terpisah. History dirender menggunakan format transcript compact kompatibel WazzapAgent lama, bukan envelope JSON:
+`ContextBuilder` mengubah Config dan bounded view dari canonical durable transcript menjadi `[]ModelMessage`. Base prompt adalah system message trusted, sedangkan `PromptOverride` berasal dari user/config boundary dan menjadi user-role block dengan provenance terpisah. Seluruh history dirender menjadi satu final user-role message dengan provenance `ProvenanceHistoryTranscript`; setiap entry tetap dipisahkan dengan blank line di dalam content block, bukan menjadi message provider tersendiri. Format transcript compact kompatibel WazzapAgent lama, bukan envelope JSON:
 
 ```text
 【000040】 12:56
@@ -329,7 +330,7 @@ REPLYING TO 【000038】
 Alice 【u_01234567】: lanjutkan
 ```
 
-Sequence ditampilkan sebagai enam digit (`000000`–`999999` dengan wrap tampilan), waktu sebagai `HH:MM` UTC pada Part 2 saat ini, dan assistant memakai identitas `You 【You】`. Metadata lengkap (message ID, timestamp, quote, delivery, dan sequence durable) tetap berada di History/SQLite dan tidak hilang dari penyimpanan. Raw sender name dan message text tetap untrusted karena berada pada model message history yang terpisah dari policy system; jangan menggabungkan history dengan safety prompt menjadi satu system message. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan current user message wajib berada paling akhir. View di-anchor pada invocation yang sedang diproses agar passive message yang tiba sesudah trigger tidak menyusup ke context turn tersebut.
+Sequence ditampilkan sebagai enam digit (`000000`–`999999` dengan wrap tampilan), waktu sebagai `HH:MM` UTC pada Part 2 saat ini, dan assistant memakai identitas `You 【You】`. Metadata lengkap (message ID, timestamp, quote, delivery, dan sequence durable) tetap berada di History/SQLite dan tidak hilang dari penyimpanan. Raw sender name dan message text tetap untrusted karena berada pada final user history block yang terpisah dari policy system; jangan menggabungkan history dengan safety prompt menjadi satu system message. Hanya assistant history dengan delivery `succeeded` yang masuk context, dan entry current invocation wajib menjadi entry terakhir di dalam block transcript. View di-anchor pada invocation yang sedang diproses agar passive message yang tiba sesudah trigger tidak menyusup ke context turn tersebut.
 
 `ModelInvoker` dibangun dengan non-overridable application safety/system policy dan provider credentials. Adapter selalu menaruh policy tersebut sebelum seluruh `ModelMessage`, lalu memvalidasi pasangan role/provenance. Config, history, atau output model tidak dapat mengganti policy itu. `ModelResult` hanya berisi candidate content—tidak pernah target, actor, action ID, atau authorization data.
 

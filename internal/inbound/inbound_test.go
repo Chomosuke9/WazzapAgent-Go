@@ -90,6 +90,8 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	output := fixture.sender.last().Text
 	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
 		!strings.Contains(output, "=== USER ===\n") ||
+		strings.Count(output, "=== USER ===") != 1 ||
+		strings.Contains(output, "=== ASSISTANT ===") ||
 		!strings.Contains(output, "/dump") || strings.Contains(output, "#000") {
 		t.Fatalf("dump output = %q", output)
 	}
@@ -279,10 +281,10 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 		t.Fatalf("handle follow-up after restart: %v", err)
 	}
 	request := secondRuntime.model.lastRequest()
-	if len(request.Messages) != 4 ||
+	if len(request.Messages) != 2 ||
 		!strings.Contains(request.Messages[1].Content, "remember blue") ||
-		!strings.Contains(request.Messages[2].Content, "reply: remember blue") ||
-		!strings.Contains(request.Messages[3].Content, "what color?") {
+		!strings.Contains(request.Messages[1].Content, "reply: remember blue") ||
+		!strings.Contains(request.Messages[1].Content, "what color?") {
 		t.Fatalf("recreated model context = %#v", request.Messages)
 	}
 }

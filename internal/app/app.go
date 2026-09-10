@@ -57,6 +57,7 @@ type healthResponse struct {
 type conversationRuntime struct {
 	store           *appsqlite.Store
 	registry        *agent.Registry
+	langSmith       *observability.LangSmith
 	account         *account.Runtime
 	adapter         *whatsapp.Adapter
 	recovery        *action.RecoveryWorker
@@ -193,6 +194,18 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			_ = registry.Close(closeCtx)
 		}
 	}()
+	langSmith, err := observability.NewLangSmith(application.config.LangSmithAPIKey())
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
+			defer cancel()
+			_ = langSmith.Shutdown(closeCtx)
+		}
+	}()
+	llmHTTPClient := langSmith.WrapHTTPClient(&http.Client{Timeout: application.config.LLMTimeout()})
 	primaryModel, err := llmopenai.New(llmopenai.Config{
 		Endpoint:         application.config.LLMEndpoint(),
 		APIKey:           application.config.LLMAPIKey(),
@@ -201,6 +214,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Timeout:          application.config.LLMTimeout(),
 		Concurrency:      application.config.LLMConcurrency(),
 		MaxResponseBytes: application.config.MaxResponseBytes(),
+		HTTPClient:       llmHTTPClient,
 		Observer:         application.metrics,
 	})
 	if err != nil {
@@ -216,6 +230,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			Timeout:          application.config.LLMTimeout(),
 			Concurrency:      application.config.LLMConcurrency(),
 			MaxResponseBytes: application.config.MaxResponseBytes(),
+			HTTPClient:       llmHTTPClient,
 			Observer:         application.metrics,
 		})
 		if fallbackErr != nil {
@@ -394,7 +409,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	adapterOwned = false
 	return &conversationRuntime{
-		store: store, registry: registry, account: accountRuntime, adapter: waAdapter,
+		store: store, registry: registry, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
 		recovery: recovery, effectRecovery: effectRecovery, inboundRecovery: inboundRecovery, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
 	}, nil
 }
@@ -433,6 +448,9 @@ func (runtime *conversationRuntime) close(ctx context.Context) error {
 	}
 	if runtime.store != nil {
 		joined = errors.Join(joined, runtime.store.Checkpoint(ctx), runtime.store.Close())
+	}
+	if runtime.langSmith != nil {
+		joined = errors.Join(joined, runtime.langSmith.Shutdown(ctx))
 	}
 	return joined
 }

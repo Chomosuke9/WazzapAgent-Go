@@ -68,6 +68,7 @@ type Snapshot struct {
 	llmAPIKey           string
 	llmFallbackEndpoint string
 	llmFallbackAPIKey   string
+	langsmithAPIKey     string
 	llmModel            string
 	llmProviderID       identity.ProviderID
 	llmTimeout          time.Duration
@@ -293,6 +294,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		llmEndpoint:         value(lookup, "WAZZAP_LLM_ENDPOINT"),
 		llmFallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"),
 		llmFallbackAPIKey:   value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
+		langsmithAPIKey:     value(lookup, "LANGSMITH_API_KEY"),
 		llmModel:            value(lookup, "WAZZAP_LLM_MODEL"),
 		llmProviderID:       providerID,
 		llmTimeout:          llmTimeout,
@@ -413,6 +415,7 @@ func (snapshot Snapshot) LLMEndpoint() string                { return snapshot.l
 func (snapshot Snapshot) LLMAPIKey() string                  { return snapshot.llmAPIKey }
 func (snapshot Snapshot) LLMFallbackEndpoint() string        { return snapshot.llmFallbackEndpoint }
 func (snapshot Snapshot) LLMFallbackAPIKey() string          { return snapshot.llmFallbackAPIKey }
+func (snapshot Snapshot) LangSmithAPIKey() string            { return snapshot.langsmithAPIKey }
 func (snapshot Snapshot) LLMModel() string                   { return snapshot.llmModel }
 func (snapshot Snapshot) LLMProviderID() identity.ProviderID { return snapshot.llmProviderID }
 func (snapshot Snapshot) LLMTimeout() time.Duration          { return snapshot.llmTimeout }
@@ -475,6 +478,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"llm_endpoint_configured": snapshot.llmEndpoint != "",
 		"llm_api_key_configured":  snapshot.llmAPIKey != "",
 		"llm_fallback_configured": snapshot.llmFallbackEndpoint != "",
+		"langsmith_configured":    snapshot.langsmithAPIKey != "",
 		"llm_model_configured":    snapshot.llmModel != "",
 		"llm_concurrency":         snapshot.llmConcurrency,
 		"max_response_bytes":      snapshot.maxResponseBytes,

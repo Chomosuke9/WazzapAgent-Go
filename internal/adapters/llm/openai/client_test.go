@@ -42,7 +42,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	}
 	request := modelRequest(t, providerID)
 	request.Messages = append(request.Messages[:1],
-		agent.ModelMessage{Role: agent.ModelSystem, Provenance: agent.ProvenancePromptOverride, Content: "chat override"},
+		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "chat override"},
 		request.Messages[1],
 	)
 	result, err := client.Generate(context.Background(), request)
@@ -56,7 +56,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	if encoded.Stream || encoded.MaxTokens != request.Model.MaxOutputTokens || len(encoded.Messages) != 4 {
 		t.Fatalf("request envelope = %#v", encoded)
 	}
-	wantRoles := []string{"system", "system", "system", "user"}
+	wantRoles := []string{"system", "system", "user", "user"}
 	for index, role := range wantRoles {
 		if encoded.Messages[index].Role != role {
 			t.Fatalf("message %d role = %q, want %q", index, encoded.Messages[index].Role, role)
@@ -85,7 +85,7 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	request := modelRequest(t, providerID)
 	current := request.Messages[len(request.Messages)-1]
 	request.Messages = []agent.ModelMessage{
-		{Role: agent.ModelSystem, Provenance: agent.ProvenancePromptOverride, Content: "replacement"},
+		{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "replacement"},
 		current,
 	}
 	if _, err := client.Generate(context.Background(), request); err != nil {

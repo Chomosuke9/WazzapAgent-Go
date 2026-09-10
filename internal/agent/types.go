@@ -135,6 +135,10 @@ const (
 	ProvenanceHistoryAssistant
 	ProvenanceHistorySystem
 	ProvenanceCurrentUser
+	// ProvenanceHistoryTranscript is one user-role block containing the
+	// complete compact transcript, including the current invocation. Keeping
+	// the transcript in one block is part of the provider prompt contract.
+	ProvenanceHistoryTranscript
 )
 
 type ModelMessage struct {

@@ -41,7 +41,11 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	if err := validateConfigSnapshot(request.Config); err != nil {
 		return nil, err
 	}
-	messages := make([]ModelMessage, 0, len(request.History)+2)
+	// Model history is intentionally one logical user block. The transcript
+	// renderer is compact and already carries role/sender/quote markers, so
+	// turning every durable entry into a provider message wastes tokens and
+	// changes the prompt shape used by the legacy project.
+	messages := make([]ModelMessage, 0, 3)
 	if request.Config.PromptOverride == nil || request.Config.PromptOverride.Mode != PromptReplace {
 		messages = append(messages, ModelMessage{
 			Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: request.Config.Prompt,
@@ -49,16 +53,16 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 	if request.Config.PromptOverride != nil {
 		messages = append(messages, ModelMessage{
-			Role: ModelSystem, Provenance: ProvenancePromptOverride, Content: request.Config.PromptOverride.Text,
+			Role: ModelUser, Provenance: ProvenancePromptOverride, Content: request.Config.PromptOverride.Text,
 		})
 	}
-	type builtHistoryMessage struct {
-		message      ModelMessage
+	type builtHistoryEntry struct {
+		rendered     string
 		invocationID identity.InvocationID
 		current      bool
 	}
 	instructions := append([]ModelMessage(nil), messages...)
-	historyMessages := make([]builtHistoryMessage, 0, len(request.History))
+	historyEntries := make([]builtHistoryEntry, 0, len(request.History))
 	currentFound := false
 	for _, entry := range request.History {
 		if _, err := DigestHistoryEntry(entry); err != nil {
@@ -68,69 +72,71 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			continue
 		}
 		current := entry.InvocationID == request.CurrentInvocationID
-		message, err := serializeHistoryMessage(entry, current)
-		if err != nil {
-			return nil, err
-		}
 		if current {
 			if entry.Role != HistoryUser || currentFound {
 				return nil, NewError(ErrorIntegrityFailure, "build model context", fmt.Errorf("current invocation history is ambiguous"))
 			}
 			currentFound = true
 		}
-		historyMessages = append(historyMessages, builtHistoryMessage{
-			message: message, invocationID: entry.InvocationID, current: current,
+		rendered, err := serializeHistoryEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		historyEntries = append(historyEntries, builtHistoryEntry{
+			rendered: rendered, invocationID: entry.InvocationID, current: current,
 		})
 	}
 	if !currentFound {
 		return nil, NewError(ErrorIntegrityFailure, "build model context", fmt.Errorf("current user history is missing"))
 	}
-	if len(historyMessages) == 0 || !historyMessages[len(historyMessages)-1].current {
+	if len(historyEntries) == 0 || !historyEntries[len(historyEntries)-1].current {
 		return nil, NewError(ErrorConflict, "build model context", fmt.Errorf("newer chat context exists; retry in chat order"))
 	}
 	for {
 		messages = append(messages[:0], instructions...)
-		for _, built := range historyMessages {
-			messages = append(messages, built.message)
+		rendered := make([]string, 0, len(historyEntries))
+		for _, entry := range historyEntries {
+			rendered = append(rendered, entry.rendered)
 		}
+		messages = append(messages, ModelMessage{
+			Role:       ModelUser,
+			Provenance: ProvenanceHistoryTranscript,
+			Content:    strings.Join(rendered, "\n\n"),
+		})
 		if modelMessagesBytes(messages) <= int(builder.maxBytes) {
 			return cloneModelMessages(messages), nil
 		}
-		if len(historyMessages) <= 1 {
+		if len(historyEntries) <= 1 {
 			return nil, NewError(ErrorResourceExhausted, "build model context", fmt.Errorf("trusted prompts and current message exceed context byte limit"))
 		}
 		// Preserve trusted instructions and the current user entry. Remove every
 		// message of the oldest logical invocation together so trimming cannot
 		// leave an orphan assistant response or partial UTF-8/identity envelope.
-		oldest := historyMessages[0].invocationID
-		retained := make([]builtHistoryMessage, 0, len(historyMessages)-1)
-		for _, built := range historyMessages {
-			if built.invocationID != oldest {
-				retained = append(retained, built)
+		oldest := historyEntries[0].invocationID
+		retained := make([]builtHistoryEntry, 0, len(historyEntries)-1)
+		for _, entry := range historyEntries {
+			if entry.invocationID != oldest {
+				retained = append(retained, entry)
 			}
 		}
-		if len(retained) == len(historyMessages) {
+		if len(retained) == len(historyEntries) {
 			return nil, NewError(ErrorIntegrityFailure, "build model context", fmt.Errorf("history trimming made no progress"))
 		}
-		historyMessages = retained
+		historyEntries = retained
 	}
 }
 
-func serializeHistoryMessage(entry HistoryEntry, current bool) (ModelMessage, error) {
+func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 	text := flattenContent(entry.Content)
 	switch entry.Role {
 	case HistoryUser:
-		provenance := ProvenanceHistoryUser
-		if current {
-			provenance = ProvenanceCurrentUser
-		}
-		return ModelMessage{Role: ModelUser, Provenance: provenance, Content: formatLegacyHistoryEntry(entry, text)}, nil
+		return formatLegacyHistoryEntry(entry, text), nil
 	case HistoryAssistant:
-		return ModelMessage{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: formatLegacyHistoryEntry(entry, text)}, nil
+		return formatLegacyHistoryEntry(entry, text), nil
 	case HistorySystem:
-		return ModelMessage{Role: ModelSystem, Provenance: ProvenanceHistorySystem, Content: text}, nil
+		return formatLegacyHistoryEntry(entry, text), nil
 	default:
-		return ModelMessage{}, NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
+		return "", NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
 	}
 }
 
@@ -240,6 +246,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	currentCount := 0
 	basePromptCount := 0
 	overrideCount := 0
+	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
 		if strings.TrimSpace(message.Content) == "" {
@@ -252,7 +259,12 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			valid = promptPhase && overrideCount == 0 && message.Role == ModelSystem
 		case ProvenancePromptOverride:
 			overrideCount++
-			valid = promptPhase && message.Role == ModelSystem
+			// Prompt overrides originate from the user/configuration boundary,
+			// so they are deliberately a user-role block rather than trusted
+			// system instructions. The application safety policy remains the
+			// provider-owned system message that precedes this list.
+			valid = promptPhase && message.Role == ModelUser
+			promptPhase = false
 		case ProvenanceHistorySystem:
 			promptPhase = false
 			valid = message.Role == ModelSystem
@@ -266,12 +278,21 @@ func ValidateModelMessages(messages []ModelMessage) error {
 		case ProvenanceHistoryAssistant:
 			promptPhase = false
 			valid = message.Role == ModelAssistant
+		case ProvenanceHistoryTranscript:
+			promptPhase = false
+			historyTranscriptCount++
+			valid = message.Role == ModelUser
 		}
 		if !valid {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model role and provenance do not match"))
 		}
 	}
-	if currentCount != 1 || messages[len(messages)-1].Provenance != ProvenanceCurrentUser {
+	last := messages[len(messages)-1].Provenance
+	if historyTranscriptCount > 0 {
+		if historyTranscriptCount != 1 || currentCount != 0 || last != ProvenanceHistoryTranscript {
+			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("history transcript must be one final user block"))
+		}
+	} else if currentCount != 1 || last != ProvenanceCurrentUser {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("current user message must be last"))
 	}
 	if basePromptCount > 1 || overrideCount > 1 {

@@ -106,7 +106,7 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	request := <-model.started
 	if request.ConfigVersion != agent.InitialConfigVersion || len(request.Messages) < 2 ||
 		request.Messages[0].Content != "base prompt" ||
-		request.Messages[len(request.Messages)-1].Provenance != agent.ProvenanceCurrentUser {
+		request.Messages[len(request.Messages)-1].Provenance != agent.ProvenanceHistoryTranscript {
 		t.Fatalf("captured model request = %#v", request)
 	}
 	snapshot := current.Config().Snapshot()

@@ -60,10 +60,8 @@ func TestDeterministicContextBuilderGoldenLegacyTranscript(t *testing.T) {
 	}
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
-		{Role: ModelSystem, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryUser, Content: "【000004】 22:13\nAlice 【u_01234567】: halo"},
-		{Role: ModelAssistant, Provenance: ProvenanceHistoryAssistant, Content: "【000005】 22:13\nYou 【You】: Hai!"},
-		{Role: ModelUser, Provenance: ProvenanceCurrentUser, Content: "【000006】 22:13\nREPLYING TO 【000005】\nAlice 【u_01234567】: lanjutkan"},
+		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "override"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "【000004】 22:13\nAlice 【u_01234567】: halo\n\n【000005】 22:13\nYou 【You】: Hai!\n\n【000006】 22:13\nREPLYING TO 【000005】\nAlice 【u_01234567】: lanjutkan"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)
@@ -107,7 +105,7 @@ func TestContextBuilderKeepsInjectionAsUserDataAndDropsUndeliveredAssistant(t *t
 	if err != nil {
 		t.Fatalf("build context: %v", err)
 	}
-	if len(messages) != 2 || messages[1].Role != ModelUser || messages[1].Provenance != ProvenanceCurrentUser ||
+	if len(messages) != 2 || messages[1].Role != ModelUser || messages[1].Provenance != ProvenanceHistoryTranscript ||
 		!strings.Contains(messages[1].Content, injection) || strings.Contains(messages[1].Content, "not delivered") {
 		t.Fatalf("unsafe context mapping: %#v", messages)
 	}
@@ -148,12 +146,12 @@ func TestContextBuilderTrimsWholeLogicalInvocation(t *testing.T) {
 	}
 	unbounded, _ := NewDeterministicContextBuilder(MaxContextBytes)
 	full, err := unbounded.Build(request)
-	if err != nil || len(full) != 4 {
+	if err != nil || len(full) != 2 {
 		t.Fatalf("build full context = %#v, err=%v", full, err)
 	}
 	// This bound would fit if only the old user message were removed. The
 	// assistant from that same invocation must be removed with it.
-	limit := modelMessagesBytes(full) - len(full[1].Content) - 8
+	limit := modelMessagesBytes(full) - len("old-user") - len("old assistant") - 16
 	bounded, err := NewDeterministicContextBuilder(uint32(limit))
 	if err != nil {
 		t.Fatalf("create bounded builder: %v", err)
@@ -162,7 +160,8 @@ func TestContextBuilderTrimsWholeLogicalInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build trimmed context: %v", err)
 	}
-	if len(trimmed) != 2 || trimmed[0].Provenance != ProvenanceBasePrompt || trimmed[1].Provenance != ProvenanceCurrentUser {
+	if len(trimmed) != 2 || trimmed[0].Provenance != ProvenanceBasePrompt || trimmed[1].Provenance != ProvenanceHistoryTranscript ||
+		strings.Contains(trimmed[1].Content, "old-user") || !strings.Contains(trimmed[1].Content, "current") {
 		t.Fatalf("logical invocation was trimmed partially: %#v", trimmed)
 	}
 }
