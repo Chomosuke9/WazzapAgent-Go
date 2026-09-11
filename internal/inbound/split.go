@@ -100,9 +100,10 @@ func (handler *CommandHandler) Resume(ctx context.Context, message conversation.
 	if !IsCommand(message.Text) {
 		return agent.NewError(agent.ErrorInvalidArgument, "run command handler", fmt.Errorf("message is not a registered command"))
 	}
+	// FromMe command messages intentionally use this same command lane. The
+	// command permission expression decides whether the bot may run them; the
+	// AI lane still ignores ordinary FromMe messages to prevent self-replies.
 	switch {
-	case message.FromMe:
-		return handler.ignore(ctx, message, IgnoreFromMe)
 	case message.ChatKind == conversation.ChatStatus:
 		return handler.ignore(ctx, message, IgnoreStatus)
 	case !message.Allowlisted:

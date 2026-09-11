@@ -19,6 +19,35 @@ not model tools either: they are `/group delete`, `/group mute`, and
 The implementation is complete locally. A real-device production canary is
 still required.
 
+## Slash-command modules
+
+Slash commands use one module per command under
+`internal/inbound/commands`:
+
+- `help.go` (`/help`, `/menu`)
+- `info.go` (`/info`)
+- `dump.go` (`/dump`)
+- `reset.go` (`/reset`)
+- `prompt.go` (`/prompt`)
+- `permission.go` (`/permission`, `/permissions`)
+
+Each module exports one `command.Descriptor` containing its name, aliases,
+permission expression, capability, denial response, and handler. The
+`//go:generate` directive in
+that folder runs `internal/tools/commandgen`, which writes
+`registry_gen.go`. `internal/inbound` performs resume and authorization, then
+dispatches through that generated registry. Adding a command therefore only
+requires a new module plus `go generate ./...`; CI verifies that the generated
+registry is current. Ordinary `go build` does not invoke `go generate` by
+itself.
+
+Every descriptor is injected, including dangerous commands. The `Permission`
+expression is evaluated for each invocation with `!` > `and` > `or`, and is
+shared by human and trusted bot dispatches. For example,
+`"(isPrivate or isAdmin or isOwner) and !fromMe"` permits the listed human
+roles but rejects a bot-originated invocation. Owner/admin facts are resolved
+by the policy boundary; they are not taken from command text.
+
 Owner-only `/dump` uses the Agent's own context builder without invoking the
 model, then serializes every resulting role/content message into the chat. It
 therefore cannot drift from the bounded prompt/history input used by

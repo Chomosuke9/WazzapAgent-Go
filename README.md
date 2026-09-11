@@ -50,6 +50,16 @@ Termasuk:
 - `/health/live`, `/health/ready`, dan Prometheus text `/metrics` pada loopback secara default;
 - scrub content terminal setelah 24 jam, bounded history, dan hapus terminal turn/action setelah 30 hari.
 
+Command ditulis satu file per command di [`internal/inbound/commands`](internal/inbound/commands). Setiap file mengekspor satu `command.Descriptor` berisi metadata, `Permission`, capability, dan handler. Semua descriptor di-inject, termasuk command berbahaya; `Permission` dievaluasi untuk setiap invocation, misalnya `"(isPrivate or isAdmin or isOwner) and !fromMe"` untuk memblokir bot. `go generate ./...` memindai folder tersebut dan membuat `registry_gen.go`; CI selalu menjalankan generator lalu menolak perubahan generated file yang belum disimpan. Jadi setelah menambah command, jalankan generator sebelum build atau commit:
+
+```text
+go generate ./...
+go test ./...
+go build ./cmd/wazzapagent
+```
+
+Go tidak menjalankan `go generate` otomatis saat `go build` biasa. Jika command baru belum digenerate, binary masih memakai registry generated terakhir.
+
 Belum termasuk media, keluarga command lain di luar moderasi `/group delete|mute|kick`, scheduler, sub-agent, control panel, multi-account product surface, atau stable production release.
 
 Transcript mulai dibangun sejak event diterima oleh rewrite ini; tidak ada backfill otomatis dari riwayat provider. Balasan model dan command dicatat sebagai assistant entry, tetapi pesan outgoing manual yang dikirim di luar action outbox belum diimpor. Model context memakai renderer transcript compact (`【id】 HH:MM`, `REPLYING TO`, dan `sender 【senderRef】: text`) dalam satu final history block agar hemat token; setiap pesan tidak menjadi provider message terpisah. `senderRef` berbentuk tepat 6 karakter lowercase base36; format lain tidak diterima. Metadata durable tetap disimpan terstruktur di SQLite.
@@ -60,6 +70,7 @@ Persyaratan: Go toolchain sesuai `go.mod`, satu dedicated test account WhatsApp,
 
 ```text
 copy .env.example .env
+go generate ./...
 go test ./...
 go build ./cmd/wazzapagent
 ```

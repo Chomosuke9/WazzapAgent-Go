@@ -45,6 +45,7 @@ Tanpa `WAZZAP_ENV_FILE`, tidak adanya `.env` bukan error sehingga deployment env
 ## 2. Quality gate dan build
 
 ```text
+go generate ./...
 gofmt -l .
 go mod verify
 go vet ./...

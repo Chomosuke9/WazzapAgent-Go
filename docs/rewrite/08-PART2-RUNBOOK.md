@@ -80,6 +80,7 @@ Control commands:
 Jalankan dari repository root:
 
 ```text
+go generate ./...
 gofmt -l .
 go mod verify
 go vet ./...

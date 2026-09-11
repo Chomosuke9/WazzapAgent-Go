@@ -243,8 +243,11 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 func contextMessageMap(entries []HistoryEntry) map[string]identity.MessageID {
 	result := make(map[string]identity.MessageID, len(entries))
 	for _, entry := range entries {
-		if entry.Sequence > 0 && entry.Sequence <= 999999 && !entry.MessageID.IsZero() {
-			result[fmt.Sprintf("%06d", entry.Sequence)] = entry.MessageID
+		if entry.Sequence > 0 && !entry.MessageID.IsZero() {
+			// Keep lookup IDs byte-for-byte aligned with the compact transcript.
+			// Sequence numbers are durable and may cross the six-digit display
+			// boundary; the model only sees the modulo representation.
+			result[formatCompactContextID(entry.Sequence)] = entry.MessageID
 		}
 	}
 	return result

@@ -80,6 +80,37 @@ func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
 	}
 }
 
+func TestBotOriginatedPublicCommandUsesTheSameCommandLane(t *testing.T) {
+	fixture := newFixture(t)
+	command := fixture.candidate("bot-help", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/help")
+	command.FromMe = true
+	if err := fixture.handler.Handle(context.Background(), command); err != nil {
+		t.Fatalf("handle bot command: %v", err)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("bot command invoked model %d times", fixture.model.calls.Load())
+	}
+	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "/help") {
+		t.Fatalf("bot command response count/text = %d/%q", fixture.sender.count(), fixture.sender.last().Text)
+	}
+}
+
+func TestBotOriginatedOwnerCommandIsBlockedByFromMePermission(t *testing.T) {
+	fixture := newFixture(t)
+	command := fixture.candidate("bot-dump", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")
+	command.FromMe = true
+	command.Owner = true
+	if err := fixture.handler.Handle(context.Background(), command); err != nil {
+		t.Fatalf("handle bot owner command: %v", err)
+	}
+	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "hanya dapat digunakan oleh owner") {
+		t.Fatalf("bot owner denial count/text = %d/%q", fixture.sender.count(), fixture.sender.last().Text)
+	}
+	if fixture.model.calls.Load() != 0 {
+		t.Fatalf("blocked bot command invoked model %d times", fixture.model.calls.Load())
+	}
+}
+
 func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	fixture := newFixture(t)
 	dump := fixture.candidate("dump-1", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")
@@ -308,6 +339,13 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	}
 	if !strings.Contains(fixture.sender.last().Text, "History: aktif") {
 		t.Fatalf("info response = %q", fixture.sender.last().Text)
+	}
+	malformedInfo := fixture.candidate("control-info-malformed", chat, conversation.ChatDirect, "/info unexpected")
+	if err := fixture.handler.Handle(context.Background(), malformedInfo); err != nil {
+		t.Fatalf("malformed info: %v", err)
+	}
+	if got := fixture.sender.last().Text; got != "Format perintah /info tidak menerima argumen." {
+		t.Fatalf("malformed info response = %q", got)
 	}
 	denied := fixture.candidate("control-reset-denied", chat, conversation.ChatDirect, "/reset")
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {

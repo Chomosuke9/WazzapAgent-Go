@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	DefaultHistoryWindow   = 64
-	DefaultMaxContextBytes = 64 * 1024
-	MaxContextBytes        = 1024 * 1024
+	DefaultHistoryWindow    = 64
+	DefaultMaxContextBytes  = 64 * 1024
+	MaxContextBytes         = 1024 * 1024
+	compactContextIDModulus = 1_000_000
 )
 
 type ContextBuildRequest struct {
@@ -192,7 +193,7 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 // sequence remains the source of truth for ordering and lookup; this modulo
 // only affects the display representation sent to the model.
 func formatCompactContextID(sequence uint64) string {
-	return fmt.Sprintf("%06d", sequence%1_000_000)
+	return fmt.Sprintf("%06d", sequence%compactContextIDModulus)
 }
 
 func flattenContent(parts []ContentPart) string {

@@ -8,6 +8,17 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
+func TestContextMessageMapMatchesWrappedCompactHistoryIDs(t *testing.T) {
+	messageID, err := identity.ParseMessageID("018f0000-0000-7000-8000-000000000004")
+	if err != nil {
+		t.Fatalf("parse message ID: %v", err)
+	}
+	contextMessages := contextMessageMap([]HistoryEntry{{Sequence: 1_000_001, MessageID: messageID}})
+	if got := contextMessages["000001"]; got != messageID {
+		t.Fatalf("wrapped context message = %v, want %v", got, messageID)
+	}
+}
+
 func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	builder, err := NewDeterministicContextBuilder(DefaultMaxContextBytes)
 	if err != nil {

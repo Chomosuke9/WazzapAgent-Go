@@ -173,6 +173,17 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	if len(encoded.Tools) != 2 || encoded.Tools[0].Type != "function" || encoded.Tools[0].Function.Name != "reply_message" || encoded.Tools[1].Function.Name != "react_to_message" {
 		t.Fatalf("tool schema = %#v", encoded.Tools)
 	}
+	var replySchema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(encoded.Tools[0].Function.Parameters, &replySchema); err != nil {
+		t.Fatalf("decode reply schema: %v", err)
+	}
+	if got := replySchema.Properties["context_msg_id"].Enum; len(got) != 2 || got[0] != "none" || got[1] != "000001" {
+		t.Fatalf("reply context enum = %#v", got)
+	}
 }
 
 func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
@@ -225,7 +236,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	}
 }
 
-func TestReplyMessageDefaultsDeleteAnchorAndRejectsUnknownReplyContext(t *testing.T) {
+func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
@@ -235,9 +246,15 @@ func TestReplyMessageDefaultsDeleteAnchorAndRejectsUnknownReplyContext(t *testin
 		t.Fatalf("default command anchor = %#v, %v", effects, err)
 	}
 
-	bad := json.RawMessage(`[{"id":"reply_2","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":null,\"command_context_msg_id\":null}"}}]`)
-	if _, _, err := decodeModelOutput("", bad, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
-		t.Fatalf("unknown reply context error = %v", err)
+	plain := json.RawMessage(`[{"id":"reply_2","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	text, effects, err := decodeModelOutput("", plain, request)
+	if err != nil || text != "x" || len(effects) != 0 {
+		t.Fatalf("unknown plain reply context = %q, %#v, %v", text, effects, err)
+	}
+
+	delete := json.RawMessage(`[{"id":"reply_3","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
+	if _, _, err := decodeModelOutput("", delete, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("unknown delete anchor error = %v", err)
 	}
 }
 

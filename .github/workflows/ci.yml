@@ -20,6 +20,10 @@ jobs:
         with:
           go-version: "1.26.5"
           cache: true
+      - name: Generate command registry
+        run: go generate ./...
+      - name: Verify generated files
+        run: git diff --exit-code -- internal/inbound/commands/registry_gen.go
       - name: Verify formatting
         shell: bash
         run: test -z "$(gofmt -l .)"
@@ -61,6 +65,10 @@ jobs:
         with:
           go-version: "1.26.5"
           cache: true
+      - name: Generate command registry
+        run: go generate ./...
+      - name: Verify generated files
+        run: git diff --exit-code -- internal/inbound/commands/registry_gen.go
       - name: Cross-build
         shell: bash
         env:

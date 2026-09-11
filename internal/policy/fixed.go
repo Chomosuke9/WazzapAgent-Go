@@ -61,15 +61,108 @@ func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal
 	if !gate.enabled.Load() || principal.Kind != PrincipalHuman {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("eligible human principal is required"))
 	}
-	requiresOwner := false
-	switch capability {
-	case CapabilityCommandHelp, CapabilityCommandInfo:
-	case CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite, CapabilityChatContextRead:
-		requiresOwner = true
-	default:
+	if !capability.Valid() {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("command capability is not enabled"))
 	}
-	return gate.authorizeHuman(ctx, principal, permission, requiresOwner)
+	// The descriptor's Permission expression is the command role gate. The
+	// capability remains an effect/feature identity and is validated here, but
+	// it must not silently override a command module's declared expression.
+	return gate.authorizeHuman(ctx, principal, permission, false)
+}
+
+// CommandPermissionFacts resolves the facts consumed by a command's
+// declarative permission expression. Human facts come from the current
+// durable participant/chat record plus a fresh provider authority read. A
+// model/bot invocation is represented by PrincipalModel and receives
+// fromMe=true and the bot's current group-admin fact; it never receives the
+// owner fact.
+//
+// The bool is intentionally explicit. Callers must not infer bot origin from
+// a sender ID or from command text.
+func (gate *FixedGate) CommandPermissionFacts(
+	ctx context.Context,
+	principal Principal,
+	permission agent.PermissionConfig,
+	fromMe bool,
+) (PermissionFacts, error) {
+	if !gate.enabled.Load() {
+		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("agent kill switch is disabled"))
+	}
+	if err := principal.Validate(); err != nil {
+		return PermissionFacts{}, err
+	}
+	if err := gate.requirePolicy(permission); err != nil {
+		return PermissionFacts{}, err
+	}
+
+	switch principal.Kind {
+	case PrincipalHuman:
+		if fromMe {
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("human principals cannot be marked as bot-originated"))
+		}
+		access, err := gate.chats.ReadHumanAccess(ctx, principal)
+		if err != nil {
+			if agent.IsCode(err, agent.ErrorNotFound) {
+				return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "read human command access", fmt.Errorf("principal is no longer current"))
+			}
+			return PermissionFacts{}, err
+		}
+		if err := access.Validate(); err != nil {
+			return PermissionFacts{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve human command permission facts", err)
+		}
+		if !access.Allowlisted || access.ChatKind == conversation.ChatStatus {
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve human command permission facts", fmt.Errorf("current chat policy denies principal"))
+		}
+		authority, err := gate.authority.ReadChatAuthority(ctx, principal)
+		if err != nil {
+			return PermissionFacts{}, err
+		}
+		if err := authority.Validate(); err != nil {
+			return PermissionFacts{}, err
+		}
+		return PermissionFacts{
+			IsOwner:   access.ConfiguredOwner,
+			IsAdmin:   authority.ActorIsAdmin,
+			IsGroup:   authority.ChatKind == conversation.ChatGroup,
+			IsPrivate: authority.ChatKind == conversation.ChatDirect,
+			FromMe:    false,
+		}, nil
+
+	case PrincipalModel:
+		if !fromMe {
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", fmt.Errorf("model principals must be explicitly marked fromMe"))
+		}
+		current, err := gate.configs.Load(ctx, principal.Key())
+		if err != nil {
+			return PermissionFacts{}, err
+		}
+		if current.Permission != permission {
+			return PermissionFacts{}, agent.NewError(agent.ErrorConflict, "resolve bot command permission facts", fmt.Errorf("command permission snapshot is stale"))
+		}
+		allowed, err := gate.chats.IsChatAllowlisted(ctx, principal.Key())
+		if err != nil {
+			return PermissionFacts{}, err
+		}
+		if !allowed {
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", fmt.Errorf("chat is not allowlisted"))
+		}
+		authority, err := gate.authority.ReadChatAuthority(ctx, principal)
+		if err != nil {
+			return PermissionFacts{}, err
+		}
+		if err := authority.Validate(); err != nil {
+			return PermissionFacts{}, err
+		}
+		return PermissionFacts{
+			IsOwner:   false,
+			IsAdmin:   authority.BotIsAdmin,
+			IsGroup:   authority.ChatKind == conversation.ChatGroup,
+			IsPrivate: authority.ChatKind == conversation.ChatDirect,
+			FromMe:    true,
+		}, nil
+	default:
+		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("only human or model principals may dispatch commands"))
+	}
 }
 
 // AuthorizeEffect is deliberately outside Agent. It reevaluates the durable

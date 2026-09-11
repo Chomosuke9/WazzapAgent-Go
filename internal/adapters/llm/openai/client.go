@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -241,13 +242,45 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 	if request.CurrentMessageID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "build model tools", fmt.Errorf("current message identity is required for tools"))
 	}
+	contextIDs := sortedContextMessageIDs(request.ContextMessages)
+	replyContextIDs := append([]string{"none"}, contextIDs...)
+	replyParameters, err := json.Marshal(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"context_msg_id": map[string]any{
+				"type":        "string",
+				"enum":        replyContextIDs,
+				"description": "Use none for an ordinary reply; otherwise use one exact six-digit ID from the supplied compact history.",
+			},
+			"text": map[string]any{
+				"type":      "string",
+				"minLength": 1,
+			},
+			"command": map[string]any{
+				"type":     []string{"array", "null"},
+				"items":    map[string]any{"type": "string"},
+				"maxItems": 8,
+			},
+			"command_context_msg_id": map[string]any{
+				"type":        []string{"array", "null"},
+				"items":       map[string]any{"type": "string", "enum": replyContextIDs},
+				"maxItems":    8,
+				"description": "Optional per-command anchors; use none when a command has no message anchor.",
+			},
+		},
+		"required":             []string{"context_msg_id", "text", "command", "command_context_msg_id"},
+		"additionalProperties": false,
+	})
+	if err != nil {
+		return nil, agent.NewError(agent.ErrorInternal, "build model tools", err)
+	}
 	tools := []completionTool{{Type: "function", Function: completionFunction{
 		Name:        "reply_message",
-		Description: "Return the visible reply and optionally request /group delete, /group mute, or /group kick commands. Commands are separately parsed and authorized.",
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"context_msg_id":{"type":"string"},"text":{"type":"string","minLength":1},"command":{"type":["array","null"],"items":{"type":"string"},"maxItems":8},"command_context_msg_id":{"type":["array","null"],"items":{"type":"string"},"maxItems":8}},"required":["context_msg_id","text","command","command_context_msg_id"],"additionalProperties":false}`),
+		Description: "Return the visible reply and optionally request /group delete, /group mute, or /group kick commands. Use only the exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
+		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {
-		name, description, parameters, ok := toolSchema(capability)
+		name, description, parameters, ok := toolSchema(capability, contextIDs)
 		if !ok {
 			// Group command capabilities authorize command strings carried by
 			// reply_message. They are deliberately not standalone provider tools.
@@ -258,10 +291,35 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 	return tools, nil
 }
 
-func toolSchema(capability agent.Capability) (string, string, json.RawMessage, bool) {
+func sortedContextMessageIDs(contextMessages map[string]identity.MessageID) []string {
+	ids := make([]string, 0, len(contextMessages))
+	for id := range contextMessages {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func toolSchema(capability agent.Capability, contextIDs []string) (string, string, json.RawMessage, bool) {
 	switch capability {
 	case "message.react":
-		return "react_to_message", "React to one message from the supplied compact history.", json.RawMessage(`{"type":"object","properties":{"context_msg_id":{"type":"string","minLength":6,"maxLength":6},"emoji":{"type":"string","maxLength":64}},"required":["context_msg_id","emoji"],"additionalProperties":false}`), true
+		contextProperty := map[string]any{"type": "string", "minLength": 6, "maxLength": 6}
+		if len(contextIDs) > 0 {
+			contextProperty["enum"] = contextIDs
+		}
+		parameters, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"context_msg_id": contextProperty,
+				"emoji":          map[string]any{"type": "string", "maxLength": 64},
+			},
+			"required":             []string{"context_msg_id", "emoji"},
+			"additionalProperties": false,
+		})
+		if err != nil {
+			return "", "", nil, false
+		}
+		return "react_to_message", "React to one message from the supplied compact history. Use only an exact six-digit history ID from the schema.", parameters, true
 	default:
 		return "", "", nil, false
 	}
@@ -375,15 +433,10 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 	if strings.TrimSpace(args.Text) == "" || len(args.Text) > agent.MaxResponseBytes {
 		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
 	}
-	var replyTarget identity.MessageID
-	if args.ContextMessageID != "none" {
-		var ok bool
-		replyTarget, ok = request.ContextMessages[args.ContextMessageID]
-		if !ok {
-			return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
-		}
-	}
 	if args.Commands == nil || len(*args.Commands) == 0 {
+		// context_msg_id is currently an optional command anchor. A stale or
+		// hallucinated anchor must not suppress an otherwise valid visible reply.
+		// There is no target-dependent side effect to authorize in this branch.
 		return args.Text, nil, nil
 	}
 	commands := *args.Commands
@@ -406,7 +459,6 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 			return "", nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("group command exceeds current permission level"))
 		}
 		var commandTarget identity.MessageID
-		commandTarget = replyTarget
 		if args.CommandContextMessageID != nil && index < len(*args.CommandContextMessageID) {
 			contextRef := (*args.CommandContextMessageID)[index]
 			if contextRef == "none" {
@@ -417,6 +469,12 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 				if !ok {
 					return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
 				}
+			}
+		} else if fields[1] == "delete" && args.ContextMessageID != "none" {
+			var ok bool
+			commandTarget, ok = request.ContextMessages[args.ContextMessageID]
+			if !ok {
+				return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
 			}
 		}
 		var target identity.MessageID

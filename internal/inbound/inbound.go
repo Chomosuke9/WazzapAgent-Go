@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"strings"
 	"sync"
 	"time"
 
@@ -84,11 +83,6 @@ func (reason IgnoreReason) Valid() bool {
 	}
 }
 
-type PromptMutation struct {
-	ExpectedVersion agent.ConfigVersion
-	AppliedVersion  agent.ConfigVersion
-}
-
 type Registry interface {
 	AgentFor(context.Context, agent.Key) (*agent.Agent, error)
 }
@@ -97,6 +91,15 @@ type Policy interface {
 	AuthorizeInvocation(context.Context, conversation.IncomingMessage, agent.PermissionConfig) error
 	AuthorizeCommand(context.Context, policy.Principal, policy.Capability, agent.PermissionConfig) error
 	ModelCapabilities(agent.PermissionConfig) (agent.CapabilitySet, error)
+}
+
+// CommandPermissionFactsProvider is implemented by policies that can resolve
+// the current owner/admin/chat facts used by a command's permission DSL. It is
+// optional for compatibility with small test policies; callers without it
+// receive only the safe structural facts and therefore fail closed for owner
+// or admin expressions.
+type CommandPermissionFactsProvider interface {
+	CommandPermissionFacts(context.Context, policy.Principal, agent.PermissionConfig, bool) (policy.PermissionFacts, error)
 }
 
 type ResponseWriter interface {
@@ -152,75 +155,80 @@ func (handler *CommandHandler) resumeCommand(
 	if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {
 		return err
 	}
-	principal, err := policy.HumanPrincipal(message)
+	principal, err := commandPrincipal(message)
 	if err != nil {
 		return err
 	}
-	if err := handler.policy.AuthorizeCommand(ctx, principal, descriptor.Capability, snapshot.Permission); err != nil {
-		return handler.responses.Reply(ctx, message, snapshot.Version, commandDeniedReply(descriptor.Capability))
+	facts, err := handler.commandPermissionFacts(ctx, principal, snapshot.Permission, message)
+	if err != nil {
+		if agent.IsCode(err, agent.ErrorPermissionDenied) {
+			reply := descriptor.DeniedReply
+			if reply == "" {
+				reply = "Perintah ini tidak dapat digunakan pada chat ini."
+			}
+			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
+		}
+		return err
+	}
+	allowed, err := builtinCommandRegistry.Allows(request, facts)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		reply := descriptor.DeniedReply
+		if reply == "" {
+			reply = "Perintah ini tidak dapat digunakan pada chat ini."
+		}
+		return handler.responses.Reply(ctx, message, snapshot.Version, reply)
+	}
+	if !message.FromMe {
+		if err := handler.policy.AuthorizeCommand(ctx, principal, descriptor.Capability, snapshot.Permission); err != nil {
+			reply := descriptor.DeniedReply
+			if reply == "" {
+				reply = "Perintah ini tidak dapat digunakan pada chat ini."
+			}
+			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
+		}
 	}
 
-	switch request.Name {
-	case "prompt":
-		if descriptor.Capability != policy.CapabilityPromptWrite {
-			return commandCapabilityMismatch(request, descriptor.Capability)
-		}
-		parsed, recognized := ParsePromptCommand(canonicalCommandText(request))
-		if !recognized {
-			return agent.NewError(agent.ErrorIntegrityFailure, "dispatch registered command", fmt.Errorf("prompt command was not parsed"))
-		}
-		return handler.handlePrompt(ctx, currentAgent, snapshot, message, parsed)
-	case "help", "info", "reset", "dump":
-		parsed, valid := parseControlRequest(request)
-		if !valid {
-			return handler.responses.Reply(ctx, message, snapshot.Version, invalidControlReply(request))
-		}
-		if descriptor.Capability != controlCapability(parsed) {
-			return commandCapabilityMismatch(request, descriptor.Capability)
-		}
-		return handler.handleControl(ctx, currentAgent, snapshot, message, parsed)
-	case "permission":
-		if descriptor.Capability != policy.CapabilityPermissionWrite {
-			return commandCapabilityMismatch(request, descriptor.Capability)
-		}
-		parsed, recognized := ParsePermissionCommand(canonicalCommandText(request))
-		if !recognized {
-			return agent.NewError(agent.ErrorIntegrityFailure, "dispatch registered command", fmt.Errorf("permission command was not parsed"))
-		}
-		return handler.handlePermission(ctx, currentAgent, snapshot, message, parsed)
-	default:
-		return commandCapabilityMismatch(request, descriptor.Capability)
-	}
+	return builtinCommandRegistry.Dispatch(ctx, request, command.Context{
+		Agent:     currentAgent,
+		Snapshot:  snapshot,
+		Message:   message,
+		Facts:     facts,
+		Registry:  builtinCommandRegistry,
+		Store:     handler.store,
+		Responses: handler.responses,
+		Observer:  handler.observer,
+	})
 }
 
-func commandDeniedReply(capability policy.Capability) string {
-	switch capability {
-	case policy.CapabilityPromptWrite:
-		return "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi."
-	case policy.CapabilityHistoryReset:
-		return "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi."
-	case policy.CapabilityChatContextRead:
-		return "Perintah /dump hanya dapat digunakan oleh owner yang dikonfigurasi."
-	case policy.CapabilityPermissionWrite:
-		return "Perintah /permission hanya dapat digunakan oleh owner yang dikonfigurasi."
-	default:
-		return "Perintah ini tidak dapat digunakan pada chat ini."
+func commandPrincipal(message conversation.IncomingMessage) (policy.Principal, error) {
+	if !message.FromMe {
+		return policy.HumanPrincipal(message)
 	}
+	key := agent.Key{TenantID: message.TenantID, AccountID: message.AccountID, ChatID: message.ChatID}
+	return policy.ModelPrincipal(key, message.InvocationID)
 }
 
-func controlCapability(command ControlCommandKind) policy.Capability {
-	switch command {
-	case ControlHelp:
-		return policy.CapabilityCommandHelp
-	case ControlInfo:
-		return policy.CapabilityCommandInfo
-	case ControlReset:
-		return policy.CapabilityHistoryReset
-	case ControlDump:
-		return policy.CapabilityChatContextRead
-	default:
-		return ""
+func (handler *CommandHandler) commandPermissionFacts(
+	ctx context.Context,
+	principal policy.Principal,
+	permission agent.PermissionConfig,
+	message conversation.IncomingMessage,
+) (command.PermissionFacts, error) {
+	if provider, ok := handler.policy.(CommandPermissionFactsProvider); ok {
+		facts, err := provider.CommandPermissionFacts(ctx, principal, permission, message.FromMe)
+		return command.PermissionFacts(facts), err
 	}
+	// A custom policy that does not expose trusted role lookup can still use
+	// structural expressions such as "public and !fromMe". Owner/admin facts
+	// deliberately remain false instead of trusting inbound flags.
+	return command.PermissionFacts{
+		IsGroup:   message.ChatKind == conversation.ChatGroup,
+		IsPrivate: message.ChatKind == conversation.ChatDirect,
+		FromMe:    message.FromMe,
+	}, nil
 }
 
 func (services *handlerServices) loadAgent(
@@ -339,80 +347,6 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 	}, nil
 }
 
-type ControlCommandKind uint8
-
-const (
-	ControlHelp ControlCommandKind = iota + 1
-	ControlInfo
-	ControlReset
-	ControlDump
-)
-
-func ParseControlCommand(text string) (ControlCommandKind, bool) {
-	switch text {
-	case "/help":
-		return ControlHelp, true
-	case "/info":
-		return ControlInfo, true
-	case "/reset":
-		return ControlReset, true
-	case "/dump":
-		return ControlDump, true
-	default:
-		return 0, false
-	}
-}
-
-func (handler *CommandHandler) handleControl(
-	ctx context.Context,
-	currentAgent *agent.Agent,
-	snapshot agent.ConfigSnapshot,
-	message conversation.IncomingMessage,
-	command ControlCommandKind,
-) error {
-	response := ""
-	switch command {
-	case ControlHelp:
-		response = "Perintah: /help, /info, /dump, /reset, /prompt view, /prompt set <teks>, /prompt clear, /permission <0-3>."
-	case ControlInfo:
-		page, err := currentAgent.History().List(ctx, snapshot.Version, agent.HistoryQuery{Limit: 1})
-		if err != nil {
-			return err
-		}
-		historyState := "kosong"
-		if len(page.Entries) > 0 {
-			historyState = "aktif"
-		}
-		response = fmt.Sprintf("Agent aktif. Model: %s. Config version: %d. History: %s.", snapshot.Model.Model, snapshot.Version, historyState)
-	case ControlReset:
-		if err := currentAgent.History().Reset(ctx, snapshot.Version); err != nil {
-			return err
-		}
-		response = "History percakapan berhasil direset."
-	case ControlDump:
-		input, err := currentAgent.BuildInput(ctx, snapshot.Version, message.InvocationID)
-		if err != nil {
-			return err
-		}
-		response = agent.SerializeModelMessages(input)
-	default:
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle control command", fmt.Errorf("unknown control command"))
-	}
-	if command == ControlReset {
-		// The confirmation itself is part of the full transcript, but it must
-		// not immediately repopulate the new conversation context. The second
-		// tombstone is idempotent and runs after the durable response plan exists.
-		replyErr := handler.responses.Reply(ctx, message, snapshot.Version, response)
-		resetErr := currentAgent.History().Reset(ctx, snapshot.Version)
-		handler.observer.ObserveHistoryReset()
-		if replyErr != nil {
-			return replyErr
-		}
-		return resetErr
-	}
-	return handler.responses.Reply(ctx, message, snapshot.Version, response)
-}
-
 func (services *handlerServices) ignore(ctx context.Context, message conversation.IncomingMessage, reason IgnoreReason) error {
 	if err := services.store.MarkIgnored(ctx, message, reason); err != nil {
 		return err
@@ -425,224 +359,4 @@ func (services *handlerServices) stripe(chatID identity.ChatID) *sync.Mutex {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(chatID.String()))
 	return &services.stripes[hash.Sum32()%uint32(len(services.stripes))]
-}
-
-func (handler *CommandHandler) handlePrompt(
-	ctx context.Context,
-	currentAgent *agent.Agent,
-	snapshot agent.ConfigSnapshot,
-	message conversation.IncomingMessage,
-	command PromptCommand,
-) error {
-	var response string
-	switch command.Kind {
-	case PromptView:
-		if snapshot.PromptOverride == nil {
-			response = "Prompt override belum diatur."
-		} else {
-			response = "Prompt override saat ini:\n" + snapshot.PromptOverride.Text
-		}
-	case PromptSet:
-		updated, err := handler.applyPromptMutation(ctx, currentAgent, snapshot, message, command)
-		if err != nil {
-			return err
-		}
-		snapshot.Version = updated
-		response = "Prompt override berhasil diperbarui."
-	case PromptClear:
-		updated, err := handler.applyPromptMutation(ctx, currentAgent, snapshot, message, command)
-		if err != nil {
-			return err
-		}
-		snapshot.Version = updated
-		response = "Prompt override berhasil dihapus."
-	case PromptInvalid:
-		response = fmt.Sprintf("Format: /prompt view, /prompt set <teks>, atau /prompt clear. Panjang prompt maksimal %d byte.", agent.MaxPromptBytes)
-	default:
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("unknown command kind"))
-	}
-	return handler.responses.Reply(ctx, message, snapshot.Version, response)
-}
-
-func (handler *CommandHandler) applyPromptMutation(
-	ctx context.Context,
-	currentAgent *agent.Agent,
-	snapshot agent.ConfigSnapshot,
-	message conversation.IncomingMessage,
-	command PromptCommand,
-) (agent.ConfigVersion, error) {
-	journal, err := handler.store.BeginPromptMutation(ctx, message, command, snapshot.Version)
-	if err != nil {
-		return 0, err
-	}
-	if journal.AppliedVersion != 0 {
-		return journal.AppliedVersion, nil
-	}
-	if snapshot.Version == journal.ExpectedVersion+1 && promptMutationMatches(snapshot, command) {
-		if err := handler.store.MarkPromptMutationApplied(ctx, message, journal.ExpectedVersion, snapshot.Version); err != nil {
-			return 0, err
-		}
-		return snapshot.Version, nil
-	}
-	if snapshot.Version != journal.ExpectedVersion {
-		return 0, agent.NewError(agent.ErrorConflict, "apply prompt mutation", fmt.Errorf("config changed after command authorization; resend the command"))
-	}
-	var updated agent.ConfigSnapshot
-	switch command.Kind {
-	case PromptSet:
-		updated, err = currentAgent.Config().SetPromptOverride(ctx, snapshot.Version, agent.PromptOverride{Mode: agent.PromptAppend, Text: command.Text})
-	case PromptClear:
-		updated, err = currentAgent.Config().ClearPromptOverride(ctx, snapshot.Version)
-	default:
-		return 0, agent.NewError(agent.ErrorInvalidArgument, "apply prompt mutation", fmt.Errorf("command is not a mutation"))
-	}
-	if err != nil {
-		return 0, err
-	}
-	if err := handler.store.MarkPromptMutationApplied(ctx, message, journal.ExpectedVersion, updated.Version); err != nil {
-		return 0, err
-	}
-	return updated.Version, nil
-}
-
-func (handler *CommandHandler) handlePermission(
-	ctx context.Context,
-	currentAgent *agent.Agent,
-	snapshot agent.ConfigSnapshot,
-	message conversation.IncomingMessage,
-	command PermissionCommand,
-) error {
-	switch command.Kind {
-	case PermissionView:
-		return handler.responses.Reply(ctx, message, snapshot.Version, formatModerationLevel(snapshot.Permission.ModerationLevel))
-	case PermissionSet:
-		updated, err := handler.applyPermissionMutation(ctx, currentAgent, snapshot, message, command)
-		if err != nil {
-			return err
-		}
-		return handler.responses.Reply(ctx, message, updated, "Permission diperbarui. "+formatModerationLevel(command.Level))
-	case PermissionInvalid:
-		return handler.responses.Reply(ctx, message, snapshot.Version, "Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
-	default:
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("unknown command kind"))
-	}
-}
-
-func (handler *CommandHandler) applyPermissionMutation(
-	ctx context.Context,
-	currentAgent *agent.Agent,
-	snapshot agent.ConfigSnapshot,
-	message conversation.IncomingMessage,
-	command PermissionCommand,
-) (agent.ConfigVersion, error) {
-	journal, err := handler.store.BeginPermissionMutation(ctx, message, command, snapshot.Version)
-	if err != nil {
-		return 0, err
-	}
-	if journal.AppliedVersion != 0 {
-		return journal.AppliedVersion, nil
-	}
-	if snapshot.Version == journal.ExpectedVersion+1 && permissionMutationMatches(snapshot, command) {
-		if err := handler.store.MarkPermissionMutationApplied(ctx, message, journal.ExpectedVersion, snapshot.Version); err != nil {
-			return 0, err
-		}
-		return snapshot.Version, nil
-	}
-	if snapshot.Version != journal.ExpectedVersion {
-		return 0, agent.NewError(agent.ErrorConflict, "apply permission mutation", fmt.Errorf("config changed after command authorization; resend the command"))
-	}
-	permission := snapshot.Permission
-	permission.ModerationLevel = command.Level
-	updated, err := currentAgent.Config().SetPermission(ctx, snapshot.Version, permission)
-	if err != nil {
-		return 0, err
-	}
-	if err := handler.store.MarkPermissionMutationApplied(ctx, message, journal.ExpectedVersion, updated.Version); err != nil {
-		return 0, err
-	}
-	return updated.Version, nil
-}
-
-func promptMutationMatches(snapshot agent.ConfigSnapshot, command PromptCommand) bool {
-	switch command.Kind {
-	case PromptSet:
-		return snapshot.PromptOverride != nil && snapshot.PromptOverride.Mode == agent.PromptAppend && snapshot.PromptOverride.Text == command.Text
-	case PromptClear:
-		return snapshot.PromptOverride == nil
-	default:
-		return false
-	}
-}
-
-func permissionMutationMatches(snapshot agent.ConfigSnapshot, command PermissionCommand) bool {
-	return command.Kind == PermissionSet && snapshot.Permission.ModerationLevel == command.Level
-}
-
-type PermissionCommandKind uint8
-
-const (
-	PermissionInvalid PermissionCommandKind = iota + 1
-	PermissionView
-	PermissionSet
-)
-
-type PermissionCommand struct {
-	Kind  PermissionCommandKind
-	Level agent.ModerationLevel
-}
-
-func ParsePermissionCommand(text string) (PermissionCommand, bool) {
-	if text == "/permission" || text == "/permission view" {
-		return PermissionCommand{Kind: PermissionView}, true
-	}
-	if !strings.HasPrefix(text, "/permission ") {
-		return PermissionCommand{}, false
-	}
-	argument := strings.TrimSpace(strings.TrimPrefix(text, "/permission "))
-	if len(argument) == 1 && argument[0] >= '0' && argument[0] <= '3' {
-		return PermissionCommand{Kind: PermissionSet, Level: agent.ModerationLevel(argument[0] - '0')}, true
-	}
-	return PermissionCommand{Kind: PermissionInvalid}, true
-}
-
-func formatModerationLevel(level agent.ModerationLevel) string {
-	labels := [...]string{"Level 0: moderasi nonaktif.", "Level 1: delete.", "Level 2: delete dan mute.", "Level 3: delete, mute, dan kick."}
-	if !level.Valid() {
-		return "Permission tidak valid."
-	}
-	return labels[level]
-}
-
-type PromptCommandKind uint8
-
-const (
-	PromptInvalid PromptCommandKind = iota + 1
-	PromptView
-	PromptSet
-	PromptClear
-)
-
-type PromptCommand struct {
-	Kind PromptCommandKind
-	Text string
-}
-
-func ParsePromptCommand(text string) (PromptCommand, bool) {
-	if text == "/prompt" || text == "/prompt view" {
-		return PromptCommand{Kind: PromptView}, true
-	}
-	if text == "/prompt clear" {
-		return PromptCommand{Kind: PromptClear}, true
-	}
-	if strings.HasPrefix(text, "/prompt set ") {
-		value := strings.TrimPrefix(text, "/prompt set ")
-		if strings.TrimSpace(value) == "" || len(value) > agent.MaxPromptBytes {
-			return PromptCommand{Kind: PromptInvalid}, true
-		}
-		return PromptCommand{Kind: PromptSet, Text: value}, true
-	}
-	if text == "/prompt set" || strings.HasPrefix(text, "/prompt ") {
-		return PromptCommand{Kind: PromptInvalid}, true
-	}
-	return PromptCommand{}, false
 }

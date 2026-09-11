@@ -3,19 +3,15 @@ package inbound
 import (
 	"fmt"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	builtincommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
 )
 
-var builtinCommandRegistry = mustCommandRegistry([]command.Descriptor{
-	{Name: "help", Aliases: []string{"menu"}, Capability: policy.CapabilityCommandHelp},
-	{Name: "info", Capability: policy.CapabilityCommandInfo},
-	{Name: "dump", Capability: policy.CapabilityChatContextRead},
-	{Name: "reset", Capability: policy.CapabilityHistoryReset},
-	{Name: "prompt", Capability: policy.CapabilityPromptWrite},
-	{Name: "permission", Aliases: []string{"permissions"}, Capability: policy.CapabilityPermissionWrite},
-})
+// builtinCommandRegistry is generated from one descriptor per file in
+// internal/inbound/commands. The inbound package owns the boundary concerns
+// (resume, authorization, and service wiring); command semantics live beside
+// each command's descriptor and handler.
+var builtinCommandRegistry = mustCommandRegistry(builtincommands.Descriptors)
 
 func mustCommandRegistry(descriptors []command.Descriptor) *command.Registry {
 	registry, err := command.NewRegistry(descriptors)
@@ -31,28 +27,48 @@ func parseRegisteredCommand(text string) (command.Request, command.Descriptor, b
 	return builtinCommandRegistry.Parse(text)
 }
 
-func canonicalCommandText(request command.Request) string {
-	text := "/" + string(request.Name)
-	if request.ArgumentsPresent {
-		return text + " " + request.Arguments
-	}
-	return text
+// The aliases below preserve the inbound package API used by persistence and
+// existing callers while keeping command grammar/types in internal/command.
+type PromptMutation = command.PromptMutation
+
+type ControlCommandKind = command.ControlCommandKind
+
+const (
+	ControlHelp  = command.ControlHelp
+	ControlInfo  = command.ControlInfo
+	ControlReset = command.ControlReset
+	ControlDump  = command.ControlDump
+)
+
+func ParseControlCommand(text string) (ControlCommandKind, bool) {
+	return command.ParseControlCommand(text)
 }
 
-func parseControlRequest(request command.Request) (ControlCommandKind, bool) {
-	if request.ArgumentsPresent {
-		return 0, false
-	}
-	return ParseControlCommand(canonicalCommandText(request))
+type PermissionCommandKind = command.PermissionCommandKind
+
+const (
+	PermissionInvalid = command.PermissionInvalid
+	PermissionView    = command.PermissionView
+	PermissionSet     = command.PermissionSet
+)
+
+type PermissionCommand = command.PermissionCommand
+
+func ParsePermissionCommand(text string) (PermissionCommand, bool) {
+	return command.ParsePermissionCommand(text)
 }
 
-func invalidControlReply(request command.Request) string {
-	return fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name)
-}
+type PromptCommandKind = command.PromptCommandKind
 
-// commandCapabilityMismatch is a defensive integrity error. It means a
-// developer changed the declarative registry without changing the semantic
-// handler; unrecognized command text itself is never an integrity failure.
-func commandCapabilityMismatch(request command.Request, capability policy.Capability) error {
-	return agent.NewError(agent.ErrorIntegrityFailure, "dispatch registered command", fmt.Errorf("command %q has unexpected capability %q", request.Name, capability))
+const (
+	PromptInvalid = command.PromptInvalid
+	PromptView    = command.PromptView
+	PromptSet     = command.PromptSet
+	PromptClear   = command.PromptClear
+)
+
+type PromptCommand = command.PromptCommand
+
+func ParsePromptCommand(text string) (PromptCommand, bool) {
+	return command.ParsePromptCommand(text)
 }
