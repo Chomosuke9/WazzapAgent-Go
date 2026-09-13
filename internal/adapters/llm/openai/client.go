@@ -421,14 +421,37 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 }
 
 func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (string, []agent.ModelEffect, error) {
-	var args struct {
-		ContextMessageID        string    `json:"context_msg_id"`
-		Text                    string    `json:"text"`
-		Commands                *[]string `json:"command"`
-		CommandContextMessageID *[]string `json:"command_context_msg_id"`
+	var raw struct {
+		ContextMessageID        string          `json:"context_msg_id"`
+		Text                    string          `json:"text"`
+		Commands                *[]string       `json:"command"`
+		CommandContextMessageID json.RawMessage `json:"command_context_msg_id"`
 	}
-	if err := decodeArguments(call.Function.Arguments, &args); err != nil {
+	if err := decodeArguments(call.Function.Arguments, &raw); err != nil {
 		return "", nil, err
+	}
+	var commandContextMessageID *[]string
+	if len(raw.CommandContextMessageID) > 0 {
+		var arr []string
+		if err := json.Unmarshal(raw.CommandContextMessageID, &arr); err == nil {
+			commandContextMessageID = &arr
+		} else {
+			var str string
+			if err := json.Unmarshal(raw.CommandContextMessageID, &str); err == nil {
+				commandContextMessageID = &[]string{str}
+			}
+		}
+	}
+	args := struct {
+		ContextMessageID        string
+		Text                    string
+		Commands                *[]string
+		CommandContextMessageID *[]string
+	}{
+		ContextMessageID:        raw.ContextMessageID,
+		Text:                    raw.Text,
+		Commands:                raw.Commands,
+		CommandContextMessageID: commandContextMessageID,
 	}
 	if strings.TrimSpace(args.Text) == "" || len(args.Text) > agent.MaxResponseBytes {
 		return "", nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
