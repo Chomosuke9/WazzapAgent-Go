@@ -41,7 +41,6 @@ const (
 	defaultRegistryMaxLive     = 256
 	defaultMaxOutputTokens     = 1024
 	defaultMaxResponseBytes    = 16 * 1024
-	defaultBasePrompt          = "Jawab pesan pengguna dengan ringkas, akurat, dan dalam bahasa yang sesuai dengan pesan pengguna."
 	defaultProviderID          = "openai-compatible"
 	defaultPolicyID            = "part1-chat-gate.v1"
 	defaultWhatsAppEnabled     = true
@@ -96,6 +95,7 @@ type Snapshot struct {
 	connectTimeout      time.Duration
 	sendTimeout         time.Duration
 	pairingOutput       string
+	assistantName       string
 }
 
 // LoadRuntime loads configuration from the process environment and an optional
@@ -158,7 +158,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("WAZZAP_LOG_LEVEL: unsupported value %q", logLevel)
 	}
 	logFormat := strings.ToLower(valueOrDefault(lookup, "WAZZAP_LOG_FORMAT", defaultLogFormat))
-	if !oneOf(logFormat, "json", "text") {
+	if !oneOf(logFormat, "json", "text", "compact") {
 		return Snapshot{}, fmt.Errorf("WAZZAP_LOG_FORMAT: unsupported value %q", logFormat)
 	}
 	shutdownTimeout, err := parseDuration(lookup, "WAZZAP_SHUTDOWN_TIMEOUT", defaultShutdownTimeout, maxShutdownTimeout)
@@ -297,7 +297,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		llmConcurrency:      uint32(llmConcurrency),
 		maxOutputTokens:     uint32(maxOutputTokens),
 		maxResponseBytes:    uint32(responseBytes),
-		basePrompt:          valueOrDefault(lookup, "WAZZAP_BASE_PROMPT", defaultBasePrompt),
+		basePrompt:          valueOrDefault(lookup, "WAZZAP_BASE_PROMPT", ""),
 		policyID:            policyID,
 		policyRevision:      policyRevision,
 		inboundQueue:        uint32(inboundQueue),
@@ -320,6 +320,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		pairingOutput:       pairingOutput,
 		ownerAddress:        value(lookup, "WAZZAP_OWNER_JID"),
 		allowlist:           splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
+		assistantName:       value(lookup, "ASSISTANT_NAME"),
 	}
 	if whatsAppEnabled {
 		if err := snapshot.validateEnabled(); err != nil {
@@ -439,6 +440,7 @@ func (snapshot Snapshot) ConstructionTimeout() time.Duration { return snapshot.c
 func (snapshot Snapshot) ConnectTimeout() time.Duration      { return snapshot.connectTimeout }
 func (snapshot Snapshot) SendTimeout() time.Duration         { return snapshot.sendTimeout }
 func (snapshot Snapshot) PairingOutput() string              { return snapshot.pairingOutput }
+func (snapshot Snapshot) AssistantName() string              { return snapshot.assistantName }
 
 func (snapshot Snapshot) Allowlist() []string {
 	return append([]string(nil), snapshot.allowlist...)

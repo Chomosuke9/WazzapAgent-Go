@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+//go:embed embedded.env
+var embeddedEnv string
 
 const (
 	defaultDotEnvPath = ".env"
@@ -49,6 +53,10 @@ func readDotEnv(path string, required bool) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if !required && errors.Is(err, os.ErrNotExist) {
+			// Fallback to embedded .env if file not found
+			if embeddedEnv != "" {
+				return parseDotEnv(embeddedEnv)
+			}
 			return map[string]string{}, nil
 		}
 		return nil, err
