@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,6 +16,9 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 )
+
+//go:embed systemprompt.txt
+var embeddedSystemPrompt string
 
 func main() {
 	os.Exit(run())
@@ -57,27 +61,24 @@ func run() int {
 }
 
 func loadSystemPrompt() error {
-	var systemPromptDir = "internal/agent/systemprompt.txt"
 	var prompt bytes.Buffer
-	templatePrompt, err := template.ParseFiles(systemPromptDir)
+	templatePrompt, err := template.New("systemprompt").Parse(embeddedSystemPrompt)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to parse system prompt template: %w", err)
 	}
-	if templatePrompt == nil {
-		return fmt.Errorf("system prompt file not found (last error: %v)", err)
-	}
+	
 	cfg := config.Snapshot{}
 	data := struct {
 		AssistantName string
 		CurrentDate   string
 	}{
 		AssistantName: cfg.AssistantName(),
-		CurrentDate:   time.Now().Format("01 Jan 2000"),
+		CurrentDate:   time.Now().Format("02 Jan 2006"),
 	}
 
 	err = templatePrompt.Execute(&prompt, data)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to execute system prompt template: %w", err)
 	}
 
 	app.SetSystemPolicy(prompt.String())
