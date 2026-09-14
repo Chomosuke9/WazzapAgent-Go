@@ -7,7 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -55,7 +55,7 @@ func (React) Capability() policy.Capability { return policy.CapabilityMessageRea
 func (React) Durable() bool                 { return true }
 func (effect React) Validate() error {
 	if effect.TargetMessageID.IsZero() || strings.TrimSpace(effect.Emoji) == "" || !utf8.ValidString(effect.Emoji) || len(effect.Emoji) > MaxEmojiBytes {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate reaction effect", fmt.Errorf("target and bounded emoji are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate reaction effect", errors.New("target and bounded emoji are required"))
 	}
 	return nil
 }
@@ -68,7 +68,7 @@ func (DeleteMessage) Capability() policy.Capability { return policy.CapabilityMe
 func (DeleteMessage) Durable() bool                 { return true }
 func (effect DeleteMessage) Validate() error {
 	if effect.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate delete effect", fmt.Errorf("target message is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate delete effect", errors.New("target message is required"))
 	}
 	return nil
 }
@@ -81,7 +81,7 @@ func (MarkRead) Capability() policy.Capability { return policy.CapabilityMessage
 func (MarkRead) Durable() bool                 { return false }
 func (effect MarkRead) Validate() error {
 	if effect.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate mark-read effect", fmt.Errorf("target message is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate mark-read effect", errors.New("target message is required"))
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func (SetChatPresence) Capability() policy.Capability { return policy.Capability
 func (SetChatPresence) Durable() bool                 { return false }
 func (effect SetChatPresence) Validate() error {
 	if effect.State != PresenceComposing && effect.State != PresencePaused {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate presence effect", fmt.Errorf("presence state is invalid"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate presence effect", errors.New("presence state is invalid"))
 	}
 	return nil
 }
@@ -118,13 +118,13 @@ func (command RunGroupCommand) Validate() error {
 	fields := strings.Fields(command.Command)
 	if len(command.Command) > 1024 || len(fields) < 2 || fields[0] != "/group" ||
 		(fields[1] != "delete" && fields[1] != "mute" && fields[1] != "kick") {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("unsupported group command"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("unsupported group command"))
 	}
 	if fields[1] == "delete" && command.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("delete requires a target message"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("delete requires a target message"))
 	}
 	if fields[1] != "delete" && !command.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", fmt.Errorf("only delete accepts a target message"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("only delete accepts a target message"))
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ type Ref struct {
 
 func (ref Ref) Validate() error {
 	if err := ref.Key.Validate(); err != nil || ref.EffectID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate effect reference", fmt.Errorf("agent key and effect ID are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect reference", errors.New("agent key and effect ID are required"))
 	}
 	return nil
 }
@@ -181,7 +181,7 @@ func DigestPlan(request PlanRequest) ([32]byte, error) {
 		writeDigestField(&canonical, typed.Command)
 		writeDigestField(&canonical, typed.TargetMessageID.String())
 	default:
-		return [32]byte{}, agent.NewError(agent.ErrorInvalidArgument, "digest effect plan", fmt.Errorf("effect type is not supported"))
+		return [32]byte{}, agent.NewError(agent.ErrorInvalidArgument, "digest effect plan", errors.New("effect type is not supported"))
 	}
 	return sha256.Sum256(canonical.Bytes()), nil
 }
@@ -193,16 +193,16 @@ func writeDigestField(buffer *bytes.Buffer, value string) {
 
 func (request PlanRequest) Validate() error {
 	if err := request.Ref.Validate(); err != nil || request.InvocationID.IsZero() || request.Effect == nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", fmt.Errorf("reference, invocation, and effect are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", errors.New("reference, invocation, and effect are required"))
 	}
 	if err := request.Principal.Validate(); err != nil {
 		return err
 	}
 	if request.Ref.Key != request.Principal.Key() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", fmt.Errorf("principal scope does not match effect scope"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", errors.New("principal scope does not match effect scope"))
 	}
 	if (request.Principal.Kind == policy.PrincipalModel || request.Principal.Kind == policy.PrincipalRecovery) && request.Principal.InvocationID != request.InvocationID {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", fmt.Errorf("principal invocation does not match effect invocation"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", errors.New("principal invocation does not match effect invocation"))
 	}
 	return request.Effect.Validate()
 }
@@ -261,7 +261,7 @@ type Dispatcher struct {
 
 func NewDispatcher(store Store, authorizer Authorizer, sender Sender, clock agent.Clock) (*Dispatcher, error) {
 	if store == nil || authorizer == nil || sender == nil || clock == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create effect dispatcher", fmt.Errorf("store, authorizer, sender, and clock are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create effect dispatcher", errors.New("store, authorizer, sender, and clock are required"))
 	}
 	return &Dispatcher{store: store, authorizer: authorizer, sender: sender, clock: clock}, nil
 }
@@ -287,15 +287,15 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	case StateClaimed:
 		// Continue below: this dispatcher owns the returned lease.
 	case StatePending, StateExecuting:
-		return agent.NewError(agent.ErrorDeliveryPending, "dispatch effect", fmt.Errorf("effect is owned by another worker"))
+		return agent.NewError(agent.ErrorDeliveryPending, "dispatch effect", errors.New("effect is owned by another worker"))
 	default:
-		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch effect", fmt.Errorf("effect state is invalid"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch effect", errors.New("effect state is invalid"))
 	}
 	// No provider call has happened while the row is merely claimed. A
 	// disconnected account therefore returns the row to pending rather than
 	// converting safe recovery into a terminal denial.
 	if !dispatcher.sender.Ready() {
-		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", fmt.Errorf("effect sender is not ready")))
+		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
 	if err := dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
 		Key: stored.Request.Ref.Key, Principal: stored.Request.Principal, Capability: stored.Request.Effect.Capability(),
@@ -306,7 +306,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 		return dispatcher.finalizePreExecution(stored, agent.CodeOf(err), err)
 	}
 	if !dispatcher.sender.Ready() {
-		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", fmt.Errorf("effect sender is not ready")))
+		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
 	if err := dispatcher.store.MarkExecuting(ctx, ref, stored.Lease, dispatcher.clock.Now()); err != nil {
 		return err
@@ -375,10 +375,10 @@ func terminalStateError(state State) error {
 	case StateSucceeded:
 		return nil
 	case StateUnknownOutcome:
-		return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", fmt.Errorf("effect outcome is unknown"))
+		return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", errors.New("effect outcome is unknown"))
 	case StateSkipped:
-		return agent.NewError(agent.ErrorUnsupported, "dispatch effect", fmt.Errorf("ephemeral effect was skipped"))
+		return agent.NewError(agent.ErrorUnsupported, "dispatch effect", errors.New("ephemeral effect was skipped"))
 	default:
-		return agent.NewError(agent.ErrorProviderFailure, "dispatch effect", fmt.Errorf("effect previously failed terminally"))
+		return agent.NewError(agent.ErrorProviderFailure, "dispatch effect", errors.New("effect previously failed terminally"))
 	}
 }

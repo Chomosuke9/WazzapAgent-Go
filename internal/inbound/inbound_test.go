@@ -821,13 +821,13 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, nil,
 	)
 	if err != nil {
 		t.Fatalf("create command handler: %v", err)
 	}
 	aiHandler, err := inbound.NewAIHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, nil,
 		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
 	)
 	if err != nil {

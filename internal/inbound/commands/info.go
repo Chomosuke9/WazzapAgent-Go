@@ -17,7 +17,7 @@ var InfoCommand = command.Descriptor{
 	Handler:     handleInfo,
 }
 
-func handleInfo(ctx context.Context, request command.Request, input command.Context) error {
+func handleInfo(ctx context.Context, request command.Request, input command.Context, adapter any) error {
 	if request.ArgumentsPresent {
 		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version,
 			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name))

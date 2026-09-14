@@ -20,7 +20,7 @@ func (store *InboundStore) BeginPromptMutation(
 	expected agent.ConfigVersion,
 ) (inbound.PromptMutation, error) {
 	if expected == 0 || (command.Kind != inbound.PromptSet && command.Kind != inbound.PromptClear) {
-		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin prompt mutation", fmt.Errorf("mutation command and config version are required"))
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin prompt mutation", errors.New("mutation command and config version are required"))
 	}
 	digest := promptCommandDigest(message, command)
 	return store.beginConfigMutation(ctx, message, uint8(command.Kind), digest, expected)
@@ -35,7 +35,7 @@ func (store *InboundStore) BeginPermissionMutation(
 	expected agent.ConfigVersion,
 ) (inbound.PromptMutation, error) {
 	if expected == 0 || command.Kind != inbound.PermissionSet {
-		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin permission mutation", fmt.Errorf("mutation command and config version are required"))
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin permission mutation", errors.New("mutation command and config version are required"))
 	}
 	digest := permissionCommandDigest(message, command)
 	return store.beginConfigMutation(ctx, message, permissionMutationKind, digest, expected)
@@ -65,7 +65,7 @@ func (store *InboundStore) beginConfigMutation(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&storedKind, &storedDigest, &storedExpected, &storedApplied)
 	if errors.Is(err, sql.ErrNoRows) {
-		return inbound.PromptMutation{}, agent.NewError(agent.ErrorNotFound, "begin prompt mutation", fmt.Errorf("incoming command does not exist"))
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorNotFound, "begin prompt mutation", errors.New("incoming command does not exist"))
 	}
 	if err != nil {
 		return inbound.PromptMutation{}, storageError("load prompt mutation journal", err)
@@ -73,7 +73,7 @@ func (store *InboundStore) beginConfigMutation(
 	if storedKind.Valid || storedDigest.Valid || storedExpected.Valid {
 		if !storedKind.Valid || !storedDigest.Valid || !storedExpected.Valid ||
 			uint8(storedKind.Int64) != kind || !bytes.Equal(storedDigest.Bytes, digest[:]) {
-			return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", fmt.Errorf("incoming command is bound to a different mutation"))
+			return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", errors.New("incoming command is bound to a different mutation"))
 		}
 		mutation := inbound.PromptMutation{ExpectedVersion: agent.ConfigVersion(storedExpected.Int64)}
 		if storedApplied.Valid {
@@ -99,7 +99,7 @@ func (store *InboundStore) beginConfigMutation(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&pendingInvocation)
 	if err == nil {
-		return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", fmt.Errorf("an earlier config mutation must be recovered first"))
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorConflict, "begin config mutation", errors.New("an earlier config mutation must be recovered first"))
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return inbound.PromptMutation{}, storageError("find pending prompt mutation", err)
@@ -145,7 +145,7 @@ func (store *InboundStore) markConfigMutationApplied(
 	applied agent.ConfigVersion,
 ) error {
 	if expected == 0 || applied != expected+1 || applied == 0 {
-		return agent.NewError(agent.ErrorInvalidArgument, "complete prompt mutation", fmt.Errorf("applied version must follow expected version"))
+		return agent.NewError(agent.ErrorInvalidArgument, "complete prompt mutation", errors.New("applied version must follow expected version"))
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET
         command_applied_version = ?, updated_at_ms = ?

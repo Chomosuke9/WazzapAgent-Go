@@ -2,7 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -13,11 +13,11 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	if request.TenantID.IsZero() || request.Now.IsZero() || request.ScrubBefore.IsZero() || request.DeleteBefore.IsZero() ||
 		!request.DeleteBefore.Before(request.ScrubBefore) || !request.ScrubBefore.Before(request.Now) ||
 		request.BatchSize == 0 || request.BatchSize > 10_000 {
-		return maintenance.Result{}, agent.NewError(agent.ErrorInvalidArgument, "maintain application store", fmt.Errorf("valid tenant, times, and batch size are required"))
+		return maintenance.Result{}, agent.NewError(agent.ErrorInvalidArgument, "maintain application store", errors.New("valid tenant, times, and batch size are required"))
 	}
 	if (request.HistoryKeepLatest == 0) != request.HistoryBefore.IsZero() ||
 		(!request.HistoryBefore.IsZero() && !request.HistoryBefore.Before(request.Now)) {
-		return maintenance.Result{}, agent.NewError(agent.ErrorInvalidArgument, "maintain application store", fmt.Errorf("history retention bounds are incomplete"))
+		return maintenance.Result{}, agent.NewError(agent.ErrorInvalidArgument, "maintain application store", errors.New("history retention bounds are incomplete"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

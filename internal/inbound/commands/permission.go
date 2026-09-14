@@ -19,7 +19,7 @@ var PermissionCommand = command.Descriptor{
 	Handler:     handlePermission,
 }
 
-func handlePermission(ctx context.Context, request command.Request, input command.Context) error {
+func handlePermission(ctx context.Context, request command.Request, input command.Context, adapter any) error {
 	parsed, recognized := command.ParsePermissionCommand(command.CanonicalText(request))
 	if !recognized {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("permission command was not parsed"))

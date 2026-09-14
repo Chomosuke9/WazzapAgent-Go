@@ -2,7 +2,7 @@ package inbound
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -38,7 +38,7 @@ func NewRecoveryWorker(
 	batchSize uint32,
 ) (*RecoveryWorker, error) {
 	if tenantID.IsZero() || store == nil || resumer == nil || clock == nil || interval <= 0 || grace <= 0 || batchSize == 0 || batchSize > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound recovery worker", fmt.Errorf("valid identity, dependencies, timing, and batch size are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound recovery worker", errors.New("valid identity, dependencies, timing, and batch size are required"))
 	}
 	return &RecoveryWorker{tenantID: tenantID, store: store, resumer: resumer, clock: clock, interval: interval, grace: grace, batchSize: batchSize}, nil
 }

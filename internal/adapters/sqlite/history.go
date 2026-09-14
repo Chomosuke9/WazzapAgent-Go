@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +22,7 @@ func (store *HistoryStore) ListIfConfigVersion(
 		return agent.HistoryPage{}, err
 	}
 	if version == 0 || query.Limit == 0 || query.Limit > agent.MaxHistoryPageSize {
-		return agent.HistoryPage{}, agent.NewError(agent.ErrorInvalidArgument, "list history", fmt.Errorf("valid config version and page limit are required"))
+		return agent.HistoryPage{}, agent.NewError(agent.ErrorInvalidArgument, "list history", errors.New("valid config version and page limit are required"))
 	}
 	before, err := decodeHistoryCursor(query.Before)
 	if err != nil {
@@ -54,7 +53,7 @@ func (store *HistoryStore) ListIfConfigVersion(
 			uint8(agent.HistoryUser), resetCutoff,
 		).Scan(&through)
 		if errors.Is(err, sql.ErrNoRows) {
-			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "bound history context", fmt.Errorf("current invocation history is missing or reset"))
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "bound history context", errors.New("current invocation history is missing or reset"))
 		}
 		if err != nil {
 			return agent.HistoryPage{}, storageError("bound history context", err)
@@ -142,7 +141,7 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 		return storageError("guard history append against reset", err)
 	}
 	if err == nil && receivedAtMS.Valid && receivedAtMS.Int64 <= resetAtMS.Int64 {
-		return agent.NewError(agent.ErrorConflict, "append history", fmt.Errorf("inbound turn predates the latest history reset"))
+		return agent.NewError(agent.ErrorConflict, "append history", errors.New("inbound turn predates the latest history reset"))
 	}
 	if err := store.Store.appendHistoryEntryTx(ctx, tx, key, entry, store.clock.Now().UnixMilli()); err != nil {
 		return err
@@ -228,14 +227,14 @@ func (store *Store) appendHistoryEntryTx(
 			matches++
 			if !equalRawDigest(stored, digest[:]) {
 				rows.Close()
-				return agent.NewError(agent.ErrorConflict, "append history", fmt.Errorf("message or invocation identity is bound to different content"))
+				return agent.NewError(agent.ErrorConflict, "append history", errors.New("message or invocation identity is bound to different content"))
 			}
 		}
 		if err := rows.Close(); err != nil {
 			return storageError("close history replay", err)
 		}
 		if matches != 1 {
-			return agent.NewError(agent.ErrorConflict, "append history", fmt.Errorf("history identity collision"))
+			return agent.NewError(agent.ErrorConflict, "append history", errors.New("history identity collision"))
 		}
 	}
 	return nil
@@ -251,7 +250,7 @@ func (store *HistoryStore) ResetIfConfigVersion(
 		return err
 	}
 	if version == 0 || resetAt.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "reset history", fmt.Errorf("config version and reset time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "reset history", errors.New("config version and reset time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -308,7 +307,7 @@ func (store *HistoryStore) Trim(ctx context.Context, key agent.Key, policy agent
 		return agent.TrimResult{}, err
 	}
 	if (policy.KeepLatest == 0 && policy.MaxAge <= 0) || policy.KeepLatest > 1_000_000 || policy.MaxAge < 0 {
-		return agent.TrimResult{}, agent.NewError(agent.ErrorInvalidArgument, "trim history", fmt.Errorf("retention bounds are invalid"))
+		return agent.TrimResult{}, agent.NewError(agent.ErrorInvalidArgument, "trim history", errors.New("retention bounds are invalid"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -426,7 +425,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		Delivery: agent.DeliveryStatus(delivery), CreatedAt: time.UnixMilli(createdAtMS).UTC(),
 	}
 	if participant.Valid != senderRefValue.Valid {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", fmt.Errorf("partial sender identity"))
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
 	}
 	if participant.Valid {
 		participantID, parseErr := identity.ParseParticipantID(participant.String)
@@ -441,7 +440,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 	}
 	if quotedMessage.Valid || quotedRole.Valid || quotedSenderRef.Valid || quotedText.Valid {
 		if !quotedMessage.Valid || !quotedRole.Valid || !quotedText.Valid {
-			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", fmt.Errorf("partial quote context"))
+			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
 		}
 		quotedMessageID, parseErr := identity.ParseMessageID(quotedMessage.String)
 		if parseErr != nil {
@@ -465,7 +464,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	if !equalRawDigest(contentDigest, wantedDigest[:]) {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", fmt.Errorf("content digest mismatch"))
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("content digest mismatch"))
 	}
 	return entry, sequence, nil
 }
@@ -477,13 +476,13 @@ func requireConfigVersion(ctx context.Context, tx *sql.Tx, key agent.Key, wanted
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.NewError(agent.ErrorNotFound, "guard history config", fmt.Errorf("agent config does not exist"))
+		return agent.NewError(agent.ErrorNotFound, "guard history config", errors.New("agent config does not exist"))
 	}
 	if err != nil {
 		return storageError("guard history config", err)
 	}
 	if agent.ConfigVersion(current) != wanted {
-		return agent.NewError(agent.ErrorConflict, "guard history config", fmt.Errorf("authorized config version is stale"))
+		return agent.NewError(agent.ErrorConflict, "guard history config", errors.New("authorized config version is stale"))
 	}
 	return nil
 }
@@ -498,11 +497,11 @@ func decodeHistoryCursor(cursor agent.HistoryCursor) (int64, error) {
 	}
 	text := string(cursor)
 	if !strings.HasPrefix(text, "h1_") {
-		return 0, agent.NewError(agent.ErrorInvalidArgument, "decode history cursor", fmt.Errorf("cursor is invalid"))
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "decode history cursor", errors.New("cursor is invalid"))
 	}
 	sequence, err := strconv.ParseInt(strings.TrimPrefix(text, "h1_"), 36, 64)
 	if err != nil || sequence <= 0 {
-		return 0, agent.NewError(agent.ErrorInvalidArgument, "decode history cursor", fmt.Errorf("cursor is invalid"))
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "decode history cursor", errors.New("cursor is invalid"))
 	}
 	return sequence, nil
 }

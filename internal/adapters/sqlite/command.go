@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -25,7 +24,7 @@ func (store *ActionStore) FindCommandResponse(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&actionValue)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.DispatchRef{}, false, agent.NewError(agent.ErrorNotFound, "find command response", fmt.Errorf("incoming message does not exist"))
+		return agent.DispatchRef{}, false, agent.NewError(agent.ErrorNotFound, "find command response", errors.New("incoming message does not exist"))
 	}
 	if err != nil {
 		return agent.DispatchRef{}, false, storageError("find command response", err)
@@ -50,7 +49,7 @@ func (store *ActionStore) PlanCommandResponse(
 	text string,
 ) (agent.DispatchRef, error) {
 	if message.InvocationID.IsZero() || version == 0 || strings.TrimSpace(text) == "" {
-		return agent.DispatchRef{}, agent.NewError(agent.ErrorInvalidArgument, "plan command response", fmt.Errorf("message, config version, and text are required"))
+		return agent.DispatchRef{}, agent.NewError(agent.ErrorInvalidArgument, "plan command response", errors.New("message, config version, and text are required"))
 	}
 	key := agent.Key{TenantID: message.TenantID, AccountID: message.AccountID, ChatID: message.ChatID}
 	if err := key.Validate(); err != nil {
@@ -67,14 +66,14 @@ func (store *ActionStore) PlanCommandResponse(
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), message.InvocationID.String(),
 	).Scan(&existingAction, &existingText)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.DispatchRef{}, agent.NewError(agent.ErrorNotFound, "plan command response", fmt.Errorf("incoming message does not exist"))
+		return agent.DispatchRef{}, agent.NewError(agent.ErrorNotFound, "plan command response", errors.New("incoming message does not exist"))
 	}
 	if err != nil {
 		return agent.DispatchRef{}, storageError("load command response", err)
 	}
 	if existingAction.Valid {
 		if !existingText.Valid || existingText.String != text {
-			return agent.DispatchRef{}, agent.NewError(agent.ErrorConflict, "plan command response", fmt.Errorf("different response already planned"))
+			return agent.DispatchRef{}, agent.NewError(agent.ErrorConflict, "plan command response", errors.New("different response already planned"))
 		}
 		actionID, err := identity.ParseActionID(existingAction.String)
 		if err != nil {

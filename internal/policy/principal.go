@@ -2,7 +2,7 @@ package policy
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sort"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -45,7 +45,7 @@ func HumanPrincipal(message conversation.IncomingMessage) (Principal, error) {
 
 func ModelPrincipal(key agent.Key, invocationID identity.InvocationID) (Principal, error) {
 	if err := key.Validate(); err != nil || invocationID.IsZero() {
-		return Principal{}, agent.NewError(agent.ErrorInvalidArgument, "create model principal", fmt.Errorf("valid agent key and invocation ID are required"))
+		return Principal{}, agent.NewError(agent.ErrorInvalidArgument, "create model principal", errors.New("valid agent key and invocation ID are required"))
 	}
 	principal := Principal{Kind: PrincipalModel, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, InvocationID: invocationID}
 	return principal, nil
@@ -60,7 +60,7 @@ func SystemPrincipal(key agent.Key) (Principal, error) {
 
 func RecoveryPrincipal(key agent.Key, invocationID identity.InvocationID) (Principal, error) {
 	if err := key.Validate(); err != nil || invocationID.IsZero() {
-		return Principal{}, agent.NewError(agent.ErrorInvalidArgument, "create recovery principal", fmt.Errorf("valid agent key and invocation ID are required"))
+		return Principal{}, agent.NewError(agent.ErrorInvalidArgument, "create recovery principal", errors.New("valid agent key and invocation ID are required"))
 	}
 	return Principal{Kind: PrincipalRecovery, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, InvocationID: invocationID}, nil
 }
@@ -76,18 +76,18 @@ func (principal Principal) Validate() error {
 	switch principal.Kind {
 	case PrincipalHuman:
 		if principal.ParticipantID.IsZero() || principal.LID.IsZero() || !principal.InvocationID.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", fmt.Errorf("human principal requires participant and LID only"))
+			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("human principal requires participant and LID only"))
 		}
 	case PrincipalModel, PrincipalRecovery:
 		if principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.LID.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", fmt.Errorf("model and recovery principals require invocation only"))
+			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("model and recovery principals require invocation only"))
 		}
 	case PrincipalSystem:
 		if !principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.LID.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", fmt.Errorf("system principal must not carry actor identity"))
+			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("system principal must not carry actor identity"))
 		}
 	default:
-		return agent.NewError(agent.ErrorInvalidArgument, "validate principal", fmt.Errorf("principal kind is invalid"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("principal kind is invalid"))
 	}
 	return nil
 }
@@ -118,10 +118,10 @@ func NewCapabilitySet(values ...Capability) (CapabilitySet, error) {
 	sort.Slice(copyValues, func(left, right int) bool { return copyValues[left] < copyValues[right] })
 	for index, capability := range copyValues {
 		if !capability.Valid() {
-			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", fmt.Errorf("capability is invalid"))
+			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", errors.New("capability is invalid"))
 		}
 		if index > 0 && copyValues[index-1] == capability {
-			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", fmt.Errorf("capability is duplicated"))
+			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", errors.New("capability is duplicated"))
 		}
 	}
 	return CapabilitySet{values: copyValues}, nil
@@ -157,10 +157,10 @@ type HumanAccess struct {
 
 func (access HumanAccess) Validate() error {
 	if access.ChatKind != conversation.ChatDirect && access.ChatKind != conversation.ChatGroup && access.ChatKind != conversation.ChatStatus {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate human access", fmt.Errorf("chat kind is invalid"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate human access", errors.New("chat kind is invalid"))
 	}
 	if access.ChatKind == conversation.ChatStatus && (access.Allowlisted || access.ConfiguredOwner) {
-		return agent.NewError(agent.ErrorIntegrityFailure, "validate human access", fmt.Errorf("status chat cannot have access grants"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "validate human access", errors.New("status chat cannot have access grants"))
 	}
 	return nil
 }
@@ -184,13 +184,13 @@ type ChatAuthority struct {
 
 func (authority ChatAuthority) Validate() error {
 	if authority.ChatKind != conversation.ChatDirect && authority.ChatKind != conversation.ChatGroup {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate chat authority", fmt.Errorf("chat kind is invalid"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate chat authority", errors.New("chat kind is invalid"))
 	}
 	if authority.ObservedAt <= 0 {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate chat authority", fmt.Errorf("observation time is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate chat authority", errors.New("observation time is required"))
 	}
 	if authority.ChatKind == conversation.ChatDirect && (authority.ActorIsAdmin || authority.BotIsAdmin) {
-		return agent.NewError(agent.ErrorIntegrityFailure, "validate chat authority", fmt.Errorf("direct chat cannot claim group authority"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "validate chat authority", errors.New("direct chat cannot claim group authority"))
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ func (request EffectAuthorization) Validate() error {
 		return err
 	}
 	if request.Principal.Key() != request.Key || !request.Capability.Valid() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate effect authorization", fmt.Errorf("principal scope and capability are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "validate effect authorization", errors.New("principal scope and capability are required"))
 	}
 	return nil
 }

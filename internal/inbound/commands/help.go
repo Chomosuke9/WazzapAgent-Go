@@ -19,7 +19,7 @@ var HelpCommand = command.Descriptor{
 	Handler:     handleHelp,
 }
 
-func handleHelp(ctx context.Context, request command.Request, input command.Context) error {
+func handleHelp(ctx context.Context, request command.Request, input command.Context, adapter any) error {
 	if request.ArgumentsPresent {
 		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version,
 			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name))

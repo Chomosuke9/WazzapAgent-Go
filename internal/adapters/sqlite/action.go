@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
@@ -20,7 +19,7 @@ func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now 
 		return action.StoredAction{}, err
 	}
 	if ref.ActionID.IsZero() || now.IsZero() {
-		return action.StoredAction{}, agent.NewError(agent.ErrorInvalidArgument, "claim outbound action", fmt.Errorf("action ID and current time are required"))
+		return action.StoredAction{}, agent.NewError(agent.ErrorInvalidArgument, "claim outbound action", errors.New("action ID and current time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -29,7 +28,7 @@ func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now 
 	defer tx.Rollback()
 	stored, leaseUntil, retryAfter, err := loadAction(ctx, tx, ref)
 	if errors.Is(err, sql.ErrNoRows) {
-		return action.StoredAction{}, agent.NewError(agent.ErrorNotFound, "claim outbound action", fmt.Errorf("action does not exist"))
+		return action.StoredAction{}, agent.NewError(agent.ErrorNotFound, "claim outbound action", errors.New("action does not exist"))
 	}
 	if err != nil {
 		return action.StoredAction{}, storageError("load outbound action", err)
@@ -78,7 +77,7 @@ func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now 
 	case action.StatePending:
 		// Claim below.
 	default:
-		return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "claim outbound action", fmt.Errorf("invalid action state"))
+		return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "claim outbound action", errors.New("invalid action state"))
 	}
 	lease, err := randomLease("act")
 	if err != nil {
@@ -96,7 +95,7 @@ func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now 
 		return action.StoredAction{}, storageError("claim outbound action", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return action.StoredAction{}, agent.NewError(agent.ErrorConflict, "claim outbound action", fmt.Errorf("action changed concurrently"))
+		return action.StoredAction{}, agent.NewError(agent.ErrorConflict, "claim outbound action", errors.New("action changed concurrently"))
 	}
 	turnResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
@@ -123,7 +122,7 @@ func (store *ActionStore) ListRecoverable(
 	limit uint32,
 ) ([]agent.DispatchRef, error) {
 	if tenantID.IsZero() || now.IsZero() || limit == 0 || limit > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable actions", fmt.Errorf("valid tenant, time, and limit are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable actions", errors.New("valid tenant, time, and limit are required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, action_id
       FROM outbound_actions
@@ -175,7 +174,7 @@ func (store *ActionStore) ListRecoverable(
 
 func (store *ActionStore) MarkExecuting(ctx context.Context, ref agent.DispatchRef, lease action.Lease, now time.Time) error {
 	if lease == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "start outbound action", fmt.Errorf("lease and current time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "start outbound action", errors.New("lease and current time are required"))
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE outbound_actions SET
         state = ?, updated_at_ms = ?
@@ -195,7 +194,7 @@ func (store *ActionStore) Complete(
 	now time.Time,
 ) error {
 	if lease == "" || providerReceipt == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "complete outbound action", fmt.Errorf("lease and current time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "complete outbound action", errors.New("lease and current time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -232,7 +231,7 @@ func (store *ActionStore) Release(
 	retryAt time.Time,
 ) error {
 	if lease == "" || code == "" || retryAt.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "release outbound action", fmt.Errorf("lease, code, and time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "release outbound action", errors.New("lease, code, and time are required"))
 	}
 	state := action.StateFailedTerminal
 	delivery := agent.DeliveryFailedTerminal
@@ -277,7 +276,7 @@ func (store *ActionStore) MarkUnknown(
 	now time.Time,
 ) error {
 	if lease == "" || code == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "mark action unknown", fmt.Errorf("lease, code, and time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "mark action unknown", errors.New("lease, code, and time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -286,7 +285,7 @@ func (store *ActionStore) MarkUnknown(
 	defer tx.Rollback()
 	stored, _, _, err := loadAction(ctx, tx, ref)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.NewError(agent.ErrorNotFound, "mark action unknown", fmt.Errorf("action does not exist"))
+		return agent.NewError(agent.ErrorNotFound, "mark action unknown", errors.New("action does not exist"))
 	}
 	if err != nil {
 		return storageError("load unknown action", err)
@@ -295,7 +294,7 @@ func (store *ActionStore) MarkUnknown(
 		return tx.Commit()
 	}
 	if stored.State != action.StateExecuting || stored.Lease != lease {
-		return agent.NewError(agent.ErrorConflict, "mark action unknown", fmt.Errorf("action execution lease changed"))
+		return agent.NewError(agent.ErrorConflict, "mark action unknown", errors.New("action execution lease changed"))
 	}
 	if err := markUnknownTx(ctx, tx, stored, code, now.UnixMilli()); err != nil {
 		return err
@@ -343,11 +342,11 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 	if contentScrubbed == 0 {
 		wantedDigest := digestAction(ref.Key, ref.ActionID, text)
 		if len(payloadDigest) != len(wantedDigest) || !bytes.Equal(payloadDigest, wantedDigest[:]) {
-			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", fmt.Errorf("payload digest mismatch"))
+			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", errors.New("payload digest mismatch"))
 		}
 	} else if contentScrubbed != 1 || text != "" || len(payloadDigest) != 32 ||
 		(action.State(state) != action.StateSucceeded && action.State(state) != action.StateFailedTerminal && action.State(state) != action.StateUnknownOutcome) {
-		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", fmt.Errorf("invalid scrubbed action"))
+		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", errors.New("invalid scrubbed action"))
 	}
 	stored := action.StoredAction{
 		Ref:             ref,
@@ -435,7 +434,7 @@ func requireOne(result sql.Result, err error, operation string) error {
 		return storageError(operation, err)
 	}
 	if changed != 1 {
-		return agent.NewError(agent.ErrorConflict, operation, fmt.Errorf("state or lease changed"))
+		return agent.NewError(agent.ErrorConflict, operation, errors.New("state or lease changed"))
 	}
 	return nil
 }

@@ -35,6 +35,8 @@ func NewLogger(output io.Writer, level, format string) (*slog.Logger, string, er
 		handler = slog.NewJSONHandler(output, options)
 	case "text":
 		handler = slog.NewTextHandler(output, options)
+	case "compact":
+		handler = NewCompactHandler(output, options)
 	default:
 		return nil, "", fmt.Errorf("unsupported log format %q", format)
 	}

@@ -40,7 +40,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		return nil, NewError(ErrorInvalidArgument, "build model context", fmt.Errorf("builder and current invocation ID are required"))
 	}
 	if err := validateConfigSnapshot(request.Config); err != nil {
-		return nil, err
+		return nil, NewError(ErrorIntegrityFailure, "build model context", err)
 	}
 	// Model history is intentionally one logical user block. The transcript
 	// renderer is compact and already carries role/sender/quote markers, so
@@ -67,7 +67,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	currentFound := false
 	for _, entry := range request.History {
 		if _, err := DigestHistoryEntry(entry); err != nil {
-			return nil, NewError(ErrorIntegrityFailure, "build model context", err)
+			return nil, err
 		}
 		if entry.Role == HistoryAssistant && entry.Delivery != DeliverySucceeded {
 			continue

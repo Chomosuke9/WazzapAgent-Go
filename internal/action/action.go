@@ -126,19 +126,15 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 		code := agent.CodeOf(sendErr)
 		if code == agent.ErrorCancelled || code == agent.ErrorTimeout || code == agent.ErrorUnavailable || code == agent.ErrorUnknownOutcome {
 			_ = dispatcher.markUnknown(action, code)
-			return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", sendErr)
+			return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("send text unknown outcome: %w", sendErr))
 		}
-		// Once native send has begun, an unclassified provider failure is also
-		// ambiguous. The conversation core never guesses by sending it again.
 		_ = dispatcher.markUnknown(action, code)
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", sendErr)
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("provider failure unknown outcome: %w", sendErr))
 	}
 	completedAt := dispatcher.clock.Now()
 	if err := dispatcher.store.Complete(ctx, ref, action.Lease, sent.ProviderReceipt, completedAt); err != nil {
-		// Provider accepted the send but the receipt did not commit. This is an
-		// unknown outcome and must not become another send on retry.
 		_ = dispatcher.markUnknown(action, agent.ErrorStorageFailure)
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", err)
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", fmt.Errorf("complete storage failed: %w", err))
 	}
 	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: &completedAt}, nil
 }

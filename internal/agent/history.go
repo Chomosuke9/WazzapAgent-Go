@@ -95,7 +95,7 @@ func (history *History) List(ctx context.Context, version ConfigVersion, query H
 		return HistoryPage{}, NewError(ErrorInvalidArgument, "list history", fmt.Errorf("authorized config version is required"))
 	}
 	if err := validateHistoryQuery(query); err != nil {
-		return HistoryPage{}, err
+		return HistoryPage{}, NewError(ErrorInvalidArgument, "list history", err)
 	}
 	page, err := history.store.ListIfConfigVersion(ctx, history.key, version, query)
 	if err != nil {
@@ -109,7 +109,7 @@ func (history *History) Append(ctx context.Context, entry HistoryEntry) error {
 		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
 	}
 	if err := validateHistoryEntry(entry); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "append history", err)
 	}
 	if err := history.gate.acquire(ctx); err != nil {
 		return err
@@ -129,7 +129,7 @@ func (history *History) Reset(ctx context.Context, version ConfigVersion) error 
 
 func (history *History) Trim(ctx context.Context, policy RetentionPolicy) (TrimResult, error) {
 	if err := validateRetentionPolicy(policy); err != nil {
-		return TrimResult{}, err
+		return TrimResult{}, NewError(ErrorInvalidArgument, "trim history", err)
 	}
 	if err := history.gate.acquire(ctx); err != nil {
 		return TrimResult{}, err
@@ -143,7 +143,7 @@ func (history *History) appendWithinGate(ctx context.Context, entry HistoryEntry
 		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
 	}
 	if err := validateHistoryEntry(entry); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "append history", err)
 	}
 	return history.store.Append(ctx, history.key, cloneHistoryEntry(entry))
 }
@@ -154,7 +154,7 @@ func validateHistoryQuery(query HistoryQuery) error {
 	}
 	if query.Before != "" {
 		if _, err := parseHistoryCursor(query.Before); err != nil {
-			return err
+			return NewError(ErrorInvalidArgument, "validate history query", err)
 		}
 	}
 	if query.Before != "" && !query.ThroughInvocationID.IsZero() {
@@ -178,10 +178,10 @@ func validateHistoryEntry(entry HistoryEntry) error {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("message, invocation, causation, and creation time are required"))
 	}
 	if entry.Causation.Kind < CausationMessage || entry.Causation.Kind > CausationSubagent {
-		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("causation kind is invalid"))
+		return Errorf(ErrorInvalidArgument, "validate history entry", "causation kind is invalid")
 	}
 	if entry.Role < HistoryUser || entry.Role > HistorySystem {
-		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("history role is invalid"))
+		return Errorf(ErrorInvalidArgument, "validate history entry", "history role is invalid")
 	}
 	if entry.Role == HistoryUser {
 		if entry.Sender == nil || entry.Sender.ParticipantID.IsZero() || entry.Sender.Ref.IsZero() {
@@ -194,7 +194,7 @@ func validateHistoryEntry(entry HistoryEntry) error {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("sender display name is invalid"))
 	}
 	if err := validateQuoteContext(entry.Quote); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "validate history entry", err)
 	}
 	if entry.Role != HistoryUser && entry.Quote != nil {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("only user history may carry quote context"))
@@ -238,7 +238,7 @@ func validateHistoryEntry(entry HistoryEntry) error {
 // used by durable stores to distinguish idempotent replay from a collision.
 func DigestHistoryEntry(entry HistoryEntry) ([32]byte, error) {
 	if err := validateHistoryEntry(entry); err != nil {
-		return [32]byte{}, err
+		return [32]byte{}, NewError(ErrorIntegrityFailure, "digest history entry", err)
 	}
 	var canonical bytes.Buffer
 	canonical.WriteString("wazzapagent.history.v1")
@@ -280,11 +280,11 @@ func formatHistoryCursor(sequence int64) HistoryCursor {
 func parseHistoryCursor(cursor HistoryCursor) (int64, error) {
 	text := string(cursor)
 	if !strings.HasPrefix(text, "h1_") || len(text) <= 3 {
-		return 0, NewError(ErrorInvalidArgument, "parse history cursor", fmt.Errorf("cursor is invalid"))
+		return 0, Errorf(ErrorInvalidArgument, "parse history cursor", "cursor is invalid")
 	}
 	sequence, err := strconv.ParseInt(strings.TrimPrefix(text, "h1_"), 36, 64)
 	if err != nil || sequence <= 0 {
-		return 0, NewError(ErrorInvalidArgument, "parse history cursor", fmt.Errorf("cursor is invalid"))
+		return 0, Errorf(ErrorInvalidArgument, "parse history cursor", "cursor is invalid")
 	}
 	return sequence, nil
 }
@@ -302,13 +302,13 @@ func validateQuoteContext(quote *QuoteContext) error {
 	}
 	if quote.MessageID.IsZero() || (quote.Role != HistoryUser && quote.Role != HistoryAssistant) ||
 		quote.Text == "" || !utf8.ValidString(quote.Text) || len(quote.Text) > MaxHistoryBytes {
-		return NewError(ErrorInvalidArgument, "validate quote context", fmt.Errorf("quote identity, role, and bounded text are required"))
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quote identity, role, and bounded text are required")
 	}
 	if quote.Role == HistoryUser && quote.SenderRef.IsZero() {
-		return NewError(ErrorInvalidArgument, "validate quote context", fmt.Errorf("quoted user requires sender ref"))
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted user requires sender ref")
 	}
 	if quote.Role == HistoryAssistant && !quote.SenderRef.IsZero() {
-		return NewError(ErrorInvalidArgument, "validate quote context", fmt.Errorf("quoted assistant must not carry sender ref"))
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted assistant must not carry sender ref")
 	}
 	return nil
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/app"
@@ -25,6 +27,13 @@ func run() int {
 			return runOfflineCommand(os.Args[1:])
 		}
 	}
+
+	// Load system prompt from file
+	if err := loadSystemPrompt(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load system prompt: %v\n", err)
+		return 2
+	}
+
 	cfg, err := config.LoadRuntime(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
@@ -45,6 +54,35 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func loadSystemPrompt() error {
+	var systemPromptDir = "internal/agent/systemprompt.txt"
+	var prompt bytes.Buffer
+	templatePrompt, err := template.ParseFiles(systemPromptDir)
+	if err != nil {
+		panic(err)
+	}
+	if templatePrompt == nil {
+		return fmt.Errorf("system prompt file not found (last error: %v)", err)
+	}
+	cfg := config.Snapshot{}
+	data := struct {
+		AssistantName string
+		CurrentDate   string
+	}{
+		AssistantName: cfg.AssistantName(),
+		CurrentDate:   time.Now().Format("01 Jan 2000"),
+	}
+
+	err = templatePrompt.Execute(&prompt, data)
+	if err != nil {
+		panic(err)
+	}
+
+	app.SetSystemPolicy(prompt.String())
+
+	return nil
 }
 
 func runOfflineCommand(arguments []string) int {

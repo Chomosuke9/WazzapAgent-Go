@@ -31,19 +31,6 @@ func parseRegisteredCommand(text string) (command.Request, command.Descriptor, b
 // existing callers while keeping command grammar/types in internal/command.
 type PromptMutation = command.PromptMutation
 
-type ControlCommandKind = command.ControlCommandKind
-
-const (
-	ControlHelp  = command.ControlHelp
-	ControlInfo  = command.ControlInfo
-	ControlReset = command.ControlReset
-	ControlDump  = command.ControlDump
-)
-
-func ParseControlCommand(text string) (ControlCommandKind, bool) {
-	return command.ParseControlCommand(text)
-}
-
 type PermissionCommandKind = command.PermissionCommandKind
 
 const (

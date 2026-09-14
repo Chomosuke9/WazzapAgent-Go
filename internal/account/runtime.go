@@ -2,7 +2,7 @@ package account
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -86,7 +86,7 @@ func NewRuntime(
 	stopTimeout time.Duration,
 ) (*Runtime, error) {
 	if tenantID.IsZero() || accountID.IsZero() || connector == nil || stopTimeout <= 0 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create account runtime", fmt.Errorf("identity, connector, and stop timeout are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create account runtime", errors.New("identity, connector, and stop timeout are required"))
 	}
 	return &Runtime{
 		tenantID:    tenantID,
@@ -100,7 +100,7 @@ func NewRuntime(
 
 func (runtime *Runtime) Run(ctx context.Context) error {
 	if !runtime.transition(StateStarting, "") {
-		return agent.NewError(agent.ErrorConflict, "start account runtime", fmt.Errorf("account is not stopped"))
+		return agent.NewError(agent.ErrorConflict, "start account runtime", errors.New("account is not stopped"))
 	}
 	runtime.setState(StateConnecting, "")
 	if err := runtime.connector.Start(ctx); err != nil {

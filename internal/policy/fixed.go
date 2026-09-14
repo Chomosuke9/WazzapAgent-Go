@@ -2,7 +2,7 @@ package policy
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync/atomic"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -32,7 +32,7 @@ type FixedGate struct {
 
 func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, authority ChatAuthorityReader, enabled bool) (*FixedGate, error) {
 	if policyID.IsZero() || revision == 0 || configs == nil || chats == nil || authority == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create fixed policy", fmt.Errorf("policy reference and stores are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create fixed policy", errors.New("policy reference and stores are required"))
 	}
 	gate := &FixedGate{policyID: policyID, revision: revision, configs: configs, chats: chats, authority: authority}
 	gate.enabled.Store(enabled)
@@ -45,7 +45,7 @@ func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
 	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
 		(message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot) {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", fmt.Errorf("message is not eligible"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", errors.New("message is not eligible"))
 	}
 	principal, err := HumanPrincipal(message)
 	if err != nil {
@@ -59,10 +59,10 @@ func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversa
 // rereads the current account policy before a command changes chat state.
 func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal, capability Capability, permission agent.PermissionConfig) error {
 	if !gate.enabled.Load() || principal.Kind != PrincipalHuman {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("eligible human principal is required"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", errors.New("eligible human principal is required"))
 	}
 	if !capability.Valid() {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", fmt.Errorf("command capability is not enabled"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", errors.New("command capability is not enabled"))
 	}
 	// The descriptor's Permission expression is the command role gate. The
 	// capability remains an effect/feature identity and is validated here, but
@@ -86,7 +86,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 	fromMe bool,
 ) (PermissionFacts, error) {
 	if !gate.enabled.Load() {
-		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("agent kill switch is disabled"))
+		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("agent kill switch is disabled"))
 	}
 	if err := principal.Validate(); err != nil {
 		return PermissionFacts{}, err
@@ -98,12 +98,12 @@ func (gate *FixedGate) CommandPermissionFacts(
 	switch principal.Kind {
 	case PrincipalHuman:
 		if fromMe {
-			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("human principals cannot be marked as bot-originated"))
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("human principals cannot be marked as bot-originated"))
 		}
 		access, err := gate.chats.ReadHumanAccess(ctx, principal)
 		if err != nil {
 			if agent.IsCode(err, agent.ErrorNotFound) {
-				return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "read human command access", fmt.Errorf("principal is no longer current"))
+				return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "read human command access", errors.New("principal is no longer current"))
 			}
 			return PermissionFacts{}, err
 		}
@@ -111,7 +111,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 			return PermissionFacts{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve human command permission facts", err)
 		}
 		if !access.Allowlisted || access.ChatKind == conversation.ChatStatus {
-			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve human command permission facts", fmt.Errorf("current chat policy denies principal"))
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve human command permission facts", errors.New("current chat policy denies principal"))
 		}
 		authority, err := gate.authority.ReadChatAuthority(ctx, principal)
 		if err != nil {
@@ -130,21 +130,21 @@ func (gate *FixedGate) CommandPermissionFacts(
 
 	case PrincipalModel:
 		if !fromMe {
-			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", fmt.Errorf("model principals must be explicitly marked fromMe"))
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", errors.New("model principals must be explicitly marked fromMe"))
 		}
 		current, err := gate.configs.Load(ctx, principal.Key())
 		if err != nil {
 			return PermissionFacts{}, err
 		}
 		if current.Permission != permission {
-			return PermissionFacts{}, agent.NewError(agent.ErrorConflict, "resolve bot command permission facts", fmt.Errorf("command permission snapshot is stale"))
+			return PermissionFacts{}, agent.NewError(agent.ErrorConflict, "resolve bot command permission facts", errors.New("command permission snapshot is stale"))
 		}
 		allowed, err := gate.chats.IsChatAllowlisted(ctx, principal.Key())
 		if err != nil {
 			return PermissionFacts{}, err
 		}
 		if !allowed {
-			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", fmt.Errorf("chat is not allowlisted"))
+			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve bot command permission facts", errors.New("chat is not allowlisted"))
 		}
 		authority, err := gate.authority.ReadChatAuthority(ctx, principal)
 		if err != nil {
@@ -161,7 +161,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 			FromMe:    true,
 		}, nil
 	default:
-		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", fmt.Errorf("only human or model principals may dispatch commands"))
+		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("only human or model principals may dispatch commands"))
 	}
 }
 
@@ -174,14 +174,14 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 		return err
 	}
 	if !gate.enabled.Load() || request.Principal.Kind != PrincipalModel {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("model effect is not eligible"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("model effect is not eligible"))
 	}
 	allowed, err := gate.chats.IsChatAllowlisted(ctx, request.Key)
 	if err != nil {
 		return err
 	}
 	if !allowed {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("chat is not allowlisted"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("chat is not allowlisted"))
 	}
 	snapshot, err := gate.configs.Load(ctx, request.Key)
 	if err != nil {
@@ -191,7 +191,7 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 		return err
 	}
 	if !snapshot.Permission.ModelToolCapabilities().Has(agent.Capability(request.Capability)) {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("model capability is not currently granted"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("model capability is not currently granted"))
 	}
 	authority, err := gate.authority.ReadChatAuthority(ctx, request.Principal)
 	if err != nil {
@@ -202,21 +202,21 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	}
 	moderation := request.Capability == CapabilityGroupDelete || request.Capability == CapabilityGroupMute || request.Capability == CapabilityGroupKick
 	if moderation && (authority.ChatKind != conversation.ChatGroup || !authority.BotIsAdmin) {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", fmt.Errorf("bot group command requires current group-admin authority"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("bot group command requires current group-admin authority"))
 	}
 	return nil
 }
 
 func (gate *FixedGate) AuthorizeSend(ctx context.Context, key agent.Key) error {
 	if !gate.enabled.Load() {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize send", fmt.Errorf("agent kill switch is disabled"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize send", errors.New("agent kill switch is disabled"))
 	}
 	allowed, err := gate.chats.IsChatAllowlisted(ctx, key)
 	if err != nil {
 		return err
 	}
 	if !allowed {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize send", fmt.Errorf("chat is not allowlisted"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize send", errors.New("chat is not allowlisted"))
 	}
 	snapshot, err := gate.configs.Load(ctx, key)
 	if err != nil {
@@ -241,7 +241,7 @@ func (gate *FixedGate) requirePolicy(permission agent.PermissionConfig) error {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", err)
 	}
 	if permission.PolicyID != gate.policyID || permission.Revision != gate.revision {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", fmt.Errorf("unsupported policy revision"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", errors.New("unsupported policy revision"))
 	}
 	return nil
 }
@@ -256,7 +256,7 @@ func (gate *FixedGate) authorizeHuman(ctx context.Context, principal Principal, 
 	access, err := gate.chats.ReadHumanAccess(ctx, principal)
 	if err != nil {
 		if agent.IsCode(err, agent.ErrorNotFound) {
-			return agent.NewError(agent.ErrorPermissionDenied, "read human command access", fmt.Errorf("principal is no longer current"))
+			return agent.NewError(agent.ErrorPermissionDenied, "read human command access", errors.New("principal is no longer current"))
 		}
 		return err
 	}
@@ -264,7 +264,7 @@ func (gate *FixedGate) authorizeHuman(ctx context.Context, principal Principal, 
 		return err
 	}
 	if !access.Allowlisted || access.ChatKind == conversation.ChatStatus || (requiresOwner && !access.ConfiguredOwner) {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize human access", fmt.Errorf("current chat policy denies principal"))
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize human access", errors.New("current chat policy denies principal"))
 	}
 	return nil
 }

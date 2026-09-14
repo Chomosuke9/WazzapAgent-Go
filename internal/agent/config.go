@@ -75,10 +75,10 @@ func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
 
 func (permission PermissionConfig) Validate() error {
 	if permission.PolicyID.IsZero() || permission.Revision == 0 {
-		return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("permission policy reference is required"))
+		return Errorf(ErrorInvalidArgument, "validate permission config", "permission policy reference is required")
 	}
 	if !permission.ModerationLevel.Valid() {
-		return NewError(ErrorInvalidArgument, "validate permission config", fmt.Errorf("moderation level must be 0-3"))
+		return Errorf(ErrorInvalidArgument, "validate permission config", "moderation level must be 0-3")
 	}
 	return nil
 }
@@ -156,14 +156,14 @@ func newConfig(
 		return nil, NewError(ErrorInvalidArgument, "create config", fmt.Errorf("store, events, and clock are required"))
 	}
 	if err := validateConfigValues(defaults); err != nil {
-		return nil, err
+		return nil, NewError(ErrorInvalidArgument, "create config", err)
 	}
 	snapshot, err := store.LoadOrCreate(ctx, key, cloneConfigValues(defaults))
 	if err != nil {
-		return nil, err
+		return nil, NewError(ErrorStorageFailure, "create config", err)
 	}
 	if err := validateConfigSnapshot(snapshot); err != nil {
-		return nil, err
+		return nil, NewError(ErrorIntegrityFailure, "create config", err)
 	}
 	return &Config{
 		key:      key,
@@ -183,10 +183,10 @@ func (config *Config) Snapshot() ConfigSnapshot {
 func (config *Config) Refresh(ctx context.Context) (ConfigSnapshot, error) {
 	loaded, err := config.store.Load(ctx, config.key)
 	if err != nil {
-		return ConfigSnapshot{}, err
+		return ConfigSnapshot{}, NewError(ErrorStorageFailure, "refresh config", err)
 	}
 	if err := validateConfigSnapshot(loaded); err != nil {
-		return ConfigSnapshot{}, err
+		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "refresh config", err)
 	}
 
 	config.mu.Lock()
@@ -256,17 +256,17 @@ func (config *Config) mutate(
 	values := current.Values()
 	change(&values)
 	if err := validateConfigValues(values); err != nil {
-		return ConfigSnapshot{}, err
+		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "mutate config", err)
 	}
 	committed, err := config.store.CompareAndSwap(ctx, config.key, expected, cloneConfigValues(values))
 	if err != nil {
-		return ConfigSnapshot{}, err
+		return ConfigSnapshot{}, NewError(ErrorStorageFailure, "mutate config", err)
 	}
 	if committed.Version != expected+1 || committed.Version == 0 {
-		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "mutate config", fmt.Errorf("store returned nonsequential version"))
+		return ConfigSnapshot{}, Errorf(ErrorIntegrityFailure, "mutate config", "store returned nonsequential version")
 	}
 	if err := validateConfigSnapshot(committed); err != nil {
-		return ConfigSnapshot{}, err
+		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "mutate config", err)
 	}
 
 	config.mu.Lock()
@@ -308,9 +308,12 @@ func (snapshot ConfigSnapshot) Values() ConfigValues {
 
 func validateConfigSnapshot(snapshot ConfigSnapshot) error {
 	if snapshot.Version == 0 {
-		return NewError(ErrorIntegrityFailure, "validate config snapshot", fmt.Errorf("version is zero"))
+		return Errorf(ErrorIntegrityFailure, "validate config snapshot", "version is zero")
 	}
-	return validateConfigValues(snapshot.Values())
+	if err := validateConfigValues(snapshot.Values()); err != nil {
+		return NewError(ErrorIntegrityFailure, "validate config snapshot", err)
+	}
+	return nil
 }
 
 func validateConfigValues(values ConfigValues) error {
@@ -333,7 +336,7 @@ func validateConfigValues(values ConfigValues) error {
 		}
 	}
 	if err := values.Permission.Validate(); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "validate config", err)
 	}
 	return nil
 }

@@ -25,7 +25,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		return agent.TurnClaim{}, err
 	}
 	if request.Invocation.ID.IsZero() || request.Now.IsZero() {
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorInvalidArgument, "claim turn", fmt.Errorf("invocation ID and current time are required"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorInvalidArgument, "claim turn", errors.New("invocation ID and current time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -55,7 +55,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	}
 	if !row.digest.Valid {
 		if !matchesPreclaimedInbound(row, request) {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim received turn", fmt.Errorf("invocation does not match durable inbound message"))
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim received turn", errors.New("invocation does not match durable inbound message"))
 		}
 		lease, err := randomLease("gen")
 		if err != nil {
@@ -75,7 +75,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 			return agent.TurnClaim{}, storageError("claim received turn", err)
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim received turn", fmt.Errorf("turn changed concurrently"))
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim received turn", errors.New("turn changed concurrently"))
 		}
 		if err := tx.Commit(); err != nil {
 			return agent.TurnClaim{}, storageError("commit received turn claim", err)
@@ -87,7 +87,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease), MessageID: messageID}, nil
 	}
 	if len(row.digest.Bytes) != sha256.Size || !equalDigest(row.digest.Bytes, request.Digest) {
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim turn", fmt.Errorf("invocation ID is bound to different input"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim turn", errors.New("invocation ID is bound to different input"))
 	}
 	if row.actionID.Valid {
 		plan, err := row.plan(request.Key, request.Invocation.ID)
@@ -112,21 +112,21 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	switch agent.TurnState(row.state) {
 	case agent.TurnGenerating:
 		if row.generationLease.Valid && row.generationLeaseUntil.Valid && row.generationLeaseUntil.Int64 > nowMS {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", fmt.Errorf("generation lease is active"))
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", errors.New("generation lease is active"))
 		}
 	case agent.TurnFailedRetryable:
 		if row.retryAfter.Valid && row.retryAfter.Int64 > nowMS {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", fmt.Errorf("generation retry is not due"))
+			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", errors.New("generation retry is not due"))
 		}
 	case agent.TurnFailedTerminal:
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", fmt.Errorf("generation failed terminally"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", errors.New("generation failed terminally"))
 	case agent.TurnUnknownOutcome:
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorUnknownOutcome, "claim turn", fmt.Errorf("turn outcome is unknown"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorUnknownOutcome, "claim turn", errors.New("turn outcome is unknown"))
 	default:
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim turn", fmt.Errorf("turn has invalid pre-plan state"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim turn", errors.New("turn has invalid pre-plan state"))
 	}
 	if row.generationAttempts < 0 {
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim turn", fmt.Errorf("generation attempt count is invalid"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim turn", errors.New("generation attempt count is invalid"))
 	}
 	if row.generationAttempts >= maxGenerationAttempts {
 		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
@@ -143,7 +143,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if err := tx.Commit(); err != nil {
 			return agent.TurnClaim{}, storageError("commit exhausted generation attempts", err)
 		}
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", fmt.Errorf("generation retry limit reached"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", errors.New("generation retry limit reached"))
 	}
 
 	lease, err := randomLease("gen")
@@ -163,7 +163,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		return agent.TurnClaim{}, storageError("renew turn claim", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "renew turn claim", fmt.Errorf("turn changed concurrently"))
+		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "renew turn claim", errors.New("turn changed concurrently"))
 	}
 	if err := tx.Commit(); err != nil {
 		return agent.TurnClaim{}, storageError("commit renewed turn claim", err)
@@ -180,7 +180,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, err
 	}
 	if request.InvocationID.IsZero() || request.Lease == "" || request.ConfigVersion == 0 || strings.TrimSpace(request.ResponseText) == "" {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorInvalidArgument, "commit response plan", fmt.Errorf("complete response plan is required"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorInvalidArgument, "commit response plan", errors.New("complete response plan is required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -189,7 +189,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	defer tx.Rollback()
 	row, err := loadTurnRow(ctx, tx, request.Key, request.InvocationID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorNotFound, "commit response plan", fmt.Errorf("turn does not exist"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorNotFound, "commit response plan", errors.New("turn does not exist"))
 	}
 	if err != nil {
 		return agent.StoredPlan{}, storageError("load response plan", err)
@@ -200,7 +200,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 			return agent.StoredPlan{}, planErr
 		}
 		if plan.ConfigVersion != request.ConfigVersion || plan.Text != request.ResponseText {
-			return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("different plan already exists"))
+			return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("different plan already exists"))
 		}
 		plan.Effects, planErr = loadModelEffectRefs(ctx, tx, request.Key, request.InvocationID)
 		if planErr != nil {
@@ -216,17 +216,17 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if agent.TurnState(row.state) != agent.TurnGenerating ||
 		!row.generationLease.Valid || row.generationLease.String != string(request.Lease) ||
 		!row.generationLeaseUntil.Valid || row.generationLeaseUntil.Int64 <= nowMS {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("generation lease is not owned"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("generation lease is not owned"))
 	}
 	if row.configVersion.Valid && agent.ConfigVersion(row.configVersion.Int64) != request.ConfigVersion {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("config version changed"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("config version changed"))
 	}
 	currentMessageID, err := identity.ParseMessageID(row.messageID)
 	if err != nil {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response message ID", err)
 	}
 	if !request.CurrentMessageID.IsZero() && request.CurrentMessageID != currentMessageID {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", fmt.Errorf("current message does not match claimed turn"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("current message does not match claimed turn"))
 	}
 	if err := validateModelEffects(request.Effects, request.Capabilities); err != nil {
 		return agent.StoredPlan{}, err
@@ -305,7 +305,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, storageError("publish response plan", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "publish response plan", fmt.Errorf("generation lease changed"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "publish response plan", errors.New("generation lease changed"))
 	}
 	if err := tx.Commit(); err != nil {
 		return agent.StoredPlan{}, storageError("commit response plan", err)
@@ -324,7 +324,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 
 func validateModelEffects(effects []agent.ModelEffect, capabilities agent.CapabilitySet) error {
 	if len(effects) > agent.MaxModelEffects {
-		return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", fmt.Errorf("too many model effects"))
+		return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", errors.New("too many model effects"))
 	}
 	seen := make(map[string]struct{}, len(effects))
 	for _, planned := range effects {
@@ -332,7 +332,7 @@ func validateModelEffects(effects []agent.ModelEffect, capabilities agent.Capabi
 			return err
 		}
 		if _, exists := seen[planned.CallID]; exists {
-			return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", fmt.Errorf("effect call IDs must be unique"))
+			return agent.NewError(agent.ErrorInvalidArgument, "commit response plan", errors.New("effect call IDs must be unique"))
 		}
 		seen[planned.CallID] = struct{}{}
 	}
@@ -412,7 +412,7 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 	case agent.EffectRunGroupCommand:
 		return effect.RunGroupCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
 	default:
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", fmt.Errorf("effect kind is invalid"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", errors.New("effect kind is invalid"))
 	}
 }
 
@@ -452,13 +452,13 @@ func (store *TurnStore) FailGeneration(ctx context.Context, request agent.FailGe
 		return err
 	}
 	if request.InvocationID.IsZero() || request.Lease == "" || request.Code == "" {
-		return agent.NewError(agent.ErrorInvalidArgument, "fail generation", fmt.Errorf("complete failure data is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "fail generation", errors.New("complete failure data is required"))
 	}
 	state := agent.TurnFailedTerminal
 	if request.Retryable {
 		state = agent.TurnFailedRetryable
 		if request.RetryAfter.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "fail generation", fmt.Errorf("retry time is required"))
+			return agent.NewError(agent.ErrorInvalidArgument, "fail generation", errors.New("retry time is required"))
 		}
 	}
 	nowMS := store.clock.Now().UnixMilli()
@@ -475,7 +475,7 @@ func (store *TurnStore) FailGeneration(ctx context.Context, request agent.FailGe
 		return storageError("record generation failure", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return agent.NewError(agent.ErrorConflict, "record generation failure", fmt.Errorf("generation lease changed"))
+		return agent.NewError(agent.ErrorConflict, "record generation failure", errors.New("generation lease changed"))
 	}
 	return nil
 }
@@ -485,17 +485,17 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 		return agent.TurnRecord{}, err
 	}
 	if invocationID.IsZero() {
-		return agent.TurnRecord{}, agent.NewError(agent.ErrorInvalidArgument, "load turn", fmt.Errorf("invocation ID is required"))
+		return agent.TurnRecord{}, agent.NewError(agent.ErrorInvalidArgument, "load turn", errors.New("invocation ID is required"))
 	}
 	row, err := loadTurnRow(ctx, store.db, key, invocationID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !row.digest.Valid) {
-		return agent.TurnRecord{}, agent.NewError(agent.ErrorNotFound, "load turn", fmt.Errorf("claimed turn does not exist"))
+		return agent.TurnRecord{}, agent.NewError(agent.ErrorNotFound, "load turn", errors.New("claimed turn does not exist"))
 	}
 	if err != nil {
 		return agent.TurnRecord{}, storageError("load turn", err)
 	}
 	if len(row.digest.Bytes) != sha256.Size {
-		return agent.TurnRecord{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn", fmt.Errorf("invalid invocation digest"))
+		return agent.TurnRecord{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn", errors.New("invalid invocation digest"))
 	}
 	var digest agent.InvocationDigest
 	copy(digest[:], row.digest.Bytes)
@@ -674,7 +674,7 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), sender.ParticipantID.String(),
 	).Scan(&storedRef)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && storedRef != sender.Ref.String()) {
-		return agent.NewError(agent.ErrorConflict, "ensure invocation sender ref", fmt.Errorf("participant and sender ref are bound to different identities"))
+		return agent.NewError(agent.ErrorConflict, "ensure invocation sender ref", errors.New("participant and sender ref are bound to different identities"))
 	}
 	if err != nil {
 		return storageError("verify invocation sender ref", err)
@@ -684,7 +684,7 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 
 func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agent.StoredPlan, error) {
 	if !row.configVersion.Valid || !row.responseID.Valid || !row.actionID.Valid || !row.responseText.Valid || !row.responseCreatedAt.Valid {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", fmt.Errorf("partial response plan"))
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", errors.New("partial response plan"))
 	}
 	responseID, err := identity.ParseMessageID(row.responseID.String)
 	if err != nil {

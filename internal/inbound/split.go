@@ -2,7 +2,7 @@ package inbound
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -37,11 +37,12 @@ func newHandlerServices(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
+	adapter any,
 ) (handlerServices, error) {
 	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
-		return handlerServices{}, agent.NewError(agent.ErrorInvalidArgument, "create inbound lane services", fmt.Errorf("store, registry, policy, response writer, and observer are required"))
+		return handlerServices{}, agent.NewError(agent.ErrorInvalidArgument, "create inbound lane services", errors.New("store, registry, policy, response writer, and observer are required"))
 	}
-	return handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer}, nil
+	return handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer, adapter: adapter}, nil
 }
 
 func newCommandHandler(services handlerServices) (*CommandHandler, error) {
@@ -51,7 +52,7 @@ func newCommandHandler(services handlerServices) (*CommandHandler, error) {
 
 func newAIHandler(services handlerServices, options BatchOptions) (*AIHandler, error) {
 	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 || options.Clock == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create AI handler", fmt.Errorf("valid batching bounds and clock are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create AI handler", errors.New("valid batching bounds and clock are required"))
 	}
 	if options.Activity == nil {
 		options.Activity = discardAIActivity{}
@@ -68,8 +69,9 @@ func NewCommandHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
+	adapter any,
 ) (*CommandHandler, error) {
-	services, err := newHandlerServices(store, agents, policy, responses, observer)
+	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -84,9 +86,10 @@ func NewAIHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
+	adapter any,
 	options BatchOptions,
 ) (*AIHandler, error) {
-	services, err := newHandlerServices(store, agents, policy, responses, observer)
+	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +101,7 @@ func (handler *CommandHandler) Resume(ctx context.Context, message conversation.
 		return agent.NewError(agent.ErrorInvalidArgument, "resume command message", err)
 	}
 	if !IsCommand(message.Text) {
-		return agent.NewError(agent.ErrorInvalidArgument, "run command handler", fmt.Errorf("message is not a registered command"))
+		return agent.NewError(agent.ErrorInvalidArgument, "run command handler", errors.New("message is not a registered command"))
 	}
 	// FromMe command messages intentionally use this same command lane. The
 	// command permission expression decides whether the bot may run them; the
@@ -111,7 +114,7 @@ func (handler *CommandHandler) Resume(ctx context.Context, message conversation.
 	}
 	request, descriptor, recognized := parseRegisteredCommand(message.Text)
 	if !recognized {
-		return agent.NewError(agent.ErrorIntegrityFailure, "run command handler", fmt.Errorf("registered command disappeared during dispatch"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "run command handler", errors.New("registered command disappeared during dispatch"))
 	}
 	return handler.resumeCommand(ctx, message, request, descriptor)
 }
@@ -121,7 +124,7 @@ func (handler *AIHandler) Resume(ctx context.Context, message conversation.Incom
 		return agent.NewError(agent.ErrorInvalidArgument, "resume AI message", err)
 	}
 	if IsCommand(message.Text) {
-		return agent.NewError(agent.ErrorInvalidArgument, "run AI handler", fmt.Errorf("registered command cannot enter AI lane"))
+		return agent.NewError(agent.ErrorInvalidArgument, "run AI handler", errors.New("registered command cannot enter AI lane"))
 	}
 	switch {
 	case message.FromMe:
@@ -202,7 +205,7 @@ type MuteDeleter interface {
 
 func NewSplitDispatcher(store Store, command, ai laneResumer, observer Observer, commandQueue, aiQueue, commandWorkers, aiWorkers uint32, report func(Lane, error)) (*SplitDispatcher, error) {
 	if store == nil || command == nil || ai == nil || observer == nil || commandQueue == 0 || aiQueue == 0 || commandWorkers == 0 || aiWorkers == 0 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create split inbound dispatcher", fmt.Errorf("store, lanes, observer, queues, and workers are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create split inbound dispatcher", errors.New("store, lanes, observer, queues, and workers are required"))
 	}
 	if report == nil {
 		report = func(Lane, error) {}
@@ -217,7 +220,7 @@ func NewSplitDispatcher(store Store, command, ai laneResumer, observer Observer,
 
 func (dispatcher *SplitDispatcher) EnableMuteEnforcement(deleter MuteDeleter, clock agent.Clock) error {
 	if deleter == nil || clock == nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "enable mute enforcement", fmt.Errorf("deleter and clock are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "enable mute enforcement", errors.New("deleter and clock are required"))
 	}
 	dispatcher.muteDeleter, dispatcher.clock = deleter, clock
 	return nil

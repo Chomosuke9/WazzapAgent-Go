@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -48,7 +47,7 @@ func (store *InboundStore) ClaimAndResolveSender(
 	message, state, err := loadInboundByProvider(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, candidate.ProviderMessageID)
 	if err == nil {
 		if message.SenderLID != candidate.SenderLID || message.SenderID != participantID || message.SenderRef != senderRef {
-			return inbound.ClaimedMessage{}, agent.NewError(agent.ErrorIntegrityFailure, "verify duplicate sender identity", fmt.Errorf("provider message ID was replayed with a different sender identity"))
+			return inbound.ClaimedMessage{}, agent.NewError(agent.ErrorIntegrityFailure, "verify duplicate sender identity", errors.New("provider message ID was replayed with a different sender identity"))
 		}
 		message.Owner = candidate.Owner
 		message.Allowlisted = candidate.Allowlisted
@@ -192,7 +191,7 @@ func inboundTranscriptEntry(
 
 func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation.IncomingMessage, reason inbound.IgnoreReason) error {
 	if !reason.Valid() {
-		return agent.NewError(agent.ErrorInvalidArgument, "mark incoming message ignored", fmt.Errorf("ignore reason is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "mark incoming message ignored", errors.New("ignore reason is required"))
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, ignored_reason = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
@@ -215,12 +214,12 @@ func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation
 			message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 		).Scan(&state); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return agent.NewError(agent.ErrorNotFound, "mark incoming message ignored", fmt.Errorf("message does not exist"))
+				return agent.NewError(agent.ErrorNotFound, "mark incoming message ignored", errors.New("message does not exist"))
 			}
 			return storageError("inspect ignored incoming state", err)
 		}
 		if state != ignoredTurnState {
-			return agent.NewError(agent.ErrorConflict, "mark incoming message ignored", fmt.Errorf("message already entered processing"))
+			return agent.NewError(agent.ErrorConflict, "mark incoming message ignored", errors.New("message already entered processing"))
 		}
 	}
 	return nil
@@ -236,7 +235,7 @@ func (store *InboundStore) IsChatAllowlisted(ctx context.Context, key agent.Key)
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&allowed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, agent.NewError(agent.ErrorNotFound, "read chat policy", fmt.Errorf("chat does not exist"))
+		return false, agent.NewError(agent.ErrorNotFound, "read chat policy", errors.New("chat does not exist"))
 	}
 	if err != nil {
 		return false, storageError("read chat policy", err)
@@ -252,11 +251,11 @@ func (store *InboundStore) ReconcileAccountPolicy(
 	allowlist []string,
 ) error {
 	if tenantID.IsZero() || accountID.IsZero() || strings.TrimSpace(ownerAddress) == "" || len(ownerAddress) > 512 || len(allowlist) == 0 || len(allowlist) > 1024 {
-		return agent.NewError(agent.ErrorInvalidArgument, "reconcile account policy", fmt.Errorf("valid identity, owner, and bounded allowlist are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "reconcile account policy", errors.New("valid identity, owner, and bounded allowlist are required"))
 	}
 	for _, address := range allowlist {
 		if strings.TrimSpace(address) == "" || len(address) > 512 {
-			return agent.NewError(agent.ErrorInvalidArgument, "reconcile account policy", fmt.Errorf("allowlist address is invalid"))
+			return agent.NewError(agent.ErrorInvalidArgument, "reconcile account policy", errors.New("allowlist address is invalid"))
 		}
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -296,7 +295,7 @@ func (store *InboundStore) ResolveChatAddress(ctx context.Context, key agent.Key
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&address)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !address.Valid) {
-		return "", agent.NewError(agent.ErrorNotFound, "resolve chat target", fmt.Errorf("provider target does not exist"))
+		return "", agent.NewError(agent.ErrorNotFound, "resolve chat target", errors.New("provider target does not exist"))
 	}
 	if err != nil {
 		return "", storageError("resolve chat target", err)
@@ -312,7 +311,7 @@ func (store *InboundStore) ResolveMessageTarget(
 	targetID identity.MessageID,
 ) (chatAddress, providerMessageID, senderAddress string, occurredAt time.Time, resultErr error) {
 	if err := key.Validate(); err != nil || targetID.IsZero() {
-		return "", "", "", time.Time{}, agent.NewError(agent.ErrorInvalidArgument, "resolve message target", fmt.Errorf("key and target message are required"))
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorInvalidArgument, "resolve message target", errors.New("key and target message are required"))
 	}
 	var occurredAtMS int64
 	err := store.db.QueryRowContext(ctx, `SELECT c.provider_address, e.provider_message_id, p.lid, e.occurred_at_ms
@@ -324,7 +323,7 @@ func (store *InboundStore) ResolveMessageTarget(
 	).Scan(&chatAddress, &providerMessageID, &senderAddress, &occurredAtMS)
 	if err == nil {
 		if chatAddress == "" || providerMessageID == "" || senderAddress == "" || occurredAtMS <= 0 {
-			return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", fmt.Errorf("incoming target mapping is incomplete"))
+			return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", errors.New("incoming target mapping is incomplete"))
 		}
 		return chatAddress, providerMessageID, senderAddress, time.UnixMilli(occurredAtMS).UTC(), nil
 	}
@@ -339,13 +338,13 @@ func (store *InboundStore) ResolveMessageTarget(
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
 	).Scan(&chatAddress, &providerMessageID, &occurredAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", time.Time{}, agent.NewError(agent.ErrorNotFound, "resolve message target", fmt.Errorf("target message is not natively addressable"))
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorNotFound, "resolve message target", errors.New("target message is not natively addressable"))
 	}
 	if err != nil {
 		return "", "", "", time.Time{}, storageError("resolve assistant message target", err)
 	}
 	if chatAddress == "" || providerMessageID == "" || occurredAtMS <= 0 {
-		return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", fmt.Errorf("assistant target mapping is incomplete"))
+		return "", "", "", time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve message target", errors.New("assistant target mapping is incomplete"))
 	}
 	return chatAddress, providerMessageID, "", time.UnixMilli(occurredAtMS).UTC(), nil
 }
@@ -355,7 +354,7 @@ func (store *InboundStore) ResolveMessageTarget(
 // it prevents a stale internal surrogate from becoming sufficient authority.
 func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy.Principal) (policy.HumanAccess, error) {
 	if err := principal.Validate(); err != nil || principal.Kind != policy.PrincipalHuman {
-		return policy.HumanAccess{}, agent.NewError(agent.ErrorInvalidArgument, "read human access", fmt.Errorf("valid human principal is required"))
+		return policy.HumanAccess{}, agent.NewError(agent.ErrorInvalidArgument, "read human access", errors.New("valid human principal is required"))
 	}
 	var kind, allowlisted, owner int64
 	err := store.db.QueryRowContext(ctx, `SELECT c.kind, c.allowlisted, p.owner
@@ -367,7 +366,7 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 		principal.ParticipantID.String(), principal.LID.String(),
 	).Scan(&kind, &allowlisted, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return policy.HumanAccess{}, agent.NewError(agent.ErrorNotFound, "read human access", fmt.Errorf("principal is not current"))
+		return policy.HumanAccess{}, agent.NewError(agent.ErrorNotFound, "read human access", errors.New("principal is not current"))
 	}
 	if err != nil {
 		return policy.HumanAccess{}, storageError("read human access", err)
@@ -389,7 +388,7 @@ func (store *InboundStore) ListRecoverableInbound(
 	limit uint32,
 ) ([]conversation.IncomingMessage, error) {
 	if tenantID.IsZero() || now.IsZero() || staleBefore.IsZero() || !staleBefore.Before(now) || limit == 0 || limit > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable inbound", fmt.Errorf("valid tenant, times, and limit are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable inbound", errors.New("valid tenant, times, and limit are required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
@@ -562,7 +561,7 @@ func resolveParticipant(ctx context.Context, tx *sql.Tx, candidate conversation.
 		candidate.ProviderSenderPhone, boolInt(candidate.Owner), nowMS,
 	); err != nil {
 		if candidate.ProviderSenderPhone != "" && isUniqueConstraint(err) {
-			return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "create participant mapping", fmt.Errorf("phone alias is already bound to another LID"))
+			return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "create participant mapping", errors.New("phone alias is already bound to another LID"))
 		}
 		return identity.ParticipantID{}, storageError("create participant mapping", err)
 	}
@@ -609,7 +608,7 @@ func resolveSenderRef(
 			return identity.SenderRef{}, agent.NewError(agent.ErrorInternal, "create sender ref", err)
 		}
 		if ref.IsZero() {
-			return identity.SenderRef{}, agent.NewError(agent.ErrorIntegrityFailure, "create sender ref", fmt.Errorf("factory returned an empty reference"))
+			return identity.SenderRef{}, agent.NewError(agent.ErrorIntegrityFailure, "create sender ref", errors.New("factory returned an empty reference"))
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO sender_refs(
           tenant_id, account_id, chat_id, participant_id, lid, sender_ref, created_at_ms
@@ -626,7 +625,7 @@ func resolveSenderRef(
 			return identity.SenderRef{}, storageError("persist sender ref", err)
 		}
 	}
-	return identity.SenderRef{}, agent.NewError(agent.ErrorResourceExhausted, "create sender ref", fmt.Errorf("collision retry limit reached"))
+	return identity.SenderRef{}, agent.NewError(agent.ErrorResourceExhausted, "create sender ref", errors.New("collision retry limit reached"))
 }
 
 func verifySenderMapping(ctx context.Context, query actionQuerier, tenantID identity.TenantID, accountID identity.AccountID, chatID identity.ChatID, lid identity.LID, ref identity.SenderRef) error {
@@ -635,7 +634,7 @@ func verifySenderMapping(ctx context.Context, query actionQuerier, tenantID iden
 	  WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND (lid = ? OR sender_ref = ?)`,
 		tenantID.String(), accountID.String(), chatID.String(), lid.String(), ref.String()).Scan(&storedLID, &storedRef)
 	if err != nil || storedLID != lid.String() || storedRef != ref.String() {
-		return agent.NewError(agent.ErrorIntegrityFailure, "verify senderRef LID mapping", fmt.Errorf("sender identity round-trip failed"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "verify senderRef LID mapping", errors.New("sender identity round-trip failed"))
 	}
 	return nil
 }
@@ -725,7 +724,7 @@ func loadInboundByProvider(
 // ResolveLID performs the public senderRef -> LID half of the identity contract.
 func (store *InboundStore) ResolveLID(ctx context.Context, key agent.Key, ref identity.SenderRef) (identity.LID, error) {
 	if err := key.Validate(); err != nil || ref.IsZero() {
-		return identity.LID{}, agent.NewError(agent.ErrorInvalidArgument, "resolve senderRef to LID", fmt.Errorf("valid key and senderRef are required"))
+		return identity.LID{}, agent.NewError(agent.ErrorInvalidArgument, "resolve senderRef to LID", errors.New("valid key and senderRef are required"))
 	}
 	var value string
 	if err := store.db.QueryRowContext(ctx, `SELECT lid FROM sender_refs WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
@@ -743,7 +742,7 @@ func (store *InboundStore) ResolveLID(ctx context.Context, key agent.Key, ref id
 
 func (store *InboundStore) SetChatMute(ctx context.Context, key agent.Key, ref identity.SenderRef, durationMinutes uint32, now time.Time) error {
 	if err := key.Validate(); err != nil || ref.IsZero() || now.IsZero() || durationMinutes > 43200 {
-		return agent.NewError(agent.ErrorInvalidArgument, "set chat mute", fmt.Errorf("valid scope, senderRef, time, and bounded duration are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "set chat mute", errors.New("valid scope, senderRef, time, and bounded duration are required"))
 	}
 	if durationMinutes == 0 {
 		_, err := store.db.ExecContext(ctx, `DELETE FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
@@ -765,7 +764,7 @@ func (store *InboundStore) SetChatMute(ctx context.Context, key agent.Key, ref i
 
 func (store *InboundStore) IsChatMuted(ctx context.Context, key agent.Key, ref identity.SenderRef, now time.Time) (bool, error) {
 	if err := key.Validate(); err != nil || ref.IsZero() || now.IsZero() {
-		return false, agent.NewError(agent.ErrorInvalidArgument, "read chat mute", fmt.Errorf("valid scope, senderRef, and time are required"))
+		return false, agent.NewError(agent.ErrorInvalidArgument, "read chat mute", errors.New("valid scope, senderRef, and time are required"))
 	}
 	var until int64
 	err := store.db.QueryRowContext(ctx, `SELECT muted_until_ms FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
@@ -787,7 +786,7 @@ func (store *InboundStore) IsChatMuted(ctx context.Context, key agent.Key, ref i
 // ResolveSenderRef performs the public LID -> senderRef half of the identity contract.
 func (store *InboundStore) ResolveSenderRef(ctx context.Context, key agent.Key, lid identity.LID) (identity.SenderRef, error) {
 	if err := key.Validate(); err != nil || lid.IsZero() {
-		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "resolve LID to senderRef", fmt.Errorf("valid key and LID are required"))
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "resolve LID to senderRef", errors.New("valid key and LID are required"))
 	}
 	var value string
 	if err := store.db.QueryRowContext(ctx, `SELECT sender_ref FROM sender_refs WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND lid = ?`,
@@ -901,7 +900,7 @@ func decodeQuotedMessage(
 		return nil, nil
 	}
 	if !message.Valid || !role.Valid || !text.Valid {
-		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", fmt.Errorf("partial quote metadata"))
+		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", errors.New("partial quote metadata"))
 	}
 	messageID, err := identity.ParseMessageID(message.String)
 	if err != nil {
@@ -920,7 +919,7 @@ func decodeQuotedMessage(
 	}
 	if (quote.Role == conversation.QuoteUser) != sender.Valid ||
 		(quote.Role != conversation.QuoteUser && quote.Role != conversation.QuoteAssistant) {
-		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", fmt.Errorf("quote role and sender do not match"))
+		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", errors.New("quote role and sender do not match"))
 	}
 	return quote, nil
 }

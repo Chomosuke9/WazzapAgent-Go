@@ -95,10 +95,10 @@ type Adapter struct {
 
 func Open(ctx context.Context, config Config) (*Adapter, error) {
 	if config.TenantID.IsZero() || config.AccountID.IsZero() || config.Targets == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("identity and target resolver are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("identity and target resolver are required"))
 	}
 	if config.QueueCapacity == 0 || config.Workers == 0 || config.ConnectTimeout <= 0 || config.SendTimeout <= 0 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("positive queue, worker, and timeout values are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("positive queue, worker, and timeout values are required"))
 	}
 	owner, err := normalizeAddress(config.OwnerAddress)
 	if err != nil {
@@ -113,7 +113,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		allowlist[normalized] = struct{}{}
 	}
 	if len(allowlist) == 0 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", fmt.Errorf("allowlist must fail closed"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("allowlist must fail closed"))
 	}
 	normalizedAllowlist := make([]string, 0, len(allowlist))
 	for address := range allowlist {
@@ -159,10 +159,10 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 
 func (adapter *Adapter) BindHandler(handler CandidateHandler) error {
 	if handler == nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "bind WhatsApp handler", fmt.Errorf("candidate handler is required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "bind WhatsApp handler", errors.New("candidate handler is required"))
 	}
 	if adapter.started.Load() || adapter.handler != nil {
-		return agent.NewError(agent.ErrorConflict, "bind WhatsApp handler", fmt.Errorf("handler is already bound or adapter has started"))
+		return agent.NewError(agent.ErrorConflict, "bind WhatsApp handler", errors.New("handler is already bound or adapter has started"))
 	}
 	adapter.handler = handler
 	return nil
@@ -170,17 +170,17 @@ func (adapter *Adapter) BindHandler(handler CandidateHandler) error {
 
 func (adapter *Adapter) Start(ctx context.Context) error {
 	if adapter.closed.Load() {
-		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", fmt.Errorf("adapter is closed"))
+		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", errors.New("adapter is closed"))
 	}
 	if adapter.handler == nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "start WhatsApp adapter", fmt.Errorf("candidate handler must be bound first"))
+		return agent.NewError(agent.ErrorInvalidArgument, "start WhatsApp adapter", errors.New("candidate handler must be bound first"))
 	}
 	if !adapter.started.CompareAndSwap(false, true) {
-		return agent.NewError(agent.ErrorConflict, "start WhatsApp adapter", fmt.Errorf("adapter is already started"))
+		return agent.NewError(agent.ErrorConflict, "start WhatsApp adapter", errors.New("adapter is already started"))
 	}
 	if adapter.client.Store.ID == nil && adapter.pairing == nil {
 		adapter.started.Store(false)
-		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", fmt.Errorf("fresh device requires explicit pairing output"))
+		return agent.NewError(agent.ErrorNotReady, "start WhatsApp adapter", errors.New("fresh device requires explicit pairing output"))
 	}
 	adapter.rootCtx, adapter.cancel = context.WithCancel(ctx)
 	for index := uint32(0); index < adapter.workers; index++ {
@@ -310,7 +310,7 @@ func (adapter *Adapter) QueueUsage() (int, int)                 { return len(ada
 
 func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
 	if !adapter.ready.Load() {
-		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, "send WhatsApp text", fmt.Errorf("account is not connected"))
+		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, "send WhatsApp text", errors.New("account is not connected"))
 	}
 	address, err := adapter.targets.ResolveChatAddress(ctx, request.Key)
 	if err != nil {
@@ -318,7 +318,7 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 	}
 	target, err := types.ParseJID(address)
 	if err != nil || target.IsEmpty() {
-		return action.SendTextResult{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", fmt.Errorf("stored target is invalid"))
+		return action.SendTextResult{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", errors.New("stored target is invalid"))
 	}
 	stripe := adapter.sendStripe(request.Key.ChatID.String())
 	stripe.Lock()
@@ -333,7 +333,7 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 		if sendCtx.Err() == context.Canceled {
 			return action.SendTextResult{}, agent.NewError(agent.ErrorCancelled, "send WhatsApp text", sendCtx.Err())
 		}
-		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", fmt.Errorf("native send failed"))
+		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", err)
 	}
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
 }
@@ -343,7 +343,7 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 // durable conversation turn.
 func (adapter *Adapter) MarkRead(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
 	if !adapter.ready.Load() {
-		return agent.NewError(agent.ErrorNotReady, "mark WhatsApp message read", fmt.Errorf("account is not connected"))
+		return agent.NewError(agent.ErrorNotReady, "mark WhatsApp message read", errors.New("account is not connected"))
 	}
 	chat, providerMessageID, sender, occurredAt, err := adapter.resolveEffectTarget(ctx, key, messageID)
 	if err != nil {
@@ -360,7 +360,7 @@ func (adapter *Adapter) MarkRead(ctx context.Context, key agent.Key, messageID i
 // SetComposing automatically brackets model generation with composing/paused.
 func (adapter *Adapter) SetComposing(ctx context.Context, key agent.Key, composing bool) error {
 	if !adapter.ready.Load() {
-		return agent.NewError(agent.ErrorNotReady, "set WhatsApp composing state", fmt.Errorf("account is not connected"))
+		return agent.NewError(agent.ErrorNotReady, "set WhatsApp composing state", errors.New("account is not connected"))
 	}
 	target, err := adapter.resolveChatTarget(ctx, key)
 	if err != nil {
@@ -380,7 +380,7 @@ func (adapter *Adapter) SetComposing(ctx context.Context, key agent.Key, composi
 
 func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
 	if !adapter.ready.Load() {
-		return agent.NewError(agent.ErrorNotReady, "delete WhatsApp message", fmt.Errorf("account is not connected"))
+		return agent.NewError(agent.ErrorNotReady, "delete WhatsApp message", errors.New("account is not connected"))
 	}
 	chat, providerMessageID, sender, _, err := adapter.resolveEffectTarget(ctx, key, messageID)
 	if err != nil {
@@ -400,7 +400,7 @@ func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messag
 // after the dispatcher has completed its policy recheck.
 func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored) (string, error) {
 	if !adapter.ready.Load() {
-		return "", agent.NewError(agent.ErrorNotReady, "execute WhatsApp effect", fmt.Errorf("account is not connected"))
+		return "", agent.NewError(agent.ErrorNotReady, "execute WhatsApp effect", errors.New("account is not connected"))
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
@@ -448,13 +448,13 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 	case effect.RunGroupCommand:
 		return adapter.executeGroupCommand(requestCtx, stored.Request.Ref.Key, typed)
 	}
-	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", fmt.Errorf("effect type is invalid"))
+	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
 }
 
 func (adapter *Adapter) executeGroupCommand(ctx context.Context, key agent.Key, command effect.RunGroupCommand) (string, error) {
 	fields := strings.Fields(command.Command)
 	if len(fields) < 2 {
-		return "", agent.NewError(agent.ErrorIntegrityFailure, "execute group command", fmt.Errorf("command is malformed"))
+		return "", agent.NewError(agent.ErrorIntegrityFailure, "execute group command", errors.New("command is malformed"))
 	}
 	switch fields[1] {
 	case "delete":
@@ -491,24 +491,24 @@ func (adapter *Adapter) executeGroupCommand(ctx context.Context, key agent.Key, 
 		}
 		participant, err := types.ParseJID(lid.String())
 		if err != nil || participant.IsEmpty() {
-			return "", agent.NewError(agent.ErrorIntegrityFailure, "execute /group kick", fmt.Errorf("stored LID is invalid"))
+			return "", agent.NewError(agent.ErrorIntegrityFailure, "execute /group kick", errors.New("stored LID is invalid"))
 		}
 		results, err := adapter.client.UpdateGroupParticipants(ctx, chat, []types.JID{participant.ToNonAD()}, whatsmeow.ParticipantChangeRemove)
 		if err != nil {
 			return "", nativeEffectError(ctx, "execute /group kick", err)
 		}
 		if len(results) != 1 {
-			return "", agent.NewError(agent.ErrorProviderFailure, "execute /group kick", fmt.Errorf("provider returned no participant result"))
+			return "", agent.NewError(agent.ErrorProviderFailure, "execute /group kick", errors.New("provider returned no participant result"))
 		}
 		return "group-kick-" + ref.String(), nil
 	default:
-		return "", agent.NewError(agent.ErrorUnsupported, "execute group command", fmt.Errorf("subcommand is not supported"))
+		return "", agent.NewError(agent.ErrorUnsupported, "execute group command", errors.New("subcommand is not supported"))
 	}
 }
 
 func parseMuteCommand(fields []string) (identity.SenderRef, uint32, error) {
 	if len(fields) < 2 {
-		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", fmt.Errorf("senderRef and duration are required"))
+		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", errors.New("senderRef and duration are required"))
 	}
 	ref, err := parseCommandSenderRef(fields[len(fields)-2])
 	if err != nil {
@@ -516,14 +516,14 @@ func parseMuteCommand(fields []string) (identity.SenderRef, uint32, error) {
 	}
 	duration, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
 	if err != nil || duration > 43200 {
-		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", fmt.Errorf("duration must be 0-43200 minutes"))
+		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", errors.New("duration must be 0-43200 minutes"))
 	}
 	return ref, uint32(duration), nil
 }
 
 func parseKickCommand(fields []string) (identity.SenderRef, error) {
 	if len(fields) < 1 {
-		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse /group kick", fmt.Errorf("senderRef is required"))
+		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse /group kick", errors.New("senderRef is required"))
 	}
 	return parseCommandSenderRef(fields[len(fields)-1])
 }
@@ -545,7 +545,7 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 		return policy.ChatAuthority{}, err
 	}
 	if !adapter.ready.Load() {
-		return policy.ChatAuthority{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat authority", fmt.Errorf("account is not connected"))
+		return policy.ChatAuthority{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat authority", errors.New("account is not connected"))
 	}
 	chat, err := adapter.resolveChatTarget(ctx, principal.Key())
 	if err != nil {
@@ -565,7 +565,7 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 	if principal.Kind == policy.PrincipalHuman {
 		actorLID, err = types.ParseJID(principal.LID.String())
 		if err != nil || actorLID.IsEmpty() {
-			return policy.ChatAuthority{}, agent.NewError(agent.ErrorIntegrityFailure, "read WhatsApp group authority", fmt.Errorf("principal LID is invalid"))
+			return policy.ChatAuthority{}, agent.NewError(agent.ErrorIntegrityFailure, "read WhatsApp group authority", errors.New("principal LID is invalid"))
 		}
 	}
 	botLID := adapter.client.Store.GetLID().ToNonAD()
@@ -616,7 +616,7 @@ func (adapter *Adapter) resolveChatTarget(ctx context.Context, key agent.Key) (t
 	}
 	target, err := types.ParseJID(address)
 	if err != nil || target.IsEmpty() {
-		return types.EmptyJID, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", fmt.Errorf("stored target is invalid"))
+		return types.EmptyJID, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", errors.New("stored target is invalid"))
 	}
 	return target.ToNonAD(), nil
 }
@@ -628,13 +628,13 @@ func (adapter *Adapter) resolveEffectTarget(ctx context.Context, key agent.Key, 
 	}
 	chat, err := types.ParseJID(address)
 	if err != nil || chat.IsEmpty() || providerMessageID == "" || occurredAt.IsZero() {
-		return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", fmt.Errorf("stored message target is invalid"))
+		return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", errors.New("stored message target is invalid"))
 	}
 	sender := types.EmptyJID
 	if senderAddress != "" {
 		sender, err = types.ParseJID(senderAddress)
 		if err != nil || sender.IsEmpty() {
-			return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", fmt.Errorf("stored message sender is invalid"))
+			return types.EmptyJID, "", types.EmptyJID, time.Time{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp effect target", errors.New("stored message sender is invalid"))
 		}
 	}
 	return chat.ToNonAD(), types.MessageID(providerMessageID), sender.ToNonAD(), occurredAt.UTC(), nil
@@ -647,7 +647,7 @@ func nativeEffectError(ctx context.Context, operation string, err error) error {
 	if ctx.Err() == context.Canceled {
 		return agent.NewError(agent.ErrorCancelled, operation, ctx.Err())
 	}
-	return agent.NewError(agent.ErrorProviderFailure, operation, fmt.Errorf("native operation failed"))
+	return agent.NewError(agent.ErrorProviderFailure, operation, err)
 }
 
 func (adapter *Adapter) handleEvent(event any) {
@@ -668,7 +668,7 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.logger.Warn("WhatsApp keepalive timeout", "consecutive_failures", typed.ErrorCount)
 	case events.PermanentDisconnect:
 		adapter.ready.Store(false)
-		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", fmt.Errorf("%s", typed.PermanentDisconnectDescription())))
+		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", errors.New(typed.PermanentDisconnectDescription())))
 	case *events.Message:
 		candidate, ok := adapter.normalizeMessage(typed)
 		if !ok {

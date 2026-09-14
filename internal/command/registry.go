@@ -19,7 +19,7 @@ type Name string
 
 var tokenPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-type Handler func(context.Context, Request, Context) error
+type Handler func(context.Context, Request, Context, any) error
 
 // PermissionFacts is an alias for the policy facts accepted by the permission
 // DSL. Keeping the alias here lets command modules remain declarative while
@@ -55,6 +55,7 @@ type Context struct {
 	Store     CommandStore
 	Responses ResponseWriter
 	Observer  Observer
+	Adapter   any
 }
 
 type CommandStore interface {
@@ -158,7 +159,7 @@ func (registry *Registry) Dispatch(ctx context.Context, request Request, command
 	if !allowed {
 		return agent.NewError(agent.ErrorPermissionDenied, "dispatch command", fmt.Errorf("permission expression denied command"))
 	}
-	return descriptor.Handler(ctx, request, commandContext)
+	return descriptor.Handler(ctx, request, commandContext, commandContext.Adapter)
 }
 
 // Allows evaluates the permission for a recognized request without invoking

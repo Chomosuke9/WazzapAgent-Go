@@ -251,13 +251,13 @@ type ModelEffect struct {
 
 func (effect ModelEffect) Validate(capabilities CapabilitySet) error {
 	if strings.TrimSpace(effect.CallID) != effect.CallID || len(effect.CallID) == 0 || len(effect.CallID) > 128 || !utf8.ValidString(effect.CallID) {
-		return NewError(ErrorInvalidArgument, "validate model effect", fmt.Errorf("tool call ID is invalid"))
+		return Errorf(ErrorInvalidArgument, "validate model effect", "tool call ID is invalid")
 	}
 	if err := effect.Intent.Validate(); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "validate model effect", err)
 	}
 	if !capabilities.Has(effect.Intent.Capability()) {
-		return NewError(ErrorPermissionDenied, "validate model effect", fmt.Errorf("effect capability was not granted"))
+		return Errorf(ErrorPermissionDenied, "validate model effect", "effect capability was not granted")
 	}
 	return nil
 }
@@ -275,7 +275,7 @@ type InvocationDigest [32]byte
 
 func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) {
 	if err := validateInvocation(key, invocation); err != nil {
-		return InvocationDigest{}, err
+		return InvocationDigest{}, NewError(ErrorIntegrityFailure, "digest invocation", err)
 	}
 	var canonical bytes.Buffer
 	canonical.WriteString("wazzapagent.invocation.v2")
@@ -319,7 +319,7 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 
 func validateInvocation(key Key, invocation Invocation) error {
 	if err := key.Validate(); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "validate invocation", err)
 	}
 	if invocation.ID.IsZero() || invocation.Causation.ID.IsZero() {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("invocation and causation IDs are required"))
@@ -343,10 +343,10 @@ func validateInvocation(key Key, invocation Invocation) error {
 		}
 	}
 	if invocation.Sender != nil && (!utf8.ValidString(invocation.Sender.DisplayName) || len(invocation.Sender.DisplayName) > MaxDisplayNameBytes) {
-		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("invalid sender display name"))
+		return Errorf(ErrorInvalidArgument, "validate invocation", "invalid sender display name")
 	}
 	if err := validateQuoteContext(invocation.Quote); err != nil {
-		return err
+		return NewError(ErrorInvalidArgument, "validate invocation", err)
 	}
 	if len(invocation.Input) == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("input is required"))

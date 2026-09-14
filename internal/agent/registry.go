@@ -68,7 +68,7 @@ func newRegistry(parent context.Context, factory Factory, limits RegistryLimits,
 
 func (registry *Registry) AgentFor(ctx context.Context, key Key) (*Agent, error) {
 	if err := key.Validate(); err != nil {
-		return nil, err
+		return nil, NewError(ErrorInvalidArgument, "get agent", err)
 	}
 	for {
 		registry.mu.Lock()
@@ -172,10 +172,10 @@ func (registry *Registry) construct(key Key, entry *registryEntry) {
 	defer cancel()
 	agent, err := registry.factory.NewAgent(ctx, key)
 	if err == nil && agent == nil {
-		err = NewError(ErrorIntegrityFailure, "construct agent", fmt.Errorf("factory returned nil agent"))
+		err = Errorf(ErrorIntegrityFailure, "construct agent", "factory returned nil agent")
 	}
 	if err == nil && agent.key != key {
-		err = NewError(ErrorIntegrityFailure, "construct agent", fmt.Errorf("factory returned wrong agent key"))
+		err = Errorf(ErrorIntegrityFailure, "construct agent", "factory returned wrong agent key")
 		agent = nil
 	}
 

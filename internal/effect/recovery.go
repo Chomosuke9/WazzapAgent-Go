@@ -2,7 +2,7 @@ package effect
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -34,7 +34,7 @@ func NewRecoveryWorker(
 	batchSize uint32,
 ) (*RecoveryWorker, error) {
 	if tenantID.IsZero() || store == nil || dispatch == nil || clock == nil || interval <= 0 || batchSize == 0 || batchSize > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create effect recovery worker", fmt.Errorf("valid identity, dependencies, interval, and batch size are required"))
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create effect recovery worker", errors.New("valid identity, dependencies, interval, and batch size are required"))
 	}
 	return &RecoveryWorker{tenantID: tenantID, store: store, dispatch: dispatch, clock: clock, interval: interval, batchSize: batchSize}, nil
 }

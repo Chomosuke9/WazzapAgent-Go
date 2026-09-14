@@ -11,30 +11,6 @@ type PromptMutation struct {
 	AppliedVersion  agent.ConfigVersion
 }
 
-type ControlCommandKind uint8
-
-const (
-	ControlHelp ControlCommandKind = iota + 1
-	ControlInfo
-	ControlReset
-	ControlDump
-)
-
-func ParseControlCommand(text string) (ControlCommandKind, bool) {
-	switch text {
-	case "/help":
-		return ControlHelp, true
-	case "/info":
-		return ControlInfo, true
-	case "/reset":
-		return ControlReset, true
-	case "/dump":
-		return ControlDump, true
-	default:
-		return 0, false
-	}
-}
-
 type PermissionCommandKind uint8
 
 const (

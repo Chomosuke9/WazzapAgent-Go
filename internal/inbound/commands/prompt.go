@@ -18,7 +18,7 @@ var PromptCommand = command.Descriptor{
 	Handler:     handlePrompt,
 }
 
-func handlePrompt(ctx context.Context, request command.Request, input command.Context) error {
+func handlePrompt(ctx context.Context, request command.Request, input command.Context, adapter any) error {
 	parsed, recognized := command.ParsePromptCommand(command.CanonicalText(request))
 	if !recognized {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("prompt command was not parsed"))

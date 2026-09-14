@@ -102,7 +102,7 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 	defer agent.gate.release()
 	snapshot, err := agent.config.Refresh(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NewError(ErrorIntegrityFailure, "build agent input", err)
 	}
 	if snapshot.Version != version {
 		return nil, NewError(ErrorConflict, "build agent input", fmt.Errorf("authorized config version changed"))
@@ -111,11 +111,15 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 		Limit: agent.historyWindow, ThroughInvocationID: currentInvocationID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, NewError(ErrorIntegrityFailure, "build agent input", err)
 	}
-	return agent.context.Build(ContextBuildRequest{
+	messages, err := agent.context.Build(ContextBuildRequest{
 		Config: snapshot, History: page.Entries, CurrentInvocationID: currentInvocationID,
 	})
+	if err != nil {
+		return nil, NewError(ErrorIntegrityFailure, "build agent input", err)
+	}
+	return messages, nil
 }
 
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
@@ -126,7 +130,7 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 
 	digest, err := DigestInvocation(agent.key, invocation)
 	if err != nil {
-		return InvokeResult{}, err
+		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", err)
 	}
 
 	// Looking up an existing plan before validating the current policy version
@@ -155,7 +159,7 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 
 	snapshot, err := agent.config.Refresh(ctx)
 	if err != nil {
-		return InvokeResult{}, err
+		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", err)
 	}
 	if snapshot.Version != invocation.PolicyVersion {
 		return InvokeResult{}, NewError(ErrorConflict, "invoke agent", fmt.Errorf("policy decision used a stale config version"))
@@ -168,7 +172,7 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		Now:        agent.clock.Now(),
 	})
 	if err != nil {
-		return InvokeResult{}, err
+		return InvokeResult{}, NewError(ErrorStorageFailure, "invoke agent", err)
 	}
 	if claim.Plan != nil {
 		if err := agent.ensureInvocationHistory(ctx, claim.MessageID, invocation, claim.Plan, deliveryForTurnState(claim.State)); err != nil {
@@ -193,15 +197,17 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		Limit: agent.historyWindow, ThroughInvocationID: invocation.ID,
 	})
 	if err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
-		return InvokeResult{}, err
+		wrappedErr := NewError(ErrorIntegrityFailure, "invoke agent", err)
+		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		return InvokeResult{}, wrappedErr
 	}
 	messages, err := agent.context.Build(ContextBuildRequest{
 		Config: snapshot, History: page.Entries, CurrentInvocationID: invocation.ID,
 	})
 	if err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
-		return InvokeResult{}, err
+		wrappedErr := NewError(ErrorIntegrityFailure, "invoke agent", err)
+		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		return InvokeResult{}, wrappedErr
 	}
 
 	request := ModelRequest{
@@ -216,12 +222,14 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 	}
 	generated, err := agent.model.Generate(ctx, request)
 	if err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
-		return InvokeResult{}, err
+		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
+		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		return InvokeResult{}, wrappedErr
 	}
 	if err := validateModelResult(generated, request.Capabilities, request.ContextMessages); err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
-		return InvokeResult{}, err
+		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
+		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		return InvokeResult{}, wrappedErr
 	}
 
 	plan, err := agent.turns.CommitPlan(ctx, CommitPlanRequest{
@@ -269,10 +277,10 @@ func (agent *Agent) ensureInvocationHistory(
 	delivery DeliveryStatus,
 ) error {
 	if messageID.IsZero() {
-		return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("turn message ID is missing"))
+		return Errorf(ErrorIntegrityFailure, "restore invocation history", "turn message ID is missing")
 	}
 	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(messageID, invocation)); err != nil {
-		return err
+		return NewError(ErrorStorageFailure, "restore invocation history", err)
 	}
 	if plan == nil {
 		return nil
@@ -282,11 +290,15 @@ func (agent *Agent) ensureInvocationHistory(
 		// independently retained history/receipt tombstones remain valid.
 		return nil
 	}
-	return agent.history.appendWithinGate(ctx, HistoryEntry{
+	err := agent.history.appendWithinGate(ctx, HistoryEntry{
 		MessageID: plan.ResponseID, InvocationID: invocation.ID, Causation: invocation.Causation,
 		Role: HistoryAssistant, Content: []ContentPart{TextPart{Text: plan.Text}},
 		Delivery: delivery, CreatedAt: plan.CreatedAt,
 	})
+	if err != nil {
+		return NewError(ErrorStorageFailure, "restore invocation history", err)
+	}
+	return nil
 }
 
 func deliveryForTurnState(state TurnState) DeliveryStatus {
@@ -364,13 +376,13 @@ func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
 func validateModelResult(result ModelResult, capabilities CapabilitySet, contextMessages map[string]identity.MessageID) error {
 	if strings.TrimSpace(result.Text) == "" || !utf8.ValidString(result.Text) {
-		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned empty or invalid UTF-8 text"))
+		return Errorf(ErrorProviderFailure, "validate model result", "provider returned empty or invalid UTF-8 text")
 	}
 	if len(result.Text) > MaxResponseBytes {
-		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider response exceeds %d bytes", MaxResponseBytes))
+		return Errorf(ErrorProviderFailure, "validate model result", "provider response exceeds %d bytes", MaxResponseBytes)
 	}
 	if len(result.Effects) > MaxModelEffects {
-		return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider returned too many effects"))
+		return Errorf(ErrorProviderFailure, "validate model result", "provider returned too many effects")
 	}
 	callIDs := make(map[string]struct{}, len(result.Effects))
 	allowedTargets := make(map[identity.MessageID]struct{}, len(contextMessages))
@@ -379,15 +391,15 @@ func validateModelResult(result ModelResult, capabilities CapabilitySet, context
 	}
 	for _, planned := range result.Effects {
 		if err := planned.Validate(capabilities); err != nil {
-			return err
+			return NewError(ErrorProviderFailure, "validate model result", err)
 		}
 		if !planned.Intent.TargetMessageID.IsZero() {
 			if _, ok := allowedTargets[planned.Intent.TargetMessageID]; !ok {
-				return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("model effect target is outside supplied history"))
+				return Errorf(ErrorProviderFailure, "validate model result", "model effect target is outside supplied history")
 			}
 		}
 		if _, exists := callIDs[planned.CallID]; exists {
-			return NewError(ErrorProviderFailure, "validate model result", fmt.Errorf("provider duplicated a tool call ID"))
+			return Errorf(ErrorProviderFailure, "validate model result", "provider duplicated a tool call ID")
 		}
 		callIDs[planned.CallID] = struct{}{}
 	}

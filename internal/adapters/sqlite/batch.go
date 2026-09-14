@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -26,7 +25,7 @@ func (store *InboundStore) StageBatch(
 		return inbound.BatchStage{}, agent.NewError(agent.ErrorInvalidArgument, "stage message batch", err)
 	}
 	if readyAt.IsZero() {
-		return inbound.BatchStage{}, agent.NewError(agent.ErrorInvalidArgument, "stage message batch", fmt.Errorf("ready time is required"))
+		return inbound.BatchStage{}, agent.NewError(agent.ErrorInvalidArgument, "stage message batch", errors.New("ready time is required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,7 +40,7 @@ func (store *InboundStore) StageBatch(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&rowID, &state, &receivedAtMS, &storedReady, &anchor)
 	if errors.Is(err, sql.ErrNoRows) {
-		return inbound.BatchStage{}, agent.NewError(agent.ErrorNotFound, "stage message batch", fmt.Errorf("message does not exist"))
+		return inbound.BatchStage{}, agent.NewError(agent.ErrorNotFound, "stage message batch", errors.New("message does not exist"))
 	}
 	if err != nil {
 		return inbound.BatchStage{}, storageError("load message batch stage", err)
@@ -119,7 +118,7 @@ func (store *InboundStore) StageBatch(
 		return inbound.BatchStage{}, storageError("read message batch debounce", err)
 	}
 	if maxReady <= 0 {
-		return inbound.BatchStage{}, agent.NewError(agent.ErrorIntegrityFailure, "stage message batch", fmt.Errorf("ready time disappeared"))
+		return inbound.BatchStage{}, agent.NewError(agent.ErrorIntegrityFailure, "stage message batch", errors.New("ready time disappeared"))
 	}
 	if blocked {
 		// The message remains durably staged, but no waiter may process it ahead
@@ -158,7 +157,7 @@ func (store *InboundStore) ClaimBatch(
 		return inbound.BatchClaim{}, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", err)
 	}
 	if now.IsZero() || burstCap == 0 || burstCap > maxBatchSize {
-		return inbound.BatchClaim{}, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", fmt.Errorf("current time and bounded burst cap are required"))
+		return inbound.BatchClaim{}, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", errors.New("current time and bounded burst cap are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -173,7 +172,7 @@ func (store *InboundStore) ClaimBatch(
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&state, &anchor, &currentProvider)
 	if errors.Is(err, sql.ErrNoRows) {
-		return inbound.BatchClaim{}, agent.NewError(agent.ErrorNotFound, "claim message batch", fmt.Errorf("message does not exist"))
+		return inbound.BatchClaim{}, agent.NewError(agent.ErrorNotFound, "claim message batch", errors.New("message does not exist"))
 	}
 	if err != nil {
 		return inbound.BatchClaim{}, storageError("load message batch claim", err)
@@ -184,7 +183,7 @@ func (store *InboundStore) ClaimBatch(
 		// Part 1 rows and a crash between generation claim and Part 2 batch
 		// assignment have no anchor. They are still a valid one-message batch.
 		if !currentProvider.Valid || currentProvider.String == "" {
-			return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim message batch", fmt.Errorf("recoverable turn lacks provider identity"))
+			return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "claim message batch", errors.New("recoverable turn lacks provider identity"))
 		}
 		singletonProvider = currentProvider.String
 	} else if state != 0 && !activeRecovery {
@@ -242,7 +241,7 @@ func (store *InboundStore) ClaimBatch(
 			return inbound.BatchClaim{}, storageError("close message batch members", err)
 		}
 		if len(members) == 0 {
-			return inbound.BatchClaim{}, agent.NewError(agent.ErrorConflict, "claim message batch", fmt.Errorf("no ready messages"))
+			return inbound.BatchClaim{}, agent.NewError(agent.ErrorConflict, "claim message batch", errors.New("no ready messages"))
 		}
 		anchorInvocation = members[len(members)-1].invocationID
 		for index, member := range members {
@@ -286,7 +285,7 @@ func (store *InboundStore) ClaimBatch(
 			}
 			if !providerID.Valid || !position.Valid || position.Int64 != int64(len(providerIDs)) {
 				rows.Close()
-				return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "load claimed message batch", fmt.Errorf("batch member identity or position is invalid"))
+				return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "load claimed message batch", errors.New("batch member identity or position is invalid"))
 			}
 			providerIDs = append(providerIDs, providerID.String)
 		}
@@ -294,7 +293,7 @@ func (store *InboundStore) ClaimBatch(
 			return inbound.BatchClaim{}, storageError("close claimed message batch", err)
 		}
 		if len(providerIDs) > maxBatchSize {
-			return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "load claimed message batch", fmt.Errorf("batch exceeds durable size bound"))
+			return inbound.BatchClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "load claimed message batch", errors.New("batch exceeds durable size bound"))
 		}
 	}
 	messages := make([]conversation.IncomingMessage, 0, len(providerIDs))
@@ -346,7 +345,7 @@ func refreshMessagePolicy(ctx context.Context, query actionQuerier, message *con
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.SenderID.String(),
 	).Scan(&allowlisted, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.NewError(agent.ErrorIntegrityFailure, "refresh batch policy", fmt.Errorf("chat or participant disappeared"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "refresh batch policy", errors.New("chat or participant disappeared"))
 	}
 	if err != nil {
 		return storageError("refresh batch policy", err)

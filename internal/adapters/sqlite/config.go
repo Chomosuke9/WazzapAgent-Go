@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"math"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -79,10 +78,10 @@ func (store *ConfigStore) CompareAndSwap(
 		return agent.ConfigSnapshot{}, err
 	}
 	if expected == 0 {
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorInvalidArgument, "compare and swap config", fmt.Errorf("expected version is required"))
+		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorInvalidArgument, "compare and swap config", errors.New("expected version is required"))
 	}
 	if uint64(expected) >= math.MaxInt64 {
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "compare and swap config", fmt.Errorf("config version exhausted"))
+		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "compare and swap config", errors.New("config version exhausted"))
 	}
 	mode, text := nullableOverride(values.PromptOverride)
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -115,9 +114,9 @@ func (store *ConfigStore) CompareAndSwap(
 			return agent.ConfigSnapshot{}, storageError("inspect config conflict", queryErr)
 		}
 		if count == 0 {
-			return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "compare and swap config", fmt.Errorf("config does not exist"))
+			return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "compare and swap config", errors.New("config does not exist"))
 		}
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorConflict, "compare and swap config", fmt.Errorf("stale config version"))
+		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorConflict, "compare and swap config", errors.New("stale config version"))
 	}
 	snapshot, err := loadConfig(ctx, tx, key)
 	if err != nil {
@@ -152,7 +151,7 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &moderationLevel)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "load agent config", fmt.Errorf("config does not exist"))
+		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "load agent config", errors.New("config does not exist"))
 	}
 	if err != nil {
 		return agent.ConfigSnapshot{}, storageError("load agent config", err)
@@ -167,7 +166,7 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 	}
 	var override *agent.PromptOverride
 	if overrideMode.Valid != overrideText.Valid {
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "decode agent config", fmt.Errorf("partial prompt override"))
+		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "decode agent config", errors.New("partial prompt override"))
 	}
 	if overrideMode.Valid {
 		override = &agent.PromptOverride{Mode: agent.PromptOverrideMode(overrideMode.Int64), Text: overrideText.String}

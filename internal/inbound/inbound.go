@@ -2,7 +2,7 @@ package inbound
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -133,6 +133,7 @@ type handlerServices struct {
 	policy    Policy
 	responses ResponseWriter
 	observer  Observer
+	adapter   any
 	stripes   *[64]sync.Mutex
 }
 
@@ -200,6 +201,7 @@ func (handler *CommandHandler) resumeCommand(
 		Store:     handler.store,
 		Responses: handler.responses,
 		Observer:  handler.observer,
+		Adapter:   handler.adapter,
 	})
 }
 
@@ -272,7 +274,7 @@ func (handler *AIHandler) processBatch(
 	messages []conversation.IncomingMessage,
 ) error {
 	if len(messages) == 0 {
-		return agent.NewError(agent.ErrorIntegrityFailure, "process message batch", fmt.Errorf("batch has no messages"))
+		return agent.NewError(agent.ErrorIntegrityFailure, "process message batch", errors.New("batch has no messages"))
 	}
 	snapshot, err := currentAgent.Config().Refresh(ctx)
 	if err != nil {
