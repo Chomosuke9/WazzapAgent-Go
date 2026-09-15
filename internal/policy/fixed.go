@@ -17,6 +17,7 @@ type ConfigReader interface {
 type ChatAccess interface {
 	IsChatAllowlisted(context.Context, agent.Key) (bool, error)
 	HumanAccessReader
+	InvocationHumanPrincipal(context.Context, agent.Key, identity.InvocationID) (Principal, error)
 }
 
 // FixedGate is the deliberately narrow text-conversation policy. It never
@@ -200,9 +201,35 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	if err := authority.Validate(); err != nil {
 		return err
 	}
-	moderation := request.Capability == CapabilityGroupDelete || request.Capability == CapabilityGroupMute || request.Capability == CapabilityGroupKick
+	moderation := request.Capability == CapabilityGroupDelete || request.Capability == CapabilityGroupMute || request.Capability == CapabilityGroupKick || request.Capability == CapabilityGroupClose || request.Capability == CapabilityGroupOpen || request.Capability == CapabilityGroupDescription
 	if moderation && (authority.ChatKind != conversation.ChatGroup || !authority.BotIsAdmin) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("bot group command requires current group-admin authority"))
+	}
+	if moderation {
+		actor, err := gate.chats.InvocationHumanPrincipal(ctx, request.Key, request.Principal.InvocationID)
+		if err != nil {
+			return err
+		}
+		access, err := gate.chats.ReadHumanAccess(ctx, actor)
+		if err != nil {
+			return err
+		}
+		if err := access.Validate(); err != nil {
+			return err
+		}
+		if !access.Allowlisted || access.ChatKind != conversation.ChatGroup {
+			return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("requester is not an allowed group member"))
+		}
+		actorAuthority, err := gate.authority.ReadChatAuthority(ctx, actor)
+		if err != nil {
+			return err
+		}
+		if err := actorAuthority.Validate(); err != nil {
+			return err
+		}
+		if !actorAuthority.ActorIsAdmin || !actorAuthority.BotIsAdmin {
+			return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("requester and bot must still be group admins"))
+		}
 	}
 	return nil
 }
@@ -234,6 +261,41 @@ func (gate *FixedGate) ModelCapabilities(permission agent.PermissionConfig) (age
 		return agent.CapabilitySet{}, err
 	}
 	return permission.ModelToolCapabilities(), nil
+}
+
+// ModelCapabilitiesForMessage scopes moderation tools to a freshly verified
+// admin request. A group member's text must never be able to induce a model
+// moderation action merely because the bot has moderation permission.
+func (gate *FixedGate) ModelCapabilitiesForMessage(ctx context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) (agent.CapabilitySet, error) {
+	base, err := gate.ModelCapabilities(permission)
+	if err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	if message.ChatKind != conversation.ChatGroup || message.FromMe {
+		return agent.NewCapabilitySet("message.react")
+	}
+	principal, err := HumanPrincipal(message)
+	if err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	facts, err := gate.CommandPermissionFacts(ctx, principal, permission, false)
+	if err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	if !facts.IsAdmin || !facts.IsGroup {
+		return agent.NewCapabilitySet("message.react")
+	}
+	authority, err := gate.authority.ReadChatAuthority(ctx, principal)
+	if err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	if err := authority.Validate(); err != nil {
+		return agent.CapabilitySet{}, err
+	}
+	if !authority.BotIsAdmin {
+		return agent.NewCapabilitySet("message.react")
+	}
+	return base, nil
 }
 
 func (gate *FixedGate) requirePolicy(permission agent.PermissionConfig) error {

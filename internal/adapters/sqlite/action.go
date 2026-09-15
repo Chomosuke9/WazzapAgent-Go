@@ -313,6 +313,7 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 	var (
 		invocationValue string
 		responseValue   string
+		replyToValue    sql.NullString
 		text            string
 		payloadDigest   []byte
 		state           int64
@@ -324,10 +325,10 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 		contentScrubbed int64
 	)
 	err := query.QueryRowContext(ctx, `SELECT invocation_id, response_id, text, payload_digest, state, action_lease,
-        action_lease_until_ms, retry_after_ms, completed_at_ms, provider_receipt, content_scrubbed
+	        action_lease_until_ms, retry_after_ms, completed_at_ms, provider_receipt, content_scrubbed, reply_to_message_id
       FROM outbound_actions WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-	).Scan(&invocationValue, &responseValue, &text, &payloadDigest, &state, &lease, &leaseUntil, &retryAfter, &completedAt, &providerReceipt, &contentScrubbed)
+	).Scan(&invocationValue, &responseValue, &text, &payloadDigest, &state, &lease, &leaseUntil, &retryAfter, &completedAt, &providerReceipt, &contentScrubbed, &replyToValue)
 	if err != nil {
 		return action.StoredAction{}, leaseUntil, retryAfter, err
 	}
@@ -339,6 +340,13 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 	if err != nil {
 		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", err)
 	}
+	var replyTo identity.MessageID
+	if replyToValue.Valid {
+		replyTo, err = identity.ParseMessageID(replyToValue.String)
+		if err != nil {
+			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound reply target", err)
+		}
+	}
 	if contentScrubbed == 0 {
 		wantedDigest := digestAction(ref.Key, ref.ActionID, text)
 		if len(payloadDigest) != len(wantedDigest) || !bytes.Equal(payloadDigest, wantedDigest[:]) {
@@ -349,12 +357,13 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", errors.New("invalid scrubbed action"))
 	}
 	stored := action.StoredAction{
-		Ref:             ref,
-		InvocationID:    invocationID,
-		ResponseID:      responseID,
-		Text:            text,
-		State:           action.State(state),
-		ProviderReceipt: providerReceipt.String,
+		Ref:              ref,
+		InvocationID:     invocationID,
+		ResponseID:       responseID,
+		ReplyToMessageID: replyTo,
+		Text:             text,
+		State:            action.State(state),
+		ProviderReceipt:  providerReceipt.String,
 	}
 	if lease.Valid {
 		stored.Lease = action.Lease(lease.String)

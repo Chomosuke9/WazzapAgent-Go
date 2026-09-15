@@ -97,18 +97,22 @@ type Capability string
 const (
 	CapabilityCommandHelp     Capability = "chat.command.help"
 	CapabilityCommandInfo     Capability = "chat.command.info"
+	CapabilityCommandGroup    Capability = "chat.command.group"
 	CapabilityHistoryReset    Capability = "chat.history.reset"
 	CapabilityPromptWrite     Capability = "chat.prompt.write"
 	CapabilityPermissionWrite Capability = "chat.permission.write"
 
-	CapabilityMessageReact    Capability = "message.react"
-	CapabilityMessageDelete   Capability = "message.delete"
-	CapabilityMessageMarkRead Capability = "message.mark-read"
-	CapabilityChatPresence    Capability = "chat.presence"
-	CapabilityChatContextRead Capability = "chat.context.read"
-	CapabilityGroupDelete     Capability = "group.delete"
-	CapabilityGroupMute       Capability = "group.mute"
-	CapabilityGroupKick       Capability = "group.kick"
+	CapabilityMessageReact     Capability = "message.react"
+	CapabilityMessageDelete    Capability = "message.delete"
+	CapabilityMessageMarkRead  Capability = "message.mark-read"
+	CapabilityChatPresence     Capability = "chat.presence"
+	CapabilityChatContextRead  Capability = "chat.context.read"
+	CapabilityGroupDelete      Capability = "group.delete"
+	CapabilityGroupMute        Capability = "group.mute"
+	CapabilityGroupKick        Capability = "group.kick"
+	CapabilityGroupClose       Capability = "group.close"
+	CapabilityGroupOpen        Capability = "group.open"
+	CapabilityGroupDescription Capability = "group.description"
 )
 
 type CapabilitySet struct{ values []Capability }
@@ -136,10 +140,10 @@ func (set CapabilitySet) Values() []Capability { return append([]Capability(nil)
 
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite,
+	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityCommandGroup, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite,
 		CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageMarkRead, CapabilityChatPresence, CapabilityChatContextRead:
 		return true
-	case CapabilityGroupDelete, CapabilityGroupMute, CapabilityGroupKick:
+	case CapabilityGroupDelete, CapabilityGroupMute, CapabilityGroupKick, CapabilityGroupClose, CapabilityGroupOpen, CapabilityGroupDescription:
 		return true
 	default:
 		return false

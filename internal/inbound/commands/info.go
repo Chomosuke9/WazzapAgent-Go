@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -17,10 +18,11 @@ var InfoCommand = command.Descriptor{
 	Handler:     handleInfo,
 }
 
-func handleInfo(ctx context.Context, request command.Request, input command.Context, adapter any) error {
-	if request.ArgumentsPresent {
-		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version,
-			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name))
+func handleInfo(ctx context.Context, input command.Context, adapter any) error {
+	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
+	if argumentsPresent {
+		return sendText(ctx, input, adapter,
+			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
 	}
 	page, err := input.Agent.History().List(ctx, input.Snapshot.Version, agent.HistoryQuery{Limit: 1})
 	if err != nil {
@@ -31,5 +33,5 @@ func handleInfo(ctx context.Context, request command.Request, input command.Cont
 		historyState = "aktif"
 	}
 	response := fmt.Sprintf("Agent aktif. Model: %s. Config version: %d. History: %s.", input.Snapshot.Model.Model, input.Snapshot.Version, historyState)
-	return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version, response)
+	return sendText(ctx, input, adapter, response)
 }

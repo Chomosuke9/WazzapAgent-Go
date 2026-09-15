@@ -41,10 +41,6 @@ const (
 
 type PermissionCommand = command.PermissionCommand
 
-func ParsePermissionCommand(text string) (PermissionCommand, bool) {
-	return command.ParsePermissionCommand(text)
-}
-
 type PromptCommandKind = command.PromptCommandKind
 
 const (
@@ -55,7 +51,3 @@ const (
 )
 
 type PromptCommand = command.PromptCommand
-
-func ParsePromptCommand(text string) (PromptCommand, bool) {
-	return command.ParsePromptCommand(text)
-}

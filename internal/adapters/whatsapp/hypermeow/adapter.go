@@ -8,7 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strconv"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,10 +30,13 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	inboundcommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 const sendStripeCount = 64
+
+var outboundMentionPattern = regexp.MustCompile(`@([^@()\r\n]+?)\s*\(([0-9A-Za-z]{3,16})\)`)
 
 type CandidateHandler interface {
 	Handle(context.Context, conversation.IncomingCandidate) error
@@ -325,7 +328,12 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 	defer stripe.Unlock()
 	sendCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
-	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), &waE2E.Message{Conversation: proto.String(request.Text)})
+
+	message, err := adapter.textMessage(sendCtx, request, address, target)
+	if err != nil {
+		return action.SendTextResult{}, err
+	}
+	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), message)
 	if err != nil {
 		if sendCtx.Err() == context.DeadlineExceeded {
 			return action.SendTextResult{}, agent.NewError(agent.ErrorTimeout, "send WhatsApp text", sendCtx.Err())
@@ -336,6 +344,102 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", err)
 	}
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
+}
+
+func (adapter *Adapter) textMessage(ctx context.Context, request action.SendTextRequest, address string, target types.JID) (*waE2E.Message, error) {
+	renderedText, mentionedJIDs, nonJIDMentions := adapter.renderOutboundMentions(ctx, request.Key, request.Text, target)
+	message := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(renderedText),
+		},
+	}
+	contextInfo := &waE2E.ContextInfo{MentionedJID: mentionedJIDs}
+	if nonJIDMentions > 0 {
+		contextInfo.NonJIDMentions = proto.Uint32(nonJIDMentions)
+	}
+
+	// Resolve the model-selected target before sending. An unresolved target must
+	// not silently turn an explicit reply into an ordinary message.
+	if !request.QuotedMessageID.IsZero() {
+		quotedChat, quotedProviderID, quotedSender, _, resolveErr := adapter.targets.ResolveMessageTarget(ctx, request.Key, request.QuotedMessageID)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if quotedChat != address || quotedProviderID == "" {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp reply target", errors.New("quoted target does not belong to destination chat"))
+		}
+		contextInfo.StanzaID = proto.String(quotedProviderID)
+		contextInfo.RemoteJID = proto.String(target.ToNonAD().String())
+		if quotedSender != "" {
+			contextInfo.Participant = proto.String(quotedSender)
+		} else if adapter.client != nil && adapter.client.Store != nil && adapter.client.Store.ID != nil {
+			// Outbound actions have no human sender row. Group replies to the
+			// bot's own messages still need the original sender JID.
+			contextInfo.Participant = proto.String(adapter.client.Store.ID.ToNonAD().String())
+		}
+	}
+	if !request.QuotedMessageID.IsZero() || len(mentionedJIDs) > 0 || nonJIDMentions > 0 {
+		message.ExtendedTextMessage.ContextInfo = contextInfo
+	}
+	return message, nil
+}
+
+func (adapter *Adapter) renderOutboundMentions(ctx context.Context, key agent.Key, rawText string, target types.JID) (string, []string, uint32) {
+	matches := outboundMentionPattern.FindAllStringSubmatchIndex(rawText, -1)
+	if len(matches) == 0 {
+		return rawText, nil, 0
+	}
+	var rendered strings.Builder
+	mentioned := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	var nonJIDMentions uint32
+	cursor := 0
+	addMention := func(jid types.JID) {
+		if jid.IsEmpty() {
+			return
+		}
+		value := jid.ToNonAD().String()
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		mentioned = append(mentioned, value)
+	}
+	for _, match := range matches {
+		rendered.WriteString(rawText[cursor:match[0]])
+		name := strings.TrimSpace(rawText[match[2]:match[3]])
+		value := strings.ToLower(strings.TrimSpace(rawText[match[4]:match[5]]))
+		replacement := "@" + name
+		switch value {
+		case "all":
+			replacement = "@all"
+			if target.Server == types.GroupServer {
+				nonJIDMentions = 1
+			}
+		case "bot":
+			if adapter.client != nil && adapter.client.Store != nil && adapter.client.Store.ID != nil {
+				jid := adapter.client.Store.ID.ToNonAD()
+				addMention(jid)
+				replacement = "@" + jid.User
+			}
+		default:
+			ref, err := identity.ParseSenderRef(value)
+			if err == nil && adapter.targets != nil {
+				lid, resolveErr := adapter.targets.ResolveLID(ctx, key, ref)
+				if resolveErr == nil {
+					jid, parseErr := types.ParseJID(lid.String())
+					if parseErr == nil && !jid.IsEmpty() {
+						addMention(jid)
+						replacement = "@" + jid.User
+					}
+				}
+			}
+		}
+		rendered.WriteString(replacement)
+		cursor = match[1]
+	}
+	rendered.WriteString(rawText[cursor:])
+	return rendered.String(), mentioned, nonJIDMentions
 }
 
 // MarkRead is automatic AI-lane feedback. It is intentionally not exposed as
@@ -446,96 +550,15 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 			return "ephemeral-read", nil
 		}
 	case effect.RunGroupCommand:
-		return adapter.executeGroupCommand(requestCtx, stored.Request.Ref.Key, typed)
+		err := inboundcommands.HandleGroup(requestCtx, adapter, stored.Request.Ref.Key, typed.Command, typed.TargetMessageID, time.Now().UTC())
+		return "", err
 	}
 	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
 }
 
-func (adapter *Adapter) executeGroupCommand(ctx context.Context, key agent.Key, command effect.RunGroupCommand) (string, error) {
-	fields := strings.Fields(command.Command)
-	if len(fields) < 2 {
-		return "", agent.NewError(agent.ErrorIntegrityFailure, "execute group command", errors.New("command is malformed"))
-	}
-	switch fields[1] {
-	case "delete":
-		chat, messageID, sender, _, err := adapter.resolveEffectTarget(ctx, key, command.TargetMessageID)
-		if err != nil {
-			return "", err
-		}
-		response, err := adapter.client.SendMessage(ctx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
-		if err != nil {
-			return "", nativeEffectError(ctx, "execute /group delete", err)
-		}
-		return string(response.ID), nil
-	case "mute":
-		ref, duration, err := parseMuteCommand(fields[2:])
-		if err != nil {
-			return "", err
-		}
-		if err := adapter.targets.SetChatMute(ctx, key, ref, duration, time.Now().UTC()); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("local-mute-%s-%d", ref.String(), duration), nil
-	case "kick":
-		ref, err := parseKickCommand(fields[2:])
-		if err != nil {
-			return "", err
-		}
-		lid, err := adapter.targets.ResolveLID(ctx, key, ref)
-		if err != nil {
-			return "", err
-		}
-		chat, err := adapter.resolveChatTarget(ctx, key)
-		if err != nil {
-			return "", err
-		}
-		participant, err := types.ParseJID(lid.String())
-		if err != nil || participant.IsEmpty() {
-			return "", agent.NewError(agent.ErrorIntegrityFailure, "execute /group kick", errors.New("stored LID is invalid"))
-		}
-		results, err := adapter.client.UpdateGroupParticipants(ctx, chat, []types.JID{participant.ToNonAD()}, whatsmeow.ParticipantChangeRemove)
-		if err != nil {
-			return "", nativeEffectError(ctx, "execute /group kick", err)
-		}
-		if len(results) != 1 {
-			return "", agent.NewError(agent.ErrorProviderFailure, "execute /group kick", errors.New("provider returned no participant result"))
-		}
-		return "group-kick-" + ref.String(), nil
-	default:
-		return "", agent.NewError(agent.ErrorUnsupported, "execute group command", errors.New("subcommand is not supported"))
-	}
-}
+func (adapter *Adapter) CommandClient() inboundcommands.WhatsAppCommandClient { return adapter.client }
 
-func parseMuteCommand(fields []string) (identity.SenderRef, uint32, error) {
-	if len(fields) < 2 {
-		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", errors.New("senderRef and duration are required"))
-	}
-	ref, err := parseCommandSenderRef(fields[len(fields)-2])
-	if err != nil {
-		return identity.SenderRef{}, 0, err
-	}
-	duration, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
-	if err != nil || duration > 43200 {
-		return identity.SenderRef{}, 0, agent.NewError(agent.ErrorInvalidArgument, "parse /group mute", errors.New("duration must be 0-43200 minutes"))
-	}
-	return ref, uint32(duration), nil
-}
-
-func parseKickCommand(fields []string) (identity.SenderRef, error) {
-	if len(fields) < 1 {
-		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse /group kick", errors.New("senderRef is required"))
-	}
-	return parseCommandSenderRef(fields[len(fields)-1])
-}
-
-func parseCommandSenderRef(value string) (identity.SenderRef, error) {
-	value = strings.Trim(value, "()")
-	ref, err := identity.ParseSenderRef(strings.ToLower(value))
-	if err != nil {
-		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "parse group command senderRef", err)
-	}
-	return ref, nil
-}
+func (adapter *Adapter) CommandTargets() inboundcommands.GroupTargetStore { return adapter.targets }
 
 // ReadChatAuthority obtains a fresh provider observation for policy. It does
 // not expose WhatsApp group DTOs across the adapter boundary and does not turn

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -108,23 +109,19 @@ func (RunGroupCommand) isEffect()     {}
 func (RunGroupCommand) Kind() Kind    { return KindRunGroupCommand }
 func (RunGroupCommand) Durable() bool { return true }
 func (command RunGroupCommand) Capability() policy.Capability {
-	fields := strings.Fields(command.Command)
-	if len(fields) >= 2 && fields[0] == "/group" {
-		return policy.Capability("group." + fields[1])
+	parsed, err := groupcmd.Parse(command.Command)
+	if err == nil {
+		return policy.Capability(parsed.Capability())
 	}
 	return ""
 }
 func (command RunGroupCommand) Validate() error {
-	fields := strings.Fields(command.Command)
-	if len(command.Command) > 1024 || len(fields) < 2 || fields[0] != "/group" ||
-		(fields[1] != "delete" && fields[1] != "mute" && fields[1] != "kick") {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("unsupported group command"))
+	parsed, err := groupcmd.Parse(command.Command)
+	if err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", err)
 	}
-	if fields[1] == "delete" && command.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("delete requires a target message"))
-	}
-	if fields[1] != "delete" && !command.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", errors.New("only delete accepts a target message"))
+	if err := parsed.ValidateTarget(command.TargetMessageID); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", err)
 	}
 	return nil
 }

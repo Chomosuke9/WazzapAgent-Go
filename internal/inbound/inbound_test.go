@@ -123,7 +123,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 		!strings.Contains(output, "=== USER ===\n") ||
 		strings.Count(output, "=== USER ===") != 1 ||
 		strings.Contains(output, "=== ASSISTANT ===") ||
-		!strings.Contains(output, "/dump") || strings.Contains(output, "#000") {
+		!strings.Contains(output, "/dump") || !strings.Contains(output, "【#000") {
 		t.Fatalf("dump output = %q", output)
 	}
 	if fixture.model.calls.Load() != 0 {
@@ -507,7 +507,7 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	command, _ := inbound.ParsePromptCommand(candidate.Text)
+	command := inbound.PromptCommand{Kind: inbound.PromptSet, Text: "crash-safe"}
 	journal, err := fixture.store.Inbound().BeginPromptMutation(context.Background(), claimed.Message, command, snapshot.Version)
 	if err != nil {
 		t.Fatalf("begin command journal: %v", err)
@@ -561,8 +561,10 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		t.Fatalf("invoke after model capability grant: %v", err)
 	}
 	request := fixture.model.lastRequest()
-	if !request.Capabilities.Has("message.react") || !request.Capabilities.Has("group.delete") ||
-		!request.Capabilities.Has("group.mute") || !request.Capabilities.Has("group.kick") {
+	// A direct-chat requester cannot invoke group management even when the
+	// chat's stored moderation setting enables it for eligible group admins.
+	if !request.Capabilities.Has("message.react") || request.Capabilities.Has("group.delete") ||
+		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
 
@@ -596,7 +598,7 @@ func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	command, _ := inbound.ParsePermissionCommand(candidate.Text)
+	command := inbound.PermissionCommand{Kind: inbound.PermissionSet, Level: agent.ModerationDeleteMute}
 	journal, err := fixture.store.Inbound().BeginPermissionMutation(context.Background(), claimed.Message, command, snapshot.Version)
 	if err != nil {
 		t.Fatalf("begin command journal: %v", err)
@@ -687,31 +689,6 @@ func TestDispatcherRechecksCurrentAllowlistBeforeEverySend(t *testing.T) {
 	}
 	if fixture.sender.count() != 0 {
 		t.Fatalf("policy-denied action reached native sender %d times", fixture.sender.count())
-	}
-}
-
-func TestPromptCommandGrammarIsClosed(t *testing.T) {
-	tests := []struct {
-		text       string
-		recognized bool
-		kind       inbound.PromptCommandKind
-	}{
-		{text: "/prompt", recognized: true, kind: inbound.PromptView},
-		{text: "/prompt view", recognized: true, kind: inbound.PromptView},
-		{text: "/prompt clear", recognized: true, kind: inbound.PromptClear},
-		{text: "/prompt set hello", recognized: true, kind: inbound.PromptSet},
-		{text: "/prompt set " + strings.Repeat("x", agent.MaxPromptBytes+1), recognized: true, kind: inbound.PromptInvalid},
-		{text: "/prompt set", recognized: true, kind: inbound.PromptInvalid},
-		{text: "/prompt delete", recognized: true, kind: inbound.PromptInvalid},
-		{text: " /prompt view", recognized: false},
-		{text: "/Prompt view", recognized: false},
-		{text: "ordinary", recognized: false},
-	}
-	for _, test := range tests {
-		command, recognized := inbound.ParsePromptCommand(test.text)
-		if recognized != test.recognized || (recognized && command.Kind != test.kind) {
-			t.Errorf("ParsePromptCommand(%q) = %#v/%v", test.text, command, recognized)
-		}
 	}
 }
 
@@ -821,7 +798,7 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, nil,
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, sender,
 	)
 	if err != nil {
 		t.Fatalf("create command handler: %v", err)

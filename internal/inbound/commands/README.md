@@ -35,3 +35,14 @@ Contoh alurnya:
 
 Jangan mengedit `registry_gen.go` secara manual. Generator mengurutkan descriptor
 secara deterministik dan CI akan gagal bila file generated belum diperbarui.
+
+Grammar, validasi argumen, mutasi, dan penulisan respons sebuah command harus
+tinggal bersama handler pada file command tersebut. Package `internal/command`
+hanya menyediakan registry dan payload jurnal storage; package itu bukan tempat
+parser atau implementasi command.
+
+Keluarga `/group` memiliki descriptor inbound di `group.go` dan handler yang
+menerima akses native client serta target store dari adapter WhatsApp. File yang
+sama juga menjadi executor bagi command yang dibawa secara internal oleh
+`reply_message`; `groupcmd` hanya menyimpan grammar bersama untuk validasi pada
+setiap boundary sebelum efek durable dieksekusi.

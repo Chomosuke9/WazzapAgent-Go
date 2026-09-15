@@ -199,7 +199,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		if planErr != nil {
 			return agent.StoredPlan{}, planErr
 		}
-		if plan.ConfigVersion != request.ConfigVersion || plan.Text != request.ResponseText {
+		if plan.ConfigVersion != request.ConfigVersion || plan.Text != request.ResponseText || plan.ReplyToMessageID != request.ReplyToMessageID {
 			return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("different plan already exists"))
 		}
 		plan.Effects, planErr = loadModelEffectRefs(ctx, tx, request.Key, request.InvocationID)
@@ -256,11 +256,11 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbound_actions(
         tenant_id, account_id, chat_id, action_id, invocation_id, response_id,
-        payload_digest, text, state, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		payload_digest, text, state, created_at_ms, updated_at_ms, reply_to_message_id
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
 		actionID.String(), request.InvocationID.String(), responseID.String(), payloadDigest[:], request.ResponseText,
-		uint8(action.StatePending), nowMS, nowMS,
+		uint8(action.StatePending), nowMS, nowMS, nullableMessageID(request.ReplyToMessageID),
 	)
 	if err != nil {
 		return agent.StoredPlan{}, storageError("insert outbound action", err)
@@ -311,14 +311,15 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, storageError("commit response plan", err)
 	}
 	return agent.StoredPlan{
-		InvocationID:  request.InvocationID,
-		ConfigVersion: request.ConfigVersion,
-		ResponseID:    responseID,
-		ActionID:      actionID,
-		Text:          request.ResponseText,
-		CreatedAt:     createdAt,
-		Dispatch:      agent.DispatchRef{Key: request.Key, ActionID: actionID},
-		Effects:       effectRefs,
+		InvocationID:     request.InvocationID,
+		ConfigVersion:    request.ConfigVersion,
+		ResponseID:       responseID,
+		ReplyToMessageID: request.ReplyToMessageID,
+		ActionID:         actionID,
+		Text:             request.ResponseText,
+		CreatedAt:        createdAt,
+		Dispatch:         agent.DispatchRef{Key: request.Key, ActionID: actionID},
+		Effects:          effectRefs,
 	}, nil
 }
 
@@ -550,6 +551,7 @@ type turnRow struct {
 	deliveryStatus       int64
 	updatedAt            int64
 	responseCreatedAt    sql.NullInt64
+	replyToMessageID     sql.NullString
 }
 
 // nullableBytes distinguishes a SQL NULL digest from an empty/corrupt digest.
@@ -583,7 +585,7 @@ func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocati
 	err := query.QueryRowContext(ctx, `SELECT i.turn_state, i.invocation_digest, i.message_id, i.provider_message_id,
         i.invocation_cause, i.causation_kind, i.causation_id, i.participant_id, i.sender_ref, i.sender_name, i.input_text, i.occurred_at_ms, i.generation_lease,
         i.generation_lease_until_ms, i.retry_after_ms, i.generation_attempts, i.config_version, i.response_id, i.action_id,
-        i.response_text, i.delivery_status, i.updated_at_ms, a.created_at_ms
+	        i.response_text, i.delivery_status, i.updated_at_ms, a.created_at_ms, a.reply_to_message_id
       FROM inbound_events i
       LEFT JOIN outbound_actions a ON a.tenant_id = i.tenant_id AND a.account_id = i.account_id
         AND a.chat_id = i.chat_id AND a.action_id = i.action_id
@@ -592,7 +594,7 @@ func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocati
 	).Scan(&row.state, &digest, &row.messageID, &row.providerMessageID, &row.invocationCause, &row.causationKind,
 		&row.causationID, &row.participantID, &row.senderRef,
 		&row.senderName, &row.inputText, &row.occurredAt, &row.generationLease, &row.generationLeaseUntil, &row.retryAfter, &row.generationAttempts,
-		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.deliveryStatus, &row.updatedAt, &row.responseCreatedAt)
+		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.deliveryStatus, &row.updatedAt, &row.responseCreatedAt, &row.replyToMessageID)
 	row.digest = digest
 	return row, err
 }
@@ -694,14 +696,22 @@ func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agen
 	if err != nil {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", err)
 	}
+	var replyTo identity.MessageID
+	if row.replyToMessageID.Valid {
+		replyTo, err = identity.ParseMessageID(row.replyToMessageID.String)
+		if err != nil {
+			return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", err)
+		}
+	}
 	return agent.StoredPlan{
-		InvocationID:  invocationID,
-		ConfigVersion: agent.ConfigVersion(row.configVersion.Int64),
-		ResponseID:    responseID,
-		ActionID:      actionID,
-		Text:          row.responseText.String,
-		CreatedAt:     time.UnixMilli(row.responseCreatedAt.Int64).UTC(),
-		Dispatch:      agent.DispatchRef{Key: key, ActionID: actionID},
+		InvocationID:     invocationID,
+		ConfigVersion:    agent.ConfigVersion(row.configVersion.Int64),
+		ResponseID:       responseID,
+		ReplyToMessageID: replyTo,
+		ActionID:         actionID,
+		Text:             row.responseText.String,
+		CreatedAt:        time.UnixMilli(row.responseCreatedAt.Int64).UTC(),
+		Dispatch:         agent.DispatchRef{Key: key, ActionID: actionID},
 	}, nil
 }
 

@@ -59,7 +59,7 @@ func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMute
 // message.react becomes a provider tool; group capabilities authorize command
 // strings carried inside reply_message, never moderation function tools.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	values := []Capability{"message.react"}
+	values := []Capability{"message.react", "group.close", "group.open", "group.description"}
 	if permission.ModerationLevel >= ModerationDelete {
 		values = append(values, "group.delete")
 	}

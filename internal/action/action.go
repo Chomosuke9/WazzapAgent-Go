@@ -24,14 +24,15 @@ const (
 type Lease string
 
 type StoredAction struct {
-	Ref             agent.DispatchRef
-	InvocationID    identity.InvocationID
-	ResponseID      identity.MessageID
-	Text            string
-	State           State
-	Lease           Lease
-	CompletedAt     *time.Time
-	ProviderReceipt string
+	Ref              agent.DispatchRef
+	InvocationID     identity.InvocationID
+	ResponseID       identity.MessageID
+	ReplyToMessageID identity.MessageID
+	Text             string
+	State            State
+	Lease            Lease
+	CompletedAt      *time.Time
+	ProviderReceipt  string
 }
 
 type Store interface {
@@ -47,9 +48,10 @@ type SendAuthorizer interface {
 }
 
 type SendTextRequest struct {
-	Key      agent.Key
-	ActionID identity.ActionID
-	Text     string
+	Key             agent.Key
+	ActionID        identity.ActionID
+	Text            string
+	QuotedMessageID identity.MessageID
 }
 
 type SendTextResult struct {
@@ -121,7 +123,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 	if err := dispatcher.store.MarkExecuting(ctx, ref, action.Lease, now); err != nil {
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryPending}, err
 	}
-	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: action.Text})
+	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: action.Text, QuotedMessageID: action.ReplyToMessageID})
 	if sendErr != nil {
 		code := agent.CodeOf(sendErr)
 		if code == agent.ErrorCancelled || code == agent.ErrorTimeout || code == agent.ErrorUnavailable || code == agent.ErrorUnknownOutcome {

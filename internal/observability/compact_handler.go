@@ -10,7 +10,7 @@ import (
 
 type CompactHandler struct {
 	opts  slog.HandlerOptions
-	mu    sync.Mutex
+	mu    *sync.Mutex
 	w     io.Writer
 	attrs []slog.Attr
 }
@@ -21,6 +21,7 @@ func NewCompactHandler(w io.Writer, opts *slog.HandlerOptions) *CompactHandler {
 	}
 	return &CompactHandler{
 		opts: *opts,
+		mu:   &sync.Mutex{},
 		w:    w,
 	}
 }

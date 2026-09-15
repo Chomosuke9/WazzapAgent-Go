@@ -51,11 +51,8 @@ func TestRegistryDispatchesCanonicalAndAliasRequests(t *testing.T) {
 			Aliases:    []string{"menu"},
 			Capability: policy.CapabilityCommandHelp,
 			Permission: "public",
-			Handler: func(_ context.Context, request command.Request, _ command.Context, _ any) error {
+			Handler: func(_ context.Context, _ command.Context, _ any) error {
 				called = true
-				if request.Name != "help" {
-					t.Fatalf("handler request name = %q, want canonical help", request.Name)
-				}
 				return nil
 			},
 		},
@@ -78,7 +75,7 @@ func TestRegistryEnforcesPermissionForHumanAndBotOrigins(t *testing.T) {
 			Name:       "help",
 			Capability: policy.CapabilityCommandHelp,
 			Permission: "public and !fromMe",
-			Handler: func(_ context.Context, _ command.Request, _ command.Context, _ any) error {
+			Handler: func(_ context.Context, _ command.Context, _ any) error {
 				called = true
 				return nil
 			},
@@ -112,7 +109,7 @@ func TestRegistryAllowsBotWhenDescriptorExplicitlyGrantsFromMe(t *testing.T) {
 			Name:       "internal",
 			Capability: policy.CapabilityCommandInfo,
 			Permission: "fromMe",
-			Handler: func(_ context.Context, _ command.Request, _ command.Context, _ any) error {
+			Handler: func(_ context.Context, _ command.Context, _ any) error {
 				called = true
 				return nil
 			},

@@ -226,11 +226,11 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	}
 
 	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (abcdef) 15\",\"/group kick @Bob (123456)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
-	text, effects, err := decodeModelOutput("", raw, request)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request)
 	if err != nil {
 		t.Fatalf("decode reply command: %v", err)
 	}
-	if text != "done" || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
+	if text != "done" || replyTo != target || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
 		effects[0].Intent.Capability() != "group.delete" || effects[1].Intent.Capability() != "group.mute" || effects[2].Intent.Capability() != "group.kick" {
 		t.Fatalf("decoded reply command = %q, %#v", text, effects)
 	}
@@ -241,19 +241,19 @@ func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *t
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
 	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
-	_, effects, err := decodeModelOutput("", raw, request)
-	if err != nil || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
+	_, replyTo, effects, err := decodeModelOutput("", raw, request)
+	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("default command anchor = %#v, %v", effects, err)
 	}
 
 	plain := json.RawMessage(`[{"id":"reply_2","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":null,\"command_context_msg_id\":null}"}}]`)
-	text, effects, err := decodeModelOutput("", plain, request)
-	if err != nil || text != "x" || len(effects) != 0 {
+	text, replyTo, effects, err := decodeModelOutput("", plain, request)
+	if err != nil || text != "x" || !replyTo.IsZero() || len(effects) != 0 {
 		t.Fatalf("unknown plain reply context = %q, %#v, %v", text, effects, err)
 	}
 
 	delete := json.RawMessage(`[{"id":"reply_3","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
-	if _, _, err := decodeModelOutput("", delete, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
+	if _, _, _, err := decodeModelOutput("", delete, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
 		t.Fatalf("unknown delete anchor error = %v", err)
 	}
 }
@@ -264,15 +264,27 @@ func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
 
 	empty := json.RawMessage(`[{"id":"reply_empty","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"plain reply\",\"command\":[],\"command_context_msg_id\":[]}"}}]`)
-	text, effects, err := decodeModelOutput("", empty, request)
-	if err != nil || text != "plain reply" || len(effects) != 0 {
+	text, replyTo, effects, err := decodeModelOutput("", empty, request)
+	if err != nil || text != "plain reply" || replyTo != request.ContextMessages["000001"] || len(effects) != 0 {
 		t.Fatalf("empty command arrays = %q, %#v, %v", text, effects, err)
 	}
 
 	shortContexts := json.RawMessage(`[{"id":"reply_short","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[]}"}}]`)
-	_, effects, err = decodeModelOutput("", shortContexts, request)
-	if err != nil || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
+	_, replyTo, effects, err = decodeModelOutput("", shortContexts, request)
+	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("short command contexts = %#v, %v", effects, err)
+	}
+}
+
+func TestReplyMessageCarriesSelectedQuoteWithNoCommands(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	target, _ := identity.NewMessageID()
+	request.ContextMessages["000354"] = target
+	raw := json.RawMessage(`[{"id":"reply_354","type":"function","function":{"name":"reply_message","arguments":"{\"command_context_msg_id\":[\"none\"],\"command\":[],\"context_msg_id\":\"000354\",\"text\":\"Halo! Ini balasan untuk pesan terbaru kamu.\"}"}}]`)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request)
+	if err != nil || text != "Halo! Ini balasan untuk pesan terbaru kamu." || replyTo != target || len(effects) != 0 {
+		t.Fatalf("selected reply target = %q, %v, %#v, %v", text, replyTo, effects, err)
 	}
 }
 

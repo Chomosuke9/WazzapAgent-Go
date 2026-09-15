@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -18,14 +19,15 @@ var DumpCommand = command.Descriptor{
 	Handler:     handleDump,
 }
 
-func handleDump(ctx context.Context, request command.Request, input command.Context, adapter any) error {
-	if request.ArgumentsPresent {
-		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version,
-			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name))
+func handleDump(ctx context.Context, input command.Context, adapter any) error {
+	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
+	if argumentsPresent {
+		return sendText(ctx, input, adapter,
+			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
 	}
 	modelInput, err := input.Agent.BuildInput(ctx, input.Snapshot.Version, input.Message.InvocationID)
 	if err != nil {
 		return err
 	}
-	return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version, agent.SerializeModelMessages(modelInput))
+	return sendText(ctx, input, adapter, agent.SerializeModelMessages(modelInput))
 }

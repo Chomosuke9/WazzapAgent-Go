@@ -72,7 +72,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "override"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "【000004】 22:13\nAlice 【012345】: halo\n\n【000005】 22:13\nYou 【You】: Hai!\n\n【000006】 22:13\nREPLYING TO 【000005】\nAlice 【012345】: lanjutkan"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "Older messages:\n\n【#000004】 22:13\nAlice 【012345】: halo\n\n【#000005】 22:13\nYou 【bot】: Hai!\n\nCurrent messages (burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice 【012345】: lanjutkan"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)

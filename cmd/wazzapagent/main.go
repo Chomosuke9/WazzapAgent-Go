@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/app"
@@ -32,17 +31,12 @@ func run() int {
 		}
 	}
 
-	// Load system prompt from file
-	if err := loadSystemPrompt(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load system prompt: %v\n", err)
-		return 2
-	}
-
 	cfg, err := config.LoadRuntime(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
 		return 2
 	}
+	app.SetSystemPolicy(renderSystemPrompt(embeddedSystemPrompt, cfg.AssistantName(), time.Now()))
 
 	logger, _, err := observability.NewLogger(os.Stdout, cfg.LogLevel(), cfg.LogFormat())
 	if err != nil {
@@ -60,30 +54,13 @@ func run() int {
 	return 0
 }
 
-func loadSystemPrompt() error {
-	var prompt bytes.Buffer
-	templatePrompt, err := template.New("systemprompt").Parse(embeddedSystemPrompt)
-	if err != nil {
-		return fmt.Errorf("failed to parse system prompt template: %w", err)
-	}
-	
-	cfg := config.Snapshot{}
-	data := struct {
-		AssistantName string
-		CurrentDate   string
-	}{
-		AssistantName: cfg.AssistantName(),
-		CurrentDate:   time.Now().Format("02 Jan 2006"),
-	}
-
-	err = templatePrompt.Execute(&prompt, data)
-	if err != nil {
-		return fmt.Errorf("failed to execute system prompt template: %w", err)
-	}
-
-	app.SetSystemPolicy(prompt.String())
-
-	return nil
+func renderSystemPrompt(source, assistantName string, now time.Time) string {
+	// The prompt is plain text, not Go template syntax. Replacing only known
+	// tokens also leaves any quoted braces in examples untouched.
+	return strings.NewReplacer(
+		"{{assistant_name}}", assistantName,
+		"{{current_date}}", now.Format("02 Jan 2006"),
+	).Replace(source)
 }
 
 func runOfflineCommand(arguments []string) int {

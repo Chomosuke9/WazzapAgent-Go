@@ -97,7 +97,7 @@ func TestLoadRuntimeProcessEnvironmentOverridesDotEnv(t *testing.T) {
 
 func TestLoadRuntimeAllowsMissingDefaultDotEnv(t *testing.T) {
 	t.Chdir(t.TempDir())
-	cfg, err := LoadRuntime(mapLookup(map[string]string{"WAZZAP_WHATSAPP_ENABLED": "false"}))
+	cfg, err := LoadRuntime(mapLookup(map[string]string{"WAZZAP_WHATSAPP_ENABLED": "false", "WAZZAP_AGENT_ENABLED": "false"}))
 	if err != nil {
 		t.Fatalf("load runtime defaults: %v", err)
 	}
@@ -193,6 +193,7 @@ func TestLoadRuntimeDisabledModeDoesNotCreateIdentity(t *testing.T) {
 	cfg, err := LoadRuntime(mapLookup(map[string]string{
 		"WAZZAP_DATA_DIR":         dataDir,
 		"WAZZAP_WHATSAPP_ENABLED": "false",
+		"WAZZAP_AGENT_ENABLED":    "false",
 	}))
 	if err != nil {
 		t.Fatalf("load disabled runtime: %v", err)
@@ -318,6 +319,7 @@ func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
 		"WAZZAP_LLM_API_KEY":      "secret",
 		"WAZZAP_LLM_MODEL":        "test-model",
 		"WAZZAP_PAIRING_OUTPUT":   "terminal",
+		"WAZZAP_BASE_PROMPT":      "test prompt",
 	}))
 	if err != nil {
 		t.Fatalf("load pairing-only runtime: %v", err)
@@ -423,6 +425,7 @@ func enabledRuntimeValues(dataDir string) map[string]string {
 		"WAZZAP_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":    "very-secret-key",
 		"WAZZAP_LLM_MODEL":      "test-model",
+		"WAZZAP_BASE_PROMPT":    "test prompt",
 	}
 }
 

@@ -3,8 +3,10 @@ package hypermeow
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -356,6 +359,183 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 type staticTargets struct{ chatAddress string }
+
+type quotedTargets struct {
+	staticTargets
+	quotedChat   string
+	quotedID     string
+	quotedSender string
+}
+
+type mentionTargets struct {
+	staticTargets
+	lids map[string]string
+}
+
+func (targets mentionTargets) ResolveLID(_ context.Context, _ agent.Key, ref identity.SenderRef) (identity.LID, error) {
+	value, ok := targets.lids[ref.String()]
+	if !ok {
+		return identity.LID{}, agent.NewError(agent.ErrorNotFound, "resolve mention", errors.New("unknown senderRef"))
+	}
+	return identity.ParseLID(value)
+}
+
+func TestTextMessageRendersNativeMentions(t *testing.T) {
+	const chat = "123456789@g.us"
+	target, err := types.ParseJID(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &Adapter{targets: mentionTargets{staticTargets: staticTargets{chatAddress: chat}, lids: map[string]string{
+		"abc123": "10000000001@lid",
+		"def456": "10000000002@lid",
+	}}}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
+		Text: "Halo @Alice Smith (abc123) dan @🌺 (def456), cc @all (all)",
+	}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extended := message.GetExtendedTextMessage()
+	if got := extended.GetText(); got != "Halo @10000000001 dan @10000000002, cc @all" {
+		t.Fatalf("rendered mention text = %q", got)
+	}
+	contextInfo := extended.GetContextInfo()
+	want := []string{"10000000001@lid", "10000000002@lid"}
+	if !slices.Equal(contextInfo.GetMentionedJID(), want) {
+		t.Fatalf("native mentioned JIDs = %#v, want %#v", contextInfo.GetMentionedJID(), want)
+	}
+	if contextInfo.GetNonJIDMentions() != 1 {
+		t.Fatalf("non-JID mention count = %d, want 1", contextInfo.GetNonJIDMentions())
+	}
+}
+
+func TestTextMessageRendersBotMentionLikeLIDMention(t *testing.T) {
+	adapter, ownJID := normalizationAdapter(t)
+	const chat = "123456789@g.us"
+	target, err := types.ParseJID(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
+		Text: "Halo @Wazzap (bot)",
+	}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extended := message.GetExtendedTextMessage()
+	if got := extended.GetText(); got != "Halo @"+ownJID.User {
+		t.Fatalf("rendered bot mention text = %q", got)
+	}
+	if got := extended.GetContextInfo().GetMentionedJID(); !slices.Equal(got, []string{ownJID.ToNonAD().String()}) {
+		t.Fatalf("bot mentioned JIDs = %#v", got)
+	}
+}
+
+func TestTextMessageDeduplicatesAndFailsClosedForUnknownMention(t *testing.T) {
+	const chat = "123456789@g.us"
+	target, _ := types.ParseJID(chat)
+	adapter := &Adapter{targets: mentionTargets{staticTargets: staticTargets{chatAddress: chat}, lids: map[string]string{
+		"abc123": "10000000001@lid",
+	}}}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
+		Text: "@Alice (abc123) @Alice (abc123) @Unknown (zzz999)",
+	}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextInfo := message.GetExtendedTextMessage().GetContextInfo()
+	if got := contextInfo.GetMentionedJID(); len(got) != 1 || got[0] != "10000000001@lid" {
+		t.Fatalf("deduplicated mentions = %#v", got)
+	}
+	if got := message.GetExtendedTextMessage().GetText(); got != "@10000000001 @10000000001 @Unknown" {
+		t.Fatalf("fail-closed mention text = %q", got)
+	}
+}
+
+func (targets quotedTargets) ResolveMessageTarget(context.Context, agent.Key, identity.MessageID) (string, string, string, time.Time, error) {
+	if targets.quotedID == "" {
+		return "", "", "", time.Time{}, errors.New("missing quote")
+	}
+	return targets.quotedChat, targets.quotedID, targets.quotedSender, time.Now(), nil
+}
+
+func TestTextMessageQuotesSelectedWhatsAppMessage(t *testing.T) {
+	const chat = "15550000002@s.whatsapp.net"
+	target, err := types.ParseJID(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoteID, _ := identity.NewMessageID()
+	adapter := &Adapter{targets: quotedTargets{staticTargets: staticTargets{chatAddress: chat}, quotedChat: chat, quotedID: "provider-quoted-354", quotedSender: "10000000001@lid"}}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{Text: "Halo", QuotedMessageID: quoteID}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextInfo := message.GetExtendedTextMessage().GetContextInfo()
+	if contextInfo.GetStanzaID() != "provider-quoted-354" || contextInfo.GetRemoteJID() != chat || contextInfo.GetParticipant() != "10000000001@lid" {
+		t.Fatalf("wrong native reply context: %v", contextInfo)
+	}
+	adapter.targets = quotedTargets{staticTargets: staticTargets{chatAddress: chat}}
+	if _, err := adapter.textMessage(context.Background(), action.SendTextRequest{Text: "Halo", QuotedMessageID: quoteID}, chat, target); err == nil {
+		t.Fatal("missing quote silently became a plain message")
+	}
+}
+
+func TestTextMessageCombinesQuoteAndMentionContext(t *testing.T) {
+	const chat = "123456789@g.us"
+	target, _ := types.ParseJID(chat)
+	quoteID, _ := identity.NewMessageID()
+	adapter := &Adapter{targets: mentionAndQuoteTargets{
+		quotedTargets: quotedTargets{staticTargets: staticTargets{chatAddress: chat}, quotedChat: chat, quotedID: "quoted-provider", quotedSender: "10000000009@lid"},
+		lids:          map[string]string{"abc123": "10000000001@lid"},
+	}}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
+		Text: "Halo @Alice (abc123)", QuotedMessageID: quoteID,
+	}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextInfo := message.GetExtendedTextMessage().GetContextInfo()
+	if contextInfo.GetStanzaID() != "quoted-provider" || contextInfo.GetParticipant() != "10000000009@lid" {
+		t.Fatalf("quote context was lost: %v", contextInfo)
+	}
+	if got := contextInfo.GetMentionedJID(); len(got) != 1 || got[0] != "10000000001@lid" {
+		t.Fatalf("mention context was lost: %#v", got)
+	}
+}
+
+type mentionAndQuoteTargets struct {
+	quotedTargets
+	lids map[string]string
+}
+
+func (targets mentionAndQuoteTargets) ResolveLID(_ context.Context, _ agent.Key, ref identity.SenderRef) (identity.LID, error) {
+	value, ok := targets.lids[ref.String()]
+	if !ok {
+		return identity.LID{}, agent.NewError(agent.ErrorNotFound, "resolve mention", errors.New("unknown senderRef"))
+	}
+	return identity.ParseLID(value)
+}
+
+func TestTextMessageQuotesBotsOwnGroupMessage(t *testing.T) {
+	adapter, ownJID := normalizationAdapter(t)
+	const chat = "123456789@g.us"
+	target, err := types.ParseJID(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoteID, _ := identity.NewMessageID()
+	adapter.targets = quotedTargets{staticTargets: staticTargets{chatAddress: chat}, quotedChat: chat, quotedID: "bot-provider-receipt"}
+	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{Text: "Balas pesan bot", QuotedMessageID: quoteID}, chat, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := message.GetExtendedTextMessage().GetContextInfo()
+	if quote.GetStanzaID() != "bot-provider-receipt" || quote.GetRemoteJID() != chat || quote.GetParticipant() != ownJID.ToNonAD().String() {
+		t.Fatalf("own-message reply context = %v", quote)
+	}
+}
 
 func (targets staticTargets) ResolveChatAddress(context.Context, agent.Key) (string, error) {
 	return targets.chatAddress, nil

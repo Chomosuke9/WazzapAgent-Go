@@ -53,6 +53,7 @@ type CommitPlanRequest struct {
 	Lease            TurnLease
 	ConfigVersion    ConfigVersion
 	ResponseText     string
+	ReplyToMessageID identity.MessageID
 	Capabilities     CapabilitySet
 	Effects          []ModelEffect
 }
@@ -72,14 +73,15 @@ type DispatchRef struct {
 }
 
 type StoredPlan struct {
-	InvocationID  identity.InvocationID
-	ConfigVersion ConfigVersion
-	ResponseID    identity.MessageID
-	ActionID      identity.ActionID
-	Text          string
-	CreatedAt     time.Time
-	Dispatch      DispatchRef
-	Effects       []EffectDispatchRef
+	InvocationID     identity.InvocationID
+	ConfigVersion    ConfigVersion
+	ResponseID       identity.MessageID
+	ReplyToMessageID identity.MessageID
+	ActionID         identity.ActionID
+	Text             string
+	CreatedAt        time.Time
+	Dispatch         DispatchRef
+	Effects          []EffectDispatchRef
 }
 
 type EffectDispatchRef struct {

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
 )
 
 const (
@@ -199,9 +200,9 @@ func (intent EffectIntent) Capability() Capability {
 	case EffectSetChatPresence:
 		return "chat.presence"
 	case EffectRunGroupCommand:
-		fields := strings.Fields(intent.Command)
-		if len(fields) >= 2 && fields[0] == "/group" {
-			return Capability("group." + fields[1])
+		parsed, err := groupcmd.Parse(intent.Command)
+		if err == nil {
+			return Capability(parsed.Capability())
 		}
 		return ""
 	default:
@@ -228,15 +229,12 @@ func (intent EffectIntent) Validate() error {
 			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
 		}
 	case EffectRunGroupCommand:
-		fields := strings.Fields(intent.Command)
-		if len(intent.Command) > 1024 || len(fields) < 2 || fields[0] != "/group" || (fields[1] != "delete" && fields[1] != "mute" && fields[1] != "kick") || intent.Emoji != "" || intent.Presence != "" {
-			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("only bounded /group delete, mute, or kick commands are allowed"))
+		parsed, err := groupcmd.Parse(intent.Command)
+		if err != nil || intent.Emoji != "" || intent.Presence != "" {
+			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("group command is unsupported or malformed"))
 		}
-		if fields[1] == "delete" && intent.TargetMessageID.IsZero() {
-			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("group delete requires a message anchor"))
-		}
-		if fields[1] != "delete" && !intent.TargetMessageID.IsZero() {
-			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("only group delete accepts a message anchor"))
+		if err := parsed.ValidateTarget(intent.TargetMessageID); err != nil {
+			return NewError(ErrorInvalidArgument, "validate group command intent", err)
 		}
 	default:
 		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("effect kind is invalid"))
@@ -263,8 +261,9 @@ func (effect ModelEffect) Validate(capabilities CapabilitySet) error {
 }
 
 type ModelResult struct {
-	Text    string
-	Effects []ModelEffect
+	Text             string
+	ReplyToMessageID identity.MessageID
+	Effects          []ModelEffect
 }
 
 type ModelInvoker interface {

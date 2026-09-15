@@ -19,10 +19,11 @@ var HelpCommand = command.Descriptor{
 	Handler:     handleHelp,
 }
 
-func handleHelp(ctx context.Context, request command.Request, input command.Context, adapter any) error {
-	if request.ArgumentsPresent {
-		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version,
-			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", request.Name))
+func handleHelp(ctx context.Context, input command.Context, adapter any) error {
+	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
+	if argumentsPresent {
+		return sendText(ctx, input, adapter,
+			fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
 	}
 	if input.Registry == nil {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle help command", fmt.Errorf("command registry is required"))
@@ -36,5 +37,5 @@ func handleHelp(ctx context.Context, request command.Request, input command.Cont
 		}
 		lines = append(lines, fmt.Sprintf("/%s%s - %s", descriptor.Name, aliases, descriptor.Description))
 	}
-	return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version, strings.Join(lines, "\n"))
+	return sendText(ctx, input, adapter, strings.Join(lines, "\n"))
 }

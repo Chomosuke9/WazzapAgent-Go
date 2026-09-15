@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -19,25 +20,47 @@ var PermissionCommand = command.Descriptor{
 	Handler:     handlePermission,
 }
 
-func handlePermission(ctx context.Context, request command.Request, input command.Context, adapter any) error {
-	parsed, recognized := command.ParsePermissionCommand(command.CanonicalText(request))
-	if !recognized {
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("permission command was not parsed"))
-	}
+func handlePermission(ctx context.Context, input command.Context, adapter any) error {
+	parsed := parsePermissionCommand(input.Message.Text)
 	switch parsed.Kind {
 	case command.PermissionView:
-		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version, command.FormatModerationLevel(input.Snapshot.Permission.ModerationLevel))
+		return sendText(ctx, input, adapter, formatModerationLevel(input.Snapshot.Permission.ModerationLevel))
 	case command.PermissionSet:
-		updated, err := applyPermissionMutation(ctx, input, parsed)
+		_, err := applyPermissionMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		return input.Responses.Reply(ctx, input.Message, updated, "Permission diperbarui. "+command.FormatModerationLevel(parsed.Level))
+		return sendText(ctx, input, adapter, "Permission diperbarui. "+formatModerationLevel(parsed.Level))
 	case command.PermissionInvalid:
-		return input.Responses.Reply(ctx, input.Message, input.Snapshot.Version, "Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
+		return sendText(ctx, input, adapter, "Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("unknown command kind"))
 	}
+}
+
+func parsePermissionCommand(raw string) command.PermissionCommand {
+	_, rawArgument, argumentsPresent := strings.Cut(strings.TrimPrefix(raw, "/"), " ")
+	argument := strings.TrimSpace(rawArgument)
+	if !argumentsPresent || rawArgument == "view" {
+		return command.PermissionCommand{Kind: command.PermissionView}
+	}
+	if len(argument) == 1 && argument[0] >= '0' && argument[0] <= '3' {
+		return command.PermissionCommand{Kind: command.PermissionSet, Level: agent.ModerationLevel(argument[0] - '0')}
+	}
+	return command.PermissionCommand{Kind: command.PermissionInvalid}
+}
+
+func formatModerationLevel(level agent.ModerationLevel) string {
+	labels := [...]string{
+		"Level 0: moderasi nonaktif.",
+		"Level 1: delete.",
+		"Level 2: delete dan mute.",
+		"Level 3: delete, mute, dan kick.",
+	}
+	if !level.Valid() {
+		return "Permission tidak valid."
+	}
+	return labels[level]
 }
 
 func applyPermissionMutation(ctx context.Context, input command.Context, parsed command.PermissionCommand) (agent.ConfigVersion, error) {

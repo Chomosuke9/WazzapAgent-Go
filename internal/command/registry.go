@@ -19,7 +19,7 @@ type Name string
 
 var tokenPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-type Handler func(context.Context, Request, Context, any) error
+type Handler func(context.Context, Context, any) error
 
 // PermissionFacts is an alias for the policy facts accepted by the permission
 // DSL. Keeping the alias here lets command modules remain declarative while
@@ -47,26 +47,22 @@ type Request struct {
 // again by Registry.Dispatch immediately before the handler runs. Command
 // handlers must not infer authority from message text or this context.
 type Context struct {
-	Agent     *agent.Agent
-	Snapshot  agent.ConfigSnapshot
-	Message   conversation.IncomingMessage
-	Facts     PermissionFacts
-	Registry  *Registry
-	Store     CommandStore
-	Responses ResponseWriter
-	Observer  Observer
-	Adapter   any
+	Agent    *agent.Agent
+	Snapshot agent.ConfigSnapshot
+	Message  conversation.IncomingMessage
+	Facts    PermissionFacts
+	Registry *Registry
+	Store    CommandStore
+	Observer Observer
+	Adapter  any
 }
 
 type CommandStore interface {
+	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
 	BeginPromptMutation(context.Context, conversation.IncomingMessage, PromptCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-}
-
-type ResponseWriter interface {
-	Reply(context.Context, conversation.IncomingMessage, agent.ConfigVersion, string) error
 }
 
 type Observer interface {
@@ -159,7 +155,7 @@ func (registry *Registry) Dispatch(ctx context.Context, request Request, command
 	if !allowed {
 		return agent.NewError(agent.ErrorPermissionDenied, "dispatch command", fmt.Errorf("permission expression denied command"))
 	}
-	return descriptor.Handler(ctx, request, commandContext, commandContext.Adapter)
+	return descriptor.Handler(ctx, commandContext, commandContext.Adapter)
 }
 
 // Allows evaluates the permission for a recognized request without invoking
@@ -182,14 +178,6 @@ func (registry *Registry) Allows(request Request, facts PermissionFacts) (bool, 
 		return false, agent.NewError(agent.ErrorIntegrityFailure, "check command permission", err)
 	}
 	return allowed, nil
-}
-
-func CanonicalText(request Request) string {
-	text := "/" + string(request.Name)
-	if request.ArgumentsPresent {
-		return text + " " + request.Arguments
-	}
-	return text
 }
 
 func (registry *Registry) Descriptors() []Descriptor {

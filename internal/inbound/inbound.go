@@ -23,6 +23,7 @@ type ClaimedMessage struct {
 type Store interface {
 	ClaimAndResolveSender(context.Context, conversation.IncomingCandidate) (ClaimedMessage, error)
 	MarkIgnored(context.Context, conversation.IncomingMessage, IgnoreReason) error
+	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
 	BeginPromptMutation(context.Context, conversation.IncomingMessage, PromptCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
@@ -193,15 +194,14 @@ func (handler *CommandHandler) resumeCommand(
 	}
 
 	return builtinCommandRegistry.Dispatch(ctx, request, command.Context{
-		Agent:     currentAgent,
-		Snapshot:  snapshot,
-		Message:   message,
-		Facts:     facts,
-		Registry:  builtinCommandRegistry,
-		Store:     handler.store,
-		Responses: handler.responses,
-		Observer:  handler.observer,
-		Adapter:   handler.adapter,
+		Agent:    currentAgent,
+		Snapshot: snapshot,
+		Message:  message,
+		Facts:    facts,
+		Registry: builtinCommandRegistry,
+		Store:    handler.store,
+		Observer: handler.observer,
+		Adapter:  handler.adapter,
 	})
 }
 
@@ -288,6 +288,14 @@ func (handler *AIHandler) processBatch(
 	capabilities, err := handler.policy.ModelCapabilities(snapshot.Permission)
 	if err != nil {
 		return err
+	}
+	if scoped, ok := handler.policy.(interface {
+		ModelCapabilitiesForMessage(context.Context, conversation.IncomingMessage, agent.PermissionConfig) (agent.CapabilitySet, error)
+	}); ok {
+		capabilities, err = scoped.ModelCapabilitiesForMessage(ctx, messages[len(messages)-1], snapshot.Permission)
+		if err != nil {
+			return err
+		}
 	}
 	key := agent.Key{TenantID: messages[0].TenantID, AccountID: messages[0].AccountID, ChatID: messages[0].ChatID}
 	for _, message := range messages {

@@ -61,6 +61,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		rendered     string
 		invocationID identity.InvocationID
 		current      bool
+		role         HistoryRole
 	}
 	instructions := append([]ModelMessage(nil), messages...)
 	historyEntries := make([]builtHistoryEntry, 0, len(request.History))
@@ -84,7 +85,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			return nil, err
 		}
 		historyEntries = append(historyEntries, builtHistoryEntry{
-			rendered: rendered, invocationID: entry.InvocationID, current: current,
+			rendered: rendered, invocationID: entry.InvocationID, current: current, role: entry.Role,
 		})
 	}
 	if !currentFound {
@@ -95,8 +96,19 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 	for {
 		messages = append(messages[:0], instructions...)
-		rendered := make([]string, 0, len(historyEntries))
-		for _, entry := range historyEntries {
+		rendered := make([]string, 0, len(historyEntries)+2)
+		burstStart := 0
+		for index, entry := range historyEntries {
+			if entry.role == HistoryAssistant {
+				burstStart = index + 1
+			}
+		}
+		rendered = append(rendered, "Older messages:")
+		for _, entry := range historyEntries[:burstStart] {
+			rendered = append(rendered, entry.rendered)
+		}
+		rendered = append(rendered, "Current messages (burst):")
+		for _, entry := range historyEntries[burstStart:] {
 			rendered = append(rendered, entry.rendered)
 		}
 		messages = append(messages, ModelMessage{
@@ -149,13 +161,13 @@ func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 //
 // Example:
 //
-//	【000040】 12:56
-//	REPLYING TO 【000038】
+//	【#000040】 12:56
+//	REPLYING TO 【#000038】 Alice: "earlier text"
 //	Alice 【012345】: lanjutkan
 func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	timestamp := entry.CreatedAt.UTC().Format("15:04")
 	if entry.Role == HistorySystem {
-		return fmt.Sprintf("【system】 %s\nSYSTEM: %s", timestamp, text)
+		return fmt.Sprintf("【#system】 %s\nSYSTEM: %s", timestamp, text)
 	}
 
 	contextID := formatCompactContextID(entry.Sequence)
@@ -165,13 +177,17 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 		// matching the compact transcript while delivery is unresolved.
 		contextID = "pending"
 	}
-	lines := []string{fmt.Sprintf("【%s】 %s", contextID, timestamp)}
+	lines := []string{fmt.Sprintf("【#%s】 %s", contextID, timestamp)}
 	if entry.Quote != nil {
-		lines = append(lines, fmt.Sprintf("REPLYING TO 【%s】", formatCompactContextID(entry.Quote.Sequence)))
+		quotedName := entry.Quote.SenderRef.String()
+		if entry.Quote.Role == HistoryAssistant {
+			quotedName = "You"
+		}
+		lines = append(lines, fmt.Sprintf("REPLYING TO 【#%s】 %s: %q", formatCompactContextID(entry.Quote.Sequence), quotedName, entry.Quote.Text))
 	}
 
 	if entry.Role == HistoryAssistant {
-		lines = append(lines, fmt.Sprintf("You 【You】: %s", text))
+		lines = append(lines, fmt.Sprintf("You 【bot】: %s", text))
 		return strings.Join(lines, "\n")
 	}
 

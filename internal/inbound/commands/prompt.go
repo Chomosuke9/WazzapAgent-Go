@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -18,11 +19,8 @@ var PromptCommand = command.Descriptor{
 	Handler:     handlePrompt,
 }
 
-func handlePrompt(ctx context.Context, request command.Request, input command.Context, adapter any) error {
-	parsed, recognized := command.ParsePromptCommand(command.CanonicalText(request))
-	if !recognized {
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("prompt command was not parsed"))
-	}
+func handlePrompt(ctx context.Context, input command.Context, adapter any) error {
+	parsed := parsePromptCommand(input.Message.Text)
 	var response string
 	snapshot := input.Snapshot
 	switch parsed.Kind {
@@ -33,25 +31,40 @@ func handlePrompt(ctx context.Context, request command.Request, input command.Co
 			response = "Prompt override saat ini:\n" + snapshot.PromptOverride.Text
 		}
 	case command.PromptSet:
-		updated, err := applyPromptMutation(ctx, input, parsed)
+		_, err := applyPromptMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		snapshot.Version = updated
 		response = "Prompt override berhasil diperbarui."
 	case command.PromptClear:
-		updated, err := applyPromptMutation(ctx, input, parsed)
+		_, err := applyPromptMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		snapshot.Version = updated
 		response = "Prompt override berhasil dihapus."
 	case command.PromptInvalid:
 		response = fmt.Sprintf("Format: /prompt view, /prompt set <teks>, atau /prompt clear. Panjang prompt maksimal %d byte.", agent.MaxPromptBytes)
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("unknown command kind"))
 	}
-	return input.Responses.Reply(ctx, input.Message, snapshot.Version, response)
+	return sendText(ctx, input, adapter, response)
+}
+
+func parsePromptCommand(raw string) command.PromptCommand {
+	_, argument, argumentsPresent := strings.Cut(strings.TrimPrefix(raw, "/"), " ")
+	if !argumentsPresent || argument == "view" {
+		return command.PromptCommand{Kind: command.PromptView}
+	}
+	if argument == "clear" {
+		return command.PromptCommand{Kind: command.PromptClear}
+	}
+	if strings.HasPrefix(argument, "set ") {
+		value := strings.TrimPrefix(argument, "set ")
+		if strings.TrimSpace(value) != "" && len(value) <= agent.MaxPromptBytes {
+			return command.PromptCommand{Kind: command.PromptSet, Text: value}
+		}
+	}
+	return command.PromptCommand{Kind: command.PromptInvalid}
 }
 
 func applyPromptMutation(ctx context.Context, input command.Context, parsed command.PromptCommand) (agent.ConfigVersion, error) {

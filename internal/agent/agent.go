@@ -239,6 +239,7 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		Lease:            claim.Lease,
 		ConfigVersion:    snapshot.Version,
 		ResponseText:     generated.Text,
+		ReplyToMessageID: generated.ReplyToMessageID,
 		Capabilities:     request.Capabilities,
 		Effects:          cloneModelEffects(generated.Effects),
 	})
@@ -388,6 +389,11 @@ func validateModelResult(result ModelResult, capabilities CapabilitySet, context
 	allowedTargets := make(map[identity.MessageID]struct{}, len(contextMessages))
 	for _, messageID := range contextMessages {
 		allowedTargets[messageID] = struct{}{}
+	}
+	if !result.ReplyToMessageID.IsZero() {
+		if _, ok := allowedTargets[result.ReplyToMessageID]; !ok {
+			return Errorf(ErrorProviderFailure, "validate model result", "reply target is outside supplied history")
+		}
 	}
 	for _, planned := range result.Effects {
 		if err := planned.Validate(capabilities); err != nil {

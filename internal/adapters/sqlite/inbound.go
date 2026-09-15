@@ -225,6 +225,39 @@ func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation
 	return nil
 }
 
+func (store *InboundStore) MarkCommandHandled(ctx context.Context, message conversation.IncomingMessage) error {
+	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
+        AND turn_state = 0 AND invocation_digest IS NULL AND action_id IS NULL`,
+		uint8(agent.TurnSucceeded), store.clock.Now().UnixMilli(), message.TenantID.String(), message.AccountID.String(),
+		message.ChatID.String(), message.InvocationID.String(),
+	)
+	if err != nil {
+		return storageError("mark command handled", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return storageError("inspect handled command", err)
+	}
+	if changed != 0 {
+		return nil
+	}
+	var state int64
+	if err := store.db.QueryRowContext(ctx, `SELECT turn_state FROM inbound_events
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
+	).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return agent.NewError(agent.ErrorNotFound, "mark command handled", errors.New("message does not exist"))
+		}
+		return storageError("inspect handled command", err)
+	}
+	if state != int64(agent.TurnSucceeded) {
+		return agent.NewError(agent.ErrorConflict, "mark command handled", errors.New("message is owned by another execution state"))
+	}
+	return nil
+}
+
 func (store *InboundStore) IsChatAllowlisted(ctx context.Context, key agent.Key) (bool, error) {
 	if err := key.Validate(); err != nil {
 		return false, err
@@ -378,6 +411,37 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 		return policy.HumanAccess{}, agent.NewError(agent.ErrorIntegrityFailure, "read human access", err)
 	}
 	return access, nil
+}
+
+// InvocationHumanPrincipal binds a model's privileged effect back to the
+// actual inbound requester. Scheduled/system invocations have no human actor
+// and therefore cannot obtain group-management authority through this path.
+func (store *InboundStore) InvocationHumanPrincipal(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (policy.Principal, error) {
+	if err := key.Validate(); err != nil || invocationID.IsZero() {
+		return policy.Principal{}, agent.NewError(agent.ErrorInvalidArgument, "read invocation requester", errors.New("valid scope and invocation ID are required"))
+	}
+	var participantValue, lidValue string
+	err := store.db.QueryRowContext(ctx, `SELECT participant_id, sender_lid FROM inbound_events
+	  WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
+	    AND invocation_cause = ? AND participant_id IS NOT NULL AND sender_lid IS NOT NULL`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(), uint8(agent.CauseInboundMessage),
+	).Scan(&participantValue, &lidValue)
+	if errors.Is(err, sql.ErrNoRows) {
+		return policy.Principal{}, agent.NewError(agent.ErrorPermissionDenied, "read invocation requester", errors.New("invocation has no human requester"))
+	}
+	if err != nil {
+		return policy.Principal{}, storageError("read invocation requester", err)
+	}
+	participantID, err := identity.ParseParticipantID(participantValue)
+	if err != nil {
+		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "read invocation requester", err)
+	}
+	lid, err := identity.ParseLID(lidValue)
+	if err != nil {
+		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "read invocation requester", err)
+	}
+	principal := policy.Principal{Kind: policy.PrincipalHuman, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, ParticipantID: participantID, LID: lid}
+	return principal, principal.Validate()
 }
 
 func (store *InboundStore) ListRecoverableInbound(

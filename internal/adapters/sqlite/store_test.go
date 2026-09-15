@@ -34,8 +34,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 9 {
-		t.Fatalf("migration count = %d, want 9", migrations)
+	if migrations != 10 {
+		t.Fatalf("migration count = %d, want 10", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -91,8 +91,8 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 9 {
-		t.Fatalf("upgraded migration count = %d, want 9", migrations)
+	if migrations != 10 {
+		t.Fatalf("upgraded migration count = %d, want 10", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
@@ -781,7 +781,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 		t.Fatalf("active lease error = %v, want in_progress", err)
 	}
 	plan, err := turns.CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, CurrentMessageID: claim.MessageID, Lease: claim.Lease, ConfigVersion: configSnapshot.Version, ResponseText: "hello back",
+		Key: key, InvocationID: invocation.ID, CurrentMessageID: claim.MessageID, Lease: claim.Lease, ConfigVersion: configSnapshot.Version, ResponseText: "hello back", ReplyToMessageID: claim.MessageID,
 		Capabilities: capabilities,
 		Effects: []agent.ModelEffect{{CallID: "call_react_1", Intent: agent.EffectIntent{
 			Kind: agent.EffectReact, TargetMessageID: claim.MessageID, Emoji: "✅",
@@ -798,7 +798,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay claim: %v", err)
 	}
-	if replay.Plan == nil || replay.Plan.ActionID != plan.ActionID || replay.Plan.ResponseID != plan.ResponseID {
+	if replay.Plan == nil || replay.Plan.ActionID != plan.ActionID || replay.Plan.ResponseID != plan.ResponseID || replay.Plan.ReplyToMessageID != claim.MessageID {
 		t.Fatalf("replay plan = %#v, original = %#v", replay.Plan, plan)
 	}
 	if len(plan.Effects) != 1 || len(replay.Plan.Effects) != 1 || replay.Plan.Effects[0] != plan.Effects[0] {
@@ -827,7 +827,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim action: %v", err)
 	}
-	if storedAction.State != action.StateClaimed || storedAction.Text != "hello back" {
+	if storedAction.State != action.StateClaimed || storedAction.Text != "hello back" || storedAction.ReplyToMessageID != claim.MessageID {
 		t.Fatalf("action claim = %#v", storedAction)
 	}
 	pendingRecord, err := turns.Load(context.Background(), key, invocation.ID)
