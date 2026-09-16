@@ -693,7 +693,7 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.ready.Store(false)
 		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", errors.New(typed.PermanentDisconnectDescription())))
 	case *events.Message:
-		candidate, ok := adapter.normalizeMessage(typed)
+		candidate, ok := adapter.normalizeMessage(adapter.rootCtx, typed)
 		if !ok {
 			adapter.logger.Info("inbound event ignored", "reason", ignoredNativeReason(typed))
 			return
@@ -775,7 +775,7 @@ func ignoredNativeReason(event *events.Message) string {
 	return "invalid_metadata"
 }
 
-func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.IncomingCandidate, bool) {
+func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Message) (conversation.IncomingCandidate, bool) {
 	if event == nil || event.Message == nil || event.IsEdit {
 		return conversation.IncomingCandidate{}, false
 	}
@@ -843,6 +843,10 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 	if chatKind == conversation.ChatGroup && contextInfo != nil {
 		mentioned = adapter.mentionsOwnAccount(contextInfo.GetMentionedJID())
 	}
+	senderName := strings.TrimSpace(event.Info.PushName)
+	if senderName == "" {
+		senderName = adapter.contactPushName(ctx, sender, event.Info.SenderAlt, senderPhone)
+	}
 	return conversation.IncomingCandidate{
 		TenantID:                adapter.tenantID,
 		AccountID:               adapter.accountID,
@@ -851,7 +855,7 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 		ProviderChatAddress:     chatAddress,
 		SenderLID:               mustLID(senderLID),
 		ProviderSenderPhone:     jidString(senderPhone),
-		SenderName:              event.Info.PushName,
+		SenderName:              senderName,
 		ChatKind:                chatKind,
 		Text:                    text,
 		MentionsBot:             mentioned,
@@ -861,6 +865,26 @@ func (adapter *Adapter) normalizeMessage(event *events.Message) (conversation.In
 		OccurredAt:              event.Info.Timestamp.UTC(),
 		ReceivedAt:              time.Now().UTC(),
 	}, true
+}
+
+func (adapter *Adapter) contactPushName(ctx context.Context, addresses ...types.JID) string {
+	if adapter.client == nil || adapter.client.Store == nil || adapter.client.Store.Contacts == nil {
+		return ""
+	}
+	for _, address := range addresses {
+		address = address.ToNonAD()
+		if address.IsEmpty() {
+			continue
+		}
+		contact, err := adapter.client.Store.Contacts.GetContact(ctx, address)
+		if err != nil {
+			continue
+		}
+		if pushName := strings.TrimSpace(contact.PushName); pushName != "" {
+			return pushName
+		}
+	}
+	return ""
 }
 
 func (adapter *Adapter) isConfiguredOwner(addresses ...types.JID) bool {

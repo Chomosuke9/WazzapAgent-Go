@@ -254,13 +254,15 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 				"description": "Use none for an ordinary reply; otherwise use one exact six-digit ID from the supplied compact history.",
 			},
 			"text": map[string]any{
-				"type":      "string",
-				"minLength": 1,
+				"type":        "string",
+				"minLength":   1,
+				"description": "Visible reply text. For a person mention, copy the exact display name and six-character senderRef from the same `Name 【senderRef】` line and write `@Name (senderRef)`, for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and `@Bot (bot)`.",
 			},
 			"command": map[string]any{
-				"type":     []string{"array", "null"},
-				"items":    map[string]any{"type": "string"},
-				"maxItems": 8,
+				"type":        []string{"array", "null"},
+				"items":       map[string]any{"type": "string"},
+				"maxItems":    8,
+				"description": "Each item must be one complete group command, with or without the initial slash: `/group close` or `group close`, `/group open` or `group open`, `/group description <non-empty text>` or `group description <non-empty text>`, `/group delete` or `group delete`, `/group mute @Name (senderRef) <minutes>` or `group mute @Name (senderRef) <minutes>`, or `/group kick @Name (senderRef)` or `group kick @Name (senderRef)`. Never put natural-language instructions here. For description, include the complete text after `group description`.",
 			},
 			"command_context_msg_id": map[string]any{
 				"type":        []string{"array", "null"},
@@ -277,7 +279,7 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 	}
 	tools := []completionTool{{Type: "function", Function: completionFunction{
 		Name:        "reply_message",
-		Description: "Return the visible reply and optionally request authorized group commands. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
+		Description: "Return the visible reply and optionally request authorized group commands. Inline person mentions must use `@Name (senderRef)` with both values copied from the same sender line. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
 		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {
@@ -479,7 +481,7 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 		commandText = strings.TrimSpace(commandText)
 		parsed, err := groupcmd.Parse(commandText)
 		if err != nil {
-			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("only /group moderation commands are enabled"))
+			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("invalid group command: %w", err))
 		}
 		capability := agent.Capability(parsed.Capability())
 		if _, ok := allowed[capability]; !ok {

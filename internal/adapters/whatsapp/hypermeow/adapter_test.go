@@ -42,7 +42,7 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	candidate, ok := adapter.normalizeMessage(event)
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
 	if !ok {
 		t.Fatal("text event was not normalized")
 	}
@@ -54,6 +54,33 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 	}
 	if ownJID.IsEmpty() {
 		t.Fatal("test own JID is empty")
+	}
+}
+
+func TestNormalizeUsesEventPushNameBeforeContactPushName(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	adapter.client.Store.Contacts = &testContactStore{pushName: "cached push name"}
+	chat := types.NewJID("15550000002", types.DefaultUserServer)
+	sender := types.NewJID("15550000001", types.DefaultUserServer)
+	event := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000001", types.HiddenUserServer),
+			},
+			ID: types.MessageID("provider-message-id"), Timestamp: time.Now().UTC(), PushName: "event push name",
+		},
+		Message: &waE2E.Message{Conversation: proto.String("hello")},
+	}
+
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	if !ok || candidate.SenderName != "event push name" {
+		t.Fatalf("event push name was not preferred: %#v, ok=%v", candidate, ok)
+	}
+
+	event.Info.PushName = ""
+	candidate, ok = adapter.normalizeMessage(context.Background(), event)
+	if !ok || candidate.SenderName != "cached push name" {
+		t.Fatalf("contact push name was not used as fallback: %#v, ok=%v", candidate, ok)
 	}
 }
 
@@ -74,11 +101,11 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 			}},
 		}
 	}
-	withoutMention, ok := adapter.normalizeMessage(message([]string{"15550000999@s.whatsapp.net"}))
+	withoutMention, ok := adapter.normalizeMessage(context.Background(), message([]string{"15550000999@s.whatsapp.net"}))
 	if !ok || withoutMention.MentionsBot {
 		t.Fatalf("non-mention candidate = %#v, ok=%v", withoutMention, ok)
 	}
-	withMention, ok := adapter.normalizeMessage(message([]string{ownJID.String()}))
+	withMention, ok := adapter.normalizeMessage(context.Background(), message([]string{ownJID.String()}))
 	if !ok || !withMention.MentionsBot || withMention.ChatKind != conversation.ChatGroup {
 		t.Fatalf("mention candidate = %#v, ok=%v", withMention, ok)
 	}
@@ -98,7 +125,7 @@ func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.
 			Text: proto.String("reply"), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("quoted-provider-id")},
 		}},
 	}
-	candidate, ok := adapter.normalizeMessage(event)
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
 	if !ok || candidate.ProviderQuotedMessageID != "quoted-provider-id" {
 		t.Fatalf("quoted candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -116,7 +143,7 @@ func TestNormalizeStickerAsTranscriptPlaceholder(t *testing.T) {
 		},
 		Message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}},
 	}
-	candidate, ok := adapter.normalizeMessage(event)
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
 	if !ok || candidate.Text != "【sticker】" || !candidate.Allowlisted || candidate.ChatKind != conversation.ChatGroup {
 		t.Fatalf("sticker candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -131,10 +158,10 @@ func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 		},
 		ID: types.MessageID("id"), Timestamp: time.Now().UTC(),
 	}
-	if _, ok := adapter.normalizeMessage(&events.Message{Info: info, Message: &waE2E.Message{}}); ok {
+	if _, ok := adapter.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{}}); ok {
 		t.Fatal("accepted non-text message")
 	}
-	if _, ok := adapter.normalizeMessage(&events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("edit")}, IsEdit: true}); ok {
+	if _, ok := adapter.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("edit")}, IsEdit: true}); ok {
 		t.Fatal("accepted edited message")
 	}
 }
@@ -147,7 +174,7 @@ func TestNormalizeFailsClosedWithoutSenderLID(t *testing.T) {
 		}, ID: "missing-lid", Timestamp: time.Now().UTC()},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	if _, ok := adapter.normalizeMessage(event); ok {
+	if _, ok := adapter.normalizeMessage(context.Background(), event); ok {
 		t.Fatal("message without a trusted LID was accepted")
 	}
 }
@@ -192,7 +219,7 @@ func TestDirectMessageUsesLIDIdentityAndPhoneAliasForAllowlist(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	candidate, ok := adapter.normalizeMessage(event)
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
 	if !ok || !candidate.Owner || !candidate.Allowlisted {
 		t.Fatalf("alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -215,7 +242,7 @@ func TestGroupSenderUsesLIDIdentityAndPhoneAliasForOwner(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello group")},
 	}
-	candidate, ok := adapter.normalizeMessage(event)
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
 	if !ok || !candidate.Owner || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
 		t.Fatalf("group alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -569,4 +596,36 @@ func normalizationAdapter(t *testing.T) (*Adapter, types.JID) {
 		allowlist: make(map[string]struct{}),
 		client:    whatsmeow.NewClient(device, waLog.Noop),
 	}, ownJID
+}
+
+type testContactStore struct {
+	pushName string
+}
+
+func (contactStore *testContactStore) PutPushName(context.Context, types.JID, string) (bool, string, error) {
+	return false, "", nil
+}
+
+func (contactStore *testContactStore) PutBusinessName(context.Context, types.JID, string) (bool, string, error) {
+	return false, "", nil
+}
+
+func (contactStore *testContactStore) PutContactName(context.Context, types.JID, string, string) error {
+	return nil
+}
+
+func (contactStore *testContactStore) PutAllContactNames(context.Context, []store.ContactEntry) error {
+	return nil
+}
+
+func (contactStore *testContactStore) PutManyRedactedPhones(context.Context, []store.RedactedPhoneEntry) error {
+	return nil
+}
+
+func (contactStore *testContactStore) GetContact(context.Context, types.JID) (types.ContactInfo, error) {
+	return types.ContactInfo{Found: contactStore.pushName != "", PushName: contactStore.pushName}, nil
+}
+
+func (contactStore *testContactStore) GetAllContacts(context.Context) (map[types.JID]types.ContactInfo, error) {
+	return nil, nil
 }

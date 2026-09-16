@@ -1,4 +1,4 @@
-// Package groupcmd owns the closed grammar for model-carried /group commands.
+// Package groupcmd owns the closed grammar for model-carried group commands.
 package groupcmd
 
 import (
@@ -31,7 +31,11 @@ func Parse(raw string) (Command, error) {
 	if len(raw) > 1024 {
 		return Command{}, errors.New("command exceeds maximum length")
 	}
-	fields := strings.Fields(raw)
+	normalized := strings.TrimSpace(raw)
+	if normalized != "" && !strings.HasPrefix(normalized, "/") {
+		normalized = "/" + normalized
+	}
+	fields := strings.Fields(normalized)
 	if len(fields) < 2 || fields[0] != "/group" {
 		return Command{}, errors.New("command is malformed")
 	}
@@ -42,7 +46,7 @@ func Parse(raw string) (Command, error) {
 		}
 		return Command{Kind: Kind(fields[1])}, nil
 	case Description:
-		value := strings.TrimSpace(strings.TrimPrefix(raw, "/group description"))
+		value := strings.TrimSpace(strings.TrimPrefix(normalized, "/group description"))
 		if value == "" {
 			return Command{}, errors.New("description is required")
 		}

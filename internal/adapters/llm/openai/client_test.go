@@ -175,7 +175,8 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	}
 	var replySchema struct {
 		Properties map[string]struct {
-			Enum []string `json:"enum"`
+			Enum        []string `json:"enum"`
+			Description string   `json:"description"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(encoded.Tools[0].Function.Parameters, &replySchema); err != nil {
@@ -183,6 +184,13 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	}
 	if got := replySchema.Properties["context_msg_id"].Enum; len(got) != 2 || got[0] != "none" || got[1] != "000001" {
 		t.Fatalf("reply context enum = %#v", got)
+	}
+	if !strings.Contains(encoded.Tools[0].Function.Description, "@Name (senderRef)") ||
+		!strings.Contains(replySchema.Properties["text"].Description, "@Budi (a1b2c3)") ||
+		!strings.Contains(replySchema.Properties["text"].Description, "@a1b2c3") ||
+		!strings.Contains(replySchema.Properties["command"].Description, "/group description <non-empty text>") ||
+		!strings.Contains(replySchema.Properties["command"].Description, "group description <non-empty text>") {
+		t.Fatalf("reply mention guidance = %q / %q", encoded.Tools[0].Function.Description, replySchema.Properties["text"].Description)
 	}
 }
 
@@ -233,6 +241,42 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	if text != "done" || replyTo != target || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
 		effects[0].Intent.Capability() != "group.delete" || effects[1].Intent.Capability() != "group.mute" || effects[2].Intent.Capability() != "group.kick" {
 		t.Fatalf("decoded reply command = %q, %#v", text, effects)
+	}
+}
+
+func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("group.description")
+	tests := []struct {
+		name    string
+		command string
+		raw     json.RawMessage
+	}{
+		{name: "with slash", command: "/group description Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"/group description Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
+		{name: "without slash", command: "group description Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_no_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"group description Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			text, replyTo, effects, err := decodeModelOutput("", test.raw, request)
+			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != test.command || effects[0].Intent.Capability() != "group.description" {
+				t.Fatalf("decoded description command %q = %q, %v, %#v", test.command, text, err, effects)
+			}
+		})
+	}
+}
+
+func TestReplyMessageReportsMalformedGroupCommandAsProviderFailure(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("group.description")
+	raw := json.RawMessage(`[{"id":"reply_invalid_description","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"/group description\"],\"command_context_msg_id\":[\"none\"]}"}}]`)
+	_, _, _, err := decodeModelOutput("", raw, request)
+	if !agent.IsCode(err, agent.ErrorProviderFailure) || !strings.Contains(err.Error(), "description is required") {
+		t.Fatalf("malformed description error = %v", err)
+	}
+	if strings.Contains(err.Error(), "only /group moderation commands are enabled") {
+		t.Fatalf("malformed description retained permission error: %v", err)
 	}
 }
 
