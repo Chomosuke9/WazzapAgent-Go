@@ -9,17 +9,44 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 type recordingCommandAdapter struct {
 	client  *recordingCommandClient
 	targets *recordingGroupTargets
+	sent    []action.SendTextRequest
 }
 
 func (adapter *recordingCommandAdapter) CommandClient() WhatsAppCommandClient { return adapter.client }
 func (adapter *recordingCommandAdapter) CommandTargets() GroupTargetStore     { return adapter.targets }
+func (adapter *recordingCommandAdapter) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	adapter.sent = append(adapter.sent, request)
+	return action.SendTextResult{}, nil
+}
+
+type recordingCommandStore struct{ handled int }
+
+func (store *recordingCommandStore) MarkCommandHandled(context.Context, conversation.IncomingMessage) error {
+	store.handled++
+	return nil
+}
+func (*recordingCommandStore) BeginPromptMutation(context.Context, conversation.IncomingMessage, command.PromptCommand, agent.ConfigVersion) (command.PromptMutation, error) {
+	return command.PromptMutation{}, nil
+}
+func (*recordingCommandStore) MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
+	return nil
+}
+func (*recordingCommandStore) BeginPermissionMutation(context.Context, conversation.IncomingMessage, command.PermissionCommand, agent.ConfigVersion) (command.PromptMutation, error) {
+	return command.PromptMutation{}, nil
+}
+func (*recordingCommandStore) MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
+	return nil
+}
 
 type recordingCommandClient struct {
 	operation   string
@@ -130,6 +157,43 @@ func TestHandleGroupRejectsMalformedCommandsBeforeProviderCall(t *testing.T) {
 		if adapter.client.operation != "" || adapter.targets.operation != "" {
 			t.Fatalf("provider called for malformed command %q", value)
 		}
+	}
+}
+
+func TestGroupCommandSuppressesAutomaticFeedbackForDeleteAndKick(t *testing.T) {
+	key := groupCommandKey(t)
+	target, _ := identity.NewMessageID()
+	tests := []struct {
+		name     string
+		text     string
+		quote    *conversation.QuotedMessage
+		wantSent int
+	}{
+		{name: "delete", text: "/group delete", quote: &conversation.QuotedMessage{ID: target}},
+		{name: "kick", text: "/group kick @Alice (abc123)"},
+		{name: "close still confirms", text: "/group close", wantSent: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := &recordingCommandAdapter{client: &recordingCommandClient{}, targets: &recordingGroupTargets{}}
+			store := &recordingCommandStore{}
+			input := command.Context{
+				Message: conversation.IncomingMessage{
+					TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
+					Text: test.text, Quote: test.quote,
+				},
+				Store: store,
+			}
+			if err := handleGroup(context.Background(), input, adapter); err != nil {
+				t.Fatalf("handle group command: %v", err)
+			}
+			if len(adapter.sent) != test.wantSent {
+				t.Fatalf("automatic feedback messages = %d, want %d", len(adapter.sent), test.wantSent)
+			}
+			if store.handled != 1 {
+				t.Fatalf("handled marks = %d, want 1", store.handled)
+			}
+		})
 	}
 }
 

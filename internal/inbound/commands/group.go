@@ -32,6 +32,9 @@ func handleGroup(ctx context.Context, input command.Context, rawAdapter command.
 	if !ok || adapter == nil {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle /group command", errors.New("WhatsApp command adapter is unavailable"))
 	}
+	markHandled := func() error {
+		return input.Store.MarkCommandHandled(ctx, input.Message)
+	}
 	send := func(text string) error {
 		actionID, err := identity.NewActionID()
 		if err != nil {
@@ -41,7 +44,7 @@ func handleGroup(ctx context.Context, input command.Context, rawAdapter command.
 		if _, err := rawAdapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text}); err != nil {
 			return err
 		}
-		return input.Store.MarkCommandHandled(ctx, input.Message)
+		return markHandled()
 	}
 	raw := input.Message.Text
 	parsed, err := groupcmd.Parse(raw)
@@ -58,6 +61,9 @@ func handleGroup(ctx context.Context, input command.Context, rawAdapter command.
 			return send(groupCommandUsage())
 		}
 		return err
+	}
+	if parsed.Kind == groupcmd.Delete || parsed.Kind == groupcmd.Kick {
+		return markHandled()
 	}
 	return send(fmt.Sprintf("Perintah /group %s berhasil dijalankan.", parsed.Kind))
 }
