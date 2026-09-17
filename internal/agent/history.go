@@ -38,6 +38,7 @@ type HistoryEntry struct {
 	Sender       *SenderContext
 	Quote        *QuoteContext
 	Content      []ContentPart
+	Mentions     []MentionContext
 	Delivery     DeliveryStatus
 	CreatedAt    time.Time
 }
@@ -199,6 +200,9 @@ func validateHistoryEntry(entry HistoryEntry) error {
 	if entry.Role != HistoryUser && entry.Quote != nil {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("only user history may carry quote context"))
 	}
+	if entry.Role != HistoryUser && len(entry.Mentions) != 0 {
+		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("only user history may carry raw mention bindings"))
+	}
 	if len(entry.Content) != 1 {
 		return NewError(ErrorUnsupported, "validate history entry", fmt.Errorf("Part 2 history requires exactly one text part"))
 	}
@@ -215,6 +219,9 @@ func validateHistoryEntry(entry HistoryEntry) error {
 		if total > MaxHistoryBytes {
 			return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("history content exceeds %d bytes", MaxHistoryBytes))
 		}
+	}
+	if err := validateMentionContexts(flattenContent(entry.Content), entry.Mentions); err != nil {
+		return NewError(ErrorInvalidArgument, "validate history entry", err)
 	}
 	switch entry.Role {
 	case HistoryUser:
@@ -270,6 +277,7 @@ func DigestHistoryEntry(entry HistoryEntry) ([32]byte, error) {
 		canonical.WriteByte(1)
 		writeField(&canonical, part.(TextPart).Text)
 	}
+	writeMentionDigestExtension(&canonical, entry.Mentions, quoteMentions(entry.Quote))
 	return sha256.Sum256(canonical.Bytes()), nil
 }
 
@@ -293,6 +301,7 @@ func cloneHistoryEntry(entry HistoryEntry) HistoryEntry {
 	entry.Sender = cloneSender(entry.Sender)
 	entry.Quote = cloneQuote(entry.Quote)
 	entry.Content = cloneContent(entry.Content)
+	entry.Mentions = cloneMentions(entry.Mentions)
 	return entry
 }
 
@@ -309,6 +318,12 @@ func validateQuoteContext(quote *QuoteContext) error {
 	}
 	if quote.Role == HistoryAssistant && !quote.SenderRef.IsZero() {
 		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted assistant must not carry sender ref")
+	}
+	if quote.Role == HistoryAssistant && len(quote.Mentions) != 0 {
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted assistant must not carry raw mention bindings")
+	}
+	if err := validateMentionContexts(quote.Text, quote.Mentions); err != nil {
+		return err
 	}
 	return nil
 }

@@ -670,6 +670,9 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 	); err != nil {
 		return storageError("ensure invocation sender ref", err)
 	}
+	if err := updateSenderDisplayName(ctx, tx, key.TenantID, key.AccountID, key.ChatID, sender.Ref, sender.DisplayName, false); err != nil {
+		return err
+	}
 	var storedRef string
 	err := tx.QueryRowContext(ctx, `SELECT sender_ref FROM sender_refs
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND participant_id = ?`,

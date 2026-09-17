@@ -148,6 +148,50 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 			return maintenance.Result{}, storageError("inspect trimmed history", err)
 		}
 	}
+	// Mention bindings follow message reachability rather than inbound-event
+	// retention: retained history and quote snapshots can still reference an
+	// original message after its operational inbound row is deleted.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_mentions
+      WHERE tenant_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM inbound_events e
+          WHERE e.tenant_id = message_mentions.tenant_id
+            AND e.account_id = message_mentions.account_id
+            AND e.chat_id = message_mentions.chat_id
+            AND e.message_id = message_mentions.message_id
+            AND e.content_scrubbed = 0
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM history_entries h
+          WHERE h.tenant_id = message_mentions.tenant_id
+            AND h.account_id = message_mentions.account_id
+            AND h.chat_id = message_mentions.chat_id
+            AND (h.message_id = message_mentions.message_id
+              OR h.quoted_message_id = message_mentions.message_id)
+        )`, request.TenantID.String()); err != nil {
+		return maintenance.Result{}, storageError("expire message mention bindings", err)
+	}
+	// Display names are a convenience cache, not durable identity. Keep them
+	// only while unsanitized inbound data or retained history can use the ref.
+	if _, err := tx.ExecContext(ctx, `UPDATE sender_refs AS r SET display_name = ''
+      WHERE r.tenant_id = ? AND trim(r.display_name) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM inbound_events e
+          WHERE e.tenant_id = r.tenant_id AND e.account_id = r.account_id
+            AND e.chat_id = r.chat_id AND e.sender_ref = r.sender_ref AND e.content_scrubbed = 0
+		)
+		AND NOT EXISTS (
+		  SELECT 1 FROM message_mentions m
+		  WHERE m.tenant_id = r.tenant_id AND m.account_id = r.account_id
+		    AND m.chat_id = r.chat_id AND m.sender_ref = r.sender_ref
+		)
+        AND NOT EXISTS (
+          SELECT 1 FROM history_entries h
+          WHERE h.tenant_id = r.tenant_id AND h.account_id = r.account_id
+            AND h.chat_id = r.chat_id AND h.sender_ref = r.sender_ref
+        )`, request.TenantID.String()); err != nil {
+		return maintenance.Result{}, storageError("expire sender display names", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return maintenance.Result{}, storageError("commit application maintenance", err)
 	}

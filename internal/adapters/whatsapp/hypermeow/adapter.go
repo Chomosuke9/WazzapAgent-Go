@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mdp/qrterminal/v3"
 	whatsmeow "github.com/polymorfa/hypermeow"
@@ -31,6 +32,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	inboundcommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -836,12 +838,16 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 		}
 	}
 	mentioned := false
+	mentions := []conversation.IncomingMention(nil)
 	quotedMessageID := ""
 	if contextInfo != nil {
 		quotedMessageID = contextInfo.GetStanzaID()
 	}
 	if chatKind == conversation.ChatGroup && contextInfo != nil {
 		mentioned = adapter.mentionsOwnAccount(contextInfo.GetMentionedJID())
+	}
+	if contextInfo != nil {
+		mentions = adapter.extractInboundMentions(ctx, text, contextInfo.GetMentionedJID())
 	}
 	senderName := strings.TrimSpace(event.Info.PushName)
 	if senderName == "" {
@@ -858,6 +864,7 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 		SenderName:              senderName,
 		ChatKind:                chatKind,
 		Text:                    text,
+		Mentions:                mentions,
 		MentionsBot:             mentioned,
 		FromMe:                  event.Info.IsFromMe,
 		Owner:                   adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
@@ -885,6 +892,88 @@ func (adapter *Adapter) contactPushName(ctx context.Context, addresses ...types.
 		}
 	}
 	return ""
+}
+
+func (adapter *Adapter) contactDisplayName(ctx context.Context, addresses ...types.JID) string {
+	if adapter.client == nil || adapter.client.Store == nil || adapter.client.Store.Contacts == nil {
+		return ""
+	}
+	for _, address := range addresses {
+		address = address.ToNonAD()
+		if address.IsEmpty() {
+			continue
+		}
+		contact, err := adapter.client.Store.Contacts.GetContact(ctx, address)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range []string{contact.PushName, contact.FullName, contact.BusinessName, contact.FirstName, contact.Username} {
+			if name := boundedDisplayName(candidate); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func (adapter *Adapter) extractInboundMentions(ctx context.Context, text string, mentioned []string) []conversation.IncomingMention {
+	if len(mentioned) == 0 {
+		return nil
+	}
+	result := make([]conversation.IncomingMention, 0, len(mentioned))
+	seen := make(map[string]struct{}, len(mentioned))
+	for _, raw := range mentioned {
+		address, err := types.ParseJID(raw)
+		if err != nil {
+			continue
+		}
+		address = address.ToNonAD()
+		token := "@" + address.User
+		if address.User == "" || !mention.Contains(text, token) {
+			continue
+		}
+		if _, exists := seen[token]; exists {
+			continue
+		}
+		if adapter.mentionsOwnAccount([]string{raw}) {
+			seen[token] = struct{}{}
+			result = append(result, conversation.IncomingMention{Token: token, Bot: true})
+			if len(result) == conversation.MaxMentions {
+				break
+			}
+			continue
+		}
+
+		target, ok := lidAddress(address)
+		if !ok && address.Server == types.DefaultUserServer && adapter.client != nil && adapter.client.Store != nil && adapter.client.Store.LIDs != nil {
+			target, err = adapter.client.Store.LIDs.GetLIDForPN(ctx, address)
+			ok = err == nil && !target.IsEmpty()
+		}
+		if !ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		result = append(result, conversation.IncomingMention{
+			Token: token, TargetLID: mustLID(target),
+			DisplayName: adapter.contactDisplayName(ctx, address, target),
+		})
+		if len(result) == conversation.MaxMentions {
+			break
+		}
+	}
+	return result
+}
+
+func boundedDisplayName(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= agent.MaxDisplayNameBytes {
+		return value
+	}
+	value = value[:agent.MaxDisplayNameBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return strings.TrimSpace(value)
 }
 
 func (adapter *Adapter) isConfiguredOwner(addresses ...types.JID) bool {
@@ -935,7 +1024,7 @@ func jidString(address types.JID) string {
 }
 
 func (adapter *Adapter) mentionsOwnAccount(mentioned []string) bool {
-	if len(mentioned) == 0 {
+	if len(mentioned) == 0 || adapter.client == nil || adapter.client.Store == nil {
 		return false
 	}
 	own := make(map[string]struct{}, 2)

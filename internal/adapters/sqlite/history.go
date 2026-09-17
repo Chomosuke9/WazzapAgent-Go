@@ -10,6 +10,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 )
 
 func (store *HistoryStore) ListIfConfigVersion(
@@ -84,17 +85,42 @@ func (store *HistoryStore) ListIfConfigVersion(
 	type sequencedEntry struct {
 		sequence int64
 		entry    agent.HistoryEntry
+		digest   []byte
 	}
 	loaded := make([]sequencedEntry, 0, int(query.Limit)+1)
 	for rows.Next() {
-		entry, sequence, decodeErr := scanHistoryEntry(rows)
+		entry, sequence, digest, decodeErr := scanHistoryEntry(rows)
 		if decodeErr != nil {
 			return agent.HistoryPage{}, decodeErr
 		}
-		loaded = append(loaded, sequencedEntry{sequence: sequence, entry: entry})
+		loaded = append(loaded, sequencedEntry{sequence: sequence, entry: entry, digest: digest})
 	}
 	if err := rows.Err(); err != nil {
 		return agent.HistoryPage{}, storageError("iterate history", err)
+	}
+	if err := rows.Close(); err != nil {
+		return agent.HistoryPage{}, storageError("close history rows", err)
+	}
+	messageIDs := make([]identity.MessageID, 0, len(loaded)*2)
+	for index := range loaded {
+		messageIDs = append(messageIDs, loaded[index].entry.MessageID)
+		if quote := loaded[index].entry.Quote; quote != nil && quote.Role == agent.HistoryUser {
+			messageIDs = append(messageIDs, quote.MessageID)
+		}
+	}
+	bindings, err := loadMessageMentionContexts(ctx, tx, key, messageIDs)
+	if err != nil {
+		return agent.HistoryPage{}, err
+	}
+	for index := range loaded {
+		hydrateHistoryMentions(&loaded[index].entry, bindings)
+		wantedDigest, digestErr := agent.DigestHistoryEntry(loaded[index].entry)
+		if digestErr != nil {
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", digestErr)
+		}
+		if !equalRawDigest(loaded[index].digest, wantedDigest[:]) {
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("content digest mismatch"))
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return agent.HistoryPage{}, storageError("commit history list", err)
@@ -161,6 +187,22 @@ func (store *Store) appendHistoryEntryTx(
 	entry agent.HistoryEntry,
 	nowMS int64,
 ) error {
+	bindings, err := loadMessageMentionContexts(ctx, tx, key, historyMentionMessageIDs(entry))
+	if err != nil {
+		return err
+	}
+	storedContent, storedQuote := mentionsForHistoryEntry(entry, bindings)
+	if len(entry.Mentions) > 0 && !sameMentionIdentities(entry.Mentions, storedContent) {
+		return agent.NewError(agent.ErrorConflict, "append history", errors.New("message mention bindings conflict with durable inbound metadata"))
+	}
+	if entry.Quote != nil && len(entry.Quote.Mentions) > 0 && !sameMentionIdentities(entry.Quote.Mentions, storedQuote) {
+		return agent.NewError(agent.ErrorConflict, "append history", errors.New("quoted mention bindings conflict with durable inbound metadata"))
+	}
+	entry.Mentions = storedContent
+	if entry.Quote != nil {
+		entry.Quote = cloneAgentQuote(entry.Quote)
+		entry.Quote.Mentions = storedQuote
+	}
 	digest, err := agent.DigestHistoryEntry(entry)
 	if err != nil {
 		return err
@@ -380,7 +422,7 @@ type historyScanner interface {
 	Scan(...any) error
 }
 
-func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error) {
+func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte, error) {
 	var (
 		sequence        int64
 		messageValue    string
@@ -404,19 +446,19 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 	if err := scanner.Scan(&sequence, &messageValue, &invocationValue, &causationKind, &causationValue,
 		&role, &participant, &senderRefValue, &senderName, &quotedMessage, &quotedSequence, &quotedRole,
 		&quotedSenderRef, &quotedText, &content, &contentDigest, &delivery, &createdAtMS); err != nil {
-		return agent.HistoryEntry{}, 0, storageError("scan history entry", err)
+		return agent.HistoryEntry{}, 0, nil, storageError("scan history entry", err)
 	}
 	messageID, err := identity.ParseMessageID(messageValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	invocationID, err := identity.ParseInvocationID(invocationValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	causationID, err := identity.ParseCausationID(causationValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	entry := agent.HistoryEntry{
 		Sequence: uint64(sequence), MessageID: messageID, InvocationID: invocationID,
@@ -425,26 +467,26 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		Delivery: agent.DeliveryStatus(delivery), CreatedAt: time.UnixMilli(createdAtMS).UTC(),
 	}
 	if participant.Valid != senderRefValue.Valid {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
+		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
 	}
 	if participant.Valid {
 		participantID, parseErr := identity.ParseParticipantID(participant.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		senderRef, parseErr := identity.ParseSenderRef(senderRefValue.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		entry.Sender = &agent.SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: senderName}
 	}
 	if quotedMessage.Valid || quotedRole.Valid || quotedSenderRef.Valid || quotedText.Valid {
 		if !quotedMessage.Valid || !quotedRole.Valid || !quotedText.Valid {
-			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
+			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
 		}
 		quotedMessageID, parseErr := identity.ParseMessageID(quotedMessage.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		quoteSequence := uint64(0)
 		if quotedSequence.Valid && quotedSequence.Int64 > 0 {
@@ -454,19 +496,141 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error)
 		if quotedSenderRef.Valid {
 			ref, parseErr := identity.ParseSenderRef(quotedSenderRef.String)
 			if parseErr != nil {
-				return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+				return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 			}
 			entry.Quote.SenderRef = ref
 		}
 	}
-	wantedDigest, err := agent.DigestHistoryEntry(entry)
+	return entry, sequence, append([]byte(nil), contentDigest...), nil
+}
+
+func loadMessageMentionContexts(
+	ctx context.Context,
+	query actionQuerier,
+	key agent.Key,
+	messageIDs []identity.MessageID,
+) (map[string][]agent.MentionContext, error) {
+	unique := make([]string, 0, len(messageIDs))
+	seen := make(map[string]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID.IsZero() {
+			continue
+		}
+		value := messageID.String()
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	result := make(map[string][]agent.MentionContext, len(unique))
+	if len(unique) == 0 {
+		return result, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
+	args := make([]any, 0, len(unique)+3)
+	args = append(args, key.TenantID.String(), key.AccountID.String(), key.ChatID.String())
+	for _, messageID := range unique {
+		args = append(args, messageID)
+	}
+	rows, err := query.QueryContext(ctx, `SELECT m.message_id, m.token, m.sender_ref, m.is_bot,
+        COALESCE(r.display_name, '')
+      FROM message_mentions m
+      LEFT JOIN sender_refs r ON r.tenant_id = m.tenant_id AND r.account_id = m.account_id
+        AND r.chat_id = m.chat_id AND r.sender_ref = m.sender_ref
+      WHERE m.tenant_id = ? AND m.account_id = ? AND m.chat_id = ?
+        AND m.message_id IN (`+placeholders+`)
+      ORDER BY m.message_id, m.ordinal`, args...)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return nil, storageError("load history mention bindings", err)
 	}
-	if !equalRawDigest(contentDigest, wantedDigest[:]) {
-		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("content digest mismatch"))
+	defer rows.Close()
+	for rows.Next() {
+		var messageID, token, displayName string
+		var senderRefValue sql.NullString
+		var isBot int64
+		if err := rows.Scan(&messageID, &token, &senderRefValue, &isBot, &displayName); err != nil {
+			return nil, storageError("decode history mention binding", err)
+		}
+		if !mention.ValidToken(token) || (isBot != 0 && isBot != 1) || (isBot == 1) != !senderRefValue.Valid {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history mention binding", errors.New("mention metadata is invalid"))
+		}
+		binding := agent.MentionContext{Token: token, DisplayName: displayName, Bot: isBot == 1}
+		if senderRefValue.Valid {
+			ref, parseErr := identity.ParseSenderRef(senderRefValue.String)
+			if parseErr != nil {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history mention binding", parseErr)
+			}
+			binding.SenderRef = ref
+		}
+		result[messageID] = append(result[messageID], binding)
 	}
-	return entry, sequence, nil
+	if err := rows.Err(); err != nil {
+		return nil, storageError("iterate history mention bindings", err)
+	}
+	return result, nil
+}
+
+func historyMentionMessageIDs(entry agent.HistoryEntry) []identity.MessageID {
+	result := []identity.MessageID{entry.MessageID}
+	if entry.Quote != nil && entry.Quote.Role == agent.HistoryUser {
+		result = append(result, entry.Quote.MessageID)
+	}
+	return result
+}
+
+func mentionsForHistoryEntry(
+	entry agent.HistoryEntry,
+	bindings map[string][]agent.MentionContext,
+) ([]agent.MentionContext, []agent.MentionContext) {
+	var content []agent.MentionContext
+	if entry.Role == agent.HistoryUser {
+		content = append([]agent.MentionContext(nil), bindings[entry.MessageID.String()]...)
+	}
+	var quoted []agent.MentionContext
+	if entry.Quote != nil && entry.Quote.Role == agent.HistoryUser {
+		for _, binding := range bindings[entry.Quote.MessageID.String()] {
+			if mention.Contains(entry.Quote.Text, binding.Token) {
+				quoted = append(quoted, binding)
+			}
+		}
+	}
+	return content, quoted
+}
+
+func hydrateHistoryMentions(entry *agent.HistoryEntry, bindings map[string][]agent.MentionContext) {
+	content, quoted := mentionsForHistoryEntry(*entry, bindings)
+	entry.Mentions = content
+	if entry.Quote != nil {
+		entry.Quote = cloneAgentQuote(entry.Quote)
+		entry.Quote.Mentions = quoted
+	}
+}
+
+func cloneAgentQuote(quote *agent.QuoteContext) *agent.QuoteContext {
+	if quote == nil {
+		return nil
+	}
+	copyQuote := *quote
+	copyQuote.Mentions = append([]agent.MentionContext(nil), quote.Mentions...)
+	return &copyQuote
+}
+
+func sameMentionIdentities(left, right []agent.MentionContext) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	wanted := make(map[string]agent.MentionContext, len(left))
+	for _, binding := range left {
+		wanted[binding.Token] = binding
+	}
+	for _, binding := range right {
+		other, exists := wanted[binding.Token]
+		if !exists || other.Bot != binding.Bot || other.SenderRef != binding.SenderRef {
+			return false
+		}
+	}
+	return true
 }
 
 func requireConfigVersion(ctx context.Context, tx *sql.Tx, key agent.Key, wanted agent.ConfigVersion) error {

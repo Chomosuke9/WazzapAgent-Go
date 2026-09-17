@@ -256,7 +256,7 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 			"text": map[string]any{
 				"type":        "string",
 				"minLength":   1,
-				"description": "Visible reply text. For a person mention, copy the exact display name and six-character senderRef from the same `Name 【senderRef】` line and write `@Name (senderRef)`, for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and `@Bot (bot)`.",
+				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and `@Bot (bot)`.",
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},
@@ -279,7 +279,7 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 	}
 	tools := []completionTool{{Type: "function", Function: completionFunction{
 		Name:        "reply_message",
-		Description: "Return the visible reply and optionally request authorized group commands. Inline person mentions must use `@Name (senderRef)` with both values copied from the same sender line. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
+		Description: "Return the visible reply and optionally request authorized group commands. Inline person mentions must use an exact canonical `@Name (senderRef)` from the transcript or use both values from the same sender line. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
 		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {

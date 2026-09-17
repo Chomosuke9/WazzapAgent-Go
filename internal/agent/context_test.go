@@ -122,6 +122,63 @@ func TestContextBuilderKeepsInjectionAsUserDataAndDropsUndeliveredAssistant(t *t
 	}
 }
 
+func TestContextBuilderRendersBoundMentionMetadataOnDemand(t *testing.T) {
+	builder, _ := NewDeterministicContextBuilder(DefaultMaxContextBytes)
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	policyID, _ := identity.ParsePolicyID("part2-chat-gate.v1")
+	senderID, _ := identity.NewParticipantID()
+	targetID, _ := identity.NewParticipantID()
+	senderRef, _ := identity.ParseSenderRef("012345")
+	targetRef, _ := identity.ParseSenderRef("abcdef")
+	previousInvocation, _ := identity.NewInvocationID()
+	currentInvocation, _ := identity.NewInvocationID()
+	previousMessage, _ := identity.NewMessageID()
+	currentMessage, _ := identity.NewMessageID()
+	previousCause, _ := identity.NewCausationID()
+	currentCause, _ := identity.NewCausationID()
+	now := time.Now().UTC()
+	history := []HistoryEntry{
+		{
+			Sequence: 1, MessageID: previousMessage, InvocationID: previousInvocation,
+			Causation: CausationRef{Kind: CausationMessage, ID: previousCause}, Role: HistoryUser,
+			Sender:  &SenderContext{ParticipantID: targetID, Ref: targetRef, DisplayName: "Alice (Ops)"},
+			Content: []ContentPart{TextPart{Text: "pesan awal"}}, CreatedAt: now,
+		},
+		{
+			Sequence: 2, MessageID: currentMessage, InvocationID: currentInvocation,
+			Causation: CausationRef{Kind: CausationMessage, ID: currentCause}, Role: HistoryUser,
+			Sender: &SenderContext{ParticipantID: senderID, Ref: senderRef, DisplayName: "Sender"},
+			Quote: &QuoteContext{
+				Sequence: 1, MessageID: previousMessage, Role: HistoryUser, SenderRef: targetRef,
+				Text: "kata @123", Mentions: []MentionContext{{Token: "@123", SenderRef: targetRef, DisplayName: "stale"}},
+			},
+			Content: []ContentPart{TextPart{Text: "tolong @123 dan @999; biarkan @1234 serta x@123"}},
+			Mentions: []MentionContext{
+				{Token: "@123", SenderRef: targetRef, DisplayName: "stale"},
+				{Token: "@999", Bot: true},
+			},
+			CreatedAt: now.Add(time.Second),
+		},
+	}
+	messages, err := builder.Build(ContextBuildRequest{
+		Config: ConfigSnapshot{
+			Version: 1, Model: ModelConfig{ProviderID: providerID, Model: "model", MaxOutputTokens: 100},
+			Prompt: "trusted", Permission: PermissionConfig{PolicyID: policyID, Revision: 1},
+		},
+		History: history, CurrentInvocationID: currentInvocation,
+	})
+	if err != nil {
+		t.Fatalf("build mention context: %v", err)
+	}
+	transcript := messages[len(messages)-1].Content
+	if strings.Count(transcript, "@Alice Ops (abcdef)") != 2 || !strings.Contains(transcript, "@Bot (bot)") {
+		t.Fatalf("canonical mentions were not rendered: %s", transcript)
+	}
+	if !strings.Contains(transcript, "@1234") || !strings.Contains(transcript, "x@123") || strings.Contains(transcript, "tolong @123 dan") {
+		t.Fatalf("mention boundaries were not preserved: %s", transcript)
+	}
+}
+
 func TestContextBuilderTrimsWholeLogicalInvocation(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part2-chat-gate.v1")

@@ -11,6 +11,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -44,6 +45,9 @@ func (store *InboundStore) ClaimAndResolveSender(
 	if err != nil {
 		return inbound.ClaimedMessage{}, err
 	}
+	if err := updateSenderDisplayName(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, senderRef, candidate.SenderName, false); err != nil {
+		return inbound.ClaimedMessage{}, err
+	}
 	message, state, err := loadInboundByProvider(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, candidate.ProviderMessageID)
 	if err == nil {
 		if message.SenderLID != candidate.SenderLID || message.SenderID != participantID || message.SenderRef != senderRef {
@@ -58,6 +62,10 @@ func (store *InboundStore) ClaimAndResolveSender(
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return inbound.ClaimedMessage{}, storageError("look up incoming dedup key", err)
+	}
+	resolvedMentions, err := resolveIncomingMentions(ctx, tx, candidate, chatID, store.senderRefs, nowMS)
+	if err != nil {
+		return inbound.ClaimedMessage{}, err
 	}
 	quote, err := resolveQuotedMessage(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, candidate.ProviderQuotedMessageID)
 	if err != nil {
@@ -91,6 +99,9 @@ func (store *InboundStore) ClaimAndResolveSender(
 	if err != nil {
 		return inbound.ClaimedMessage{}, storageError("insert incoming event", err)
 	}
+	if err := persistInboundMentions(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, messageID, resolvedMentions); err != nil {
+		return inbound.ClaimedMessage{}, err
+	}
 	// A managed chat has one canonical transcript. Recording happens before
 	// trigger checks: group traffic that does not mention or reply to the bot is
 	// still useful context for the next eligible invocation, but never becomes a
@@ -102,7 +113,7 @@ func (store *InboundStore) ClaimAndResolveSender(
 	if shouldRecord && candidate.Allowlisted && candidate.ChatKind != conversation.ChatStatus && !candidate.FromMe {
 		key := agent.Key{TenantID: candidate.TenantID, AccountID: candidate.AccountID, ChatID: chatID}
 		if err := store.Store.appendHistoryEntryTx(ctx, tx, key, inboundTranscriptEntry(
-			messageID, invocationID, causationID, participantID, senderRef, candidate, quote,
+			messageID, invocationID, causationID, participantID, senderRef, candidate, resolvedMentions, quote,
 		), nowMS); err != nil {
 			return inbound.ClaimedMessage{}, err
 		}
@@ -124,6 +135,7 @@ func (store *InboundStore) ClaimAndResolveSender(
 		SenderName:   candidate.SenderName,
 		ChatKind:     candidate.ChatKind,
 		Text:         candidate.Text,
+		Mentions:     resolvedMentions,
 		Quote:        quote,
 		RepliedToBot: quote != nil && quote.Role == conversation.QuoteAssistant,
 		MentionsBot:  candidate.MentionsBot,
@@ -164,6 +176,7 @@ func inboundTranscriptEntry(
 	participantID identity.ParticipantID,
 	senderRef identity.SenderRef,
 	candidate conversation.IncomingCandidate,
+	mentions []conversation.MentionBinding,
 	quote *conversation.QuotedMessage,
 ) agent.HistoryEntry {
 	var historyQuote *agent.QuoteContext
@@ -174,6 +187,7 @@ func inboundTranscriptEntry(
 		}
 		historyQuote = &agent.QuoteContext{
 			Sequence: quote.Sequence, MessageID: quote.ID, Role: role, SenderRef: quote.SenderRef, Text: quote.Text,
+			Mentions: agentMentionContexts(quote.Mentions),
 		}
 	}
 	return agent.HistoryEntry{
@@ -185,8 +199,17 @@ func inboundTranscriptEntry(
 		},
 		Quote:    historyQuote,
 		Content:  []agent.ContentPart{agent.TextPart{Text: candidate.Text}},
+		Mentions: agentMentionContexts(mentions),
 		Delivery: agent.DeliveryNotStarted, CreatedAt: candidate.OccurredAt.UTC(),
 	}
+}
+
+func agentMentionContexts(bindings []conversation.MentionBinding) []agent.MentionContext {
+	mentions := make([]agent.MentionContext, len(bindings))
+	for index, binding := range bindings {
+		mentions[index] = agent.MentionContext{Token: binding.Token, SenderRef: binding.SenderRef, Bot: binding.Bot}
+	}
+	return mentions
 }
 
 func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation.IncomingMessage, reason inbound.IgnoreReason) error {
@@ -542,6 +565,22 @@ func (store *InboundStore) ListRecoverableInbound(
 	if err := rows.Err(); err != nil {
 		return nil, storageError("iterate recoverable inbound", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, storageError("close recoverable inbound", err)
+	}
+	for index := range messages {
+		message := &messages[index]
+		message.Mentions, err = loadMentionBindings(ctx, store.db, message.TenantID, message.AccountID, message.ChatID, message.ID, message.Text, true)
+		if err != nil {
+			return nil, err
+		}
+		if message.Quote != nil && message.Quote.Role == conversation.QuoteUser {
+			message.Quote.Mentions, err = loadMentionBindings(ctx, store.db, message.TenantID, message.AccountID, message.ChatID, message.Quote.ID, message.Quote.Text, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return messages, nil
 }
 
@@ -630,6 +669,134 @@ func resolveParticipant(ctx context.Context, tx *sql.Tx, candidate conversation.
 		return identity.ParticipantID{}, storageError("create participant mapping", err)
 	}
 	return participantID, nil
+}
+
+func resolveMentionParticipant(
+	ctx context.Context,
+	tx *sql.Tx,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	lid identity.LID,
+	nowMS int64,
+) (identity.ParticipantID, error) {
+	var value string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM participants
+      WHERE tenant_id = ? AND account_id = ? AND lid = ?`,
+		tenantID.String(), accountID.String(), lid.String(),
+	).Scan(&value)
+	if err == nil {
+		participantID, parseErr := identity.ParseParticipantID(value)
+		if parseErr != nil {
+			return identity.ParticipantID{}, agent.NewError(agent.ErrorIntegrityFailure, "decode mentioned participant", parseErr)
+		}
+		return participantID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return identity.ParticipantID{}, storageError("resolve mentioned participant", err)
+	}
+	participantID, err := identity.NewParticipantID()
+	if err != nil {
+		return identity.ParticipantID{}, agent.NewError(agent.ErrorInternal, "create mentioned participant", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO participants(
+        tenant_id, account_id, id, provider_address, lid, owner, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, 0, ?)`,
+		tenantID.String(), accountID.String(), participantID.String(), lid.String(), lid.String(), nowMS,
+	); err != nil {
+		return identity.ParticipantID{}, storageError("create mentioned participant", err)
+	}
+	return participantID, nil
+}
+
+func resolveIncomingMentions(
+	ctx context.Context,
+	tx *sql.Tx,
+	candidate conversation.IncomingCandidate,
+	chatID identity.ChatID,
+	factory func() (identity.SenderRef, error),
+	nowMS int64,
+) ([]conversation.MentionBinding, error) {
+	bindings := make([]conversation.MentionBinding, 0, len(candidate.Mentions))
+	for _, incoming := range candidate.Mentions {
+		if incoming.Bot {
+			bindings = append(bindings, conversation.MentionBinding{Token: incoming.Token, Bot: true})
+			continue
+		}
+		participantID, err := resolveMentionParticipant(ctx, tx, candidate.TenantID, candidate.AccountID, incoming.TargetLID, nowMS)
+		if err != nil {
+			return nil, err
+		}
+		ref, err := resolveSenderRef(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, participantID, incoming.TargetLID, factory, nowMS)
+		if err != nil {
+			return nil, err
+		}
+		if err := updateSenderDisplayName(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, ref, incoming.DisplayName, true); err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, conversation.MentionBinding{Token: incoming.Token, SenderRef: ref})
+	}
+	return bindings, nil
+}
+
+func updateSenderDisplayName(
+	ctx context.Context,
+	tx *sql.Tx,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	chatID identity.ChatID,
+	ref identity.SenderRef,
+	name string,
+	onlyIfEmpty bool,
+) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	predicate := ""
+	if onlyIfEmpty {
+		predicate = " AND trim(display_name) = ''"
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE sender_refs SET display_name = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`+predicate,
+		name, tenantID.String(), accountID.String(), chatID.String(), ref.String(),
+	)
+	if err != nil {
+		return storageError("update sender display name", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return storageError("inspect sender display name update", err)
+	}
+	if !onlyIfEmpty && changed != 1 {
+		return agent.NewError(agent.ErrorIntegrityFailure, "update sender display name", errors.New("sender reference does not exist"))
+	}
+	return nil
+}
+
+func persistInboundMentions(
+	ctx context.Context,
+	tx *sql.Tx,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	chatID identity.ChatID,
+	messageID identity.MessageID,
+	bindings []conversation.MentionBinding,
+) error {
+	for ordinal, binding := range bindings {
+		var senderRef any
+		if !binding.SenderRef.IsZero() {
+			senderRef = binding.SenderRef.String()
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO message_mentions(
+          tenant_id, account_id, chat_id, message_id, ordinal, token, sender_ref, is_bot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			tenantID.String(), accountID.String(), chatID.String(), messageID.String(), ordinal,
+			binding.Token, senderRef, boolInt(binding.Bot),
+		); err != nil {
+			return storageError("persist inbound mention", err)
+		}
+	}
+	return nil
 }
 
 func resolveSenderRef(
@@ -761,6 +928,16 @@ func loadInboundByProvider(
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, err
 	}
+	bindings, err := loadMentionBindings(ctx, query, tenantID, accountID, chatID, messageID, text, true)
+	if err != nil {
+		return conversation.IncomingMessage{}, 0, err
+	}
+	if quote != nil && quote.Role == conversation.QuoteUser {
+		quote.Mentions, err = loadMentionBindings(ctx, query, tenantID, accountID, chatID, quote.ID, quote.Text, false)
+		if err != nil {
+			return conversation.IncomingMessage{}, 0, err
+		}
+	}
 	return conversation.IncomingMessage{
 		ID:           messageID,
 		InvocationID: invocationID,
@@ -774,6 +951,7 @@ func loadInboundByProvider(
 		SenderName:   senderName,
 		ChatKind:     conversation.ChatKind(chatKind),
 		Text:         text,
+		Mentions:     bindings,
 		Quote:        quote,
 		RepliedToBot: repliedToBot == 1,
 		MentionsBot:  mentionsBot == 1,
@@ -950,7 +1128,64 @@ func resolveQuotedMessage(
 	if messageSequence.Valid && messageSequence.Int64 > 0 {
 		quote.Sequence = uint64(messageSequence.Int64)
 	}
+	quote.Mentions, err = loadMentionBindings(ctx, query, tenantID, accountID, chatID, messageID, text, false)
+	if err != nil {
+		return nil, err
+	}
 	return quote, nil
+}
+
+func loadMentionBindings(
+	ctx context.Context,
+	query actionQuerier,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	chatID identity.ChatID,
+	messageID identity.MessageID,
+	text string,
+	requireAll bool,
+) ([]conversation.MentionBinding, error) {
+	rows, err := query.QueryContext(ctx, `SELECT token, sender_ref, is_bot
+      FROM message_mentions
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND message_id = ?
+      ORDER BY ordinal`,
+		tenantID.String(), accountID.String(), chatID.String(), messageID.String(),
+	)
+	if err != nil {
+		return nil, storageError("load inbound mentions", err)
+	}
+	defer rows.Close()
+	bindings := make([]conversation.MentionBinding, 0)
+	for rows.Next() {
+		var token string
+		var senderRefValue sql.NullString
+		var isBot int64
+		if err := rows.Scan(&token, &senderRefValue, &isBot); err != nil {
+			return nil, storageError("decode inbound mention", err)
+		}
+		if !mention.ValidToken(token) || (isBot != 0 && isBot != 1) || (isBot == 1) != !senderRefValue.Valid {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound mention", errors.New("mention metadata is invalid"))
+		}
+		if !mention.Contains(text, token) {
+			if requireAll {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound mention", errors.New("mention token is absent from raw text"))
+			}
+			continue
+		}
+		binding := conversation.MentionBinding{Token: token, Bot: isBot == 1}
+		if senderRefValue.Valid {
+			ref, parseErr := identity.ParseSenderRef(senderRefValue.String)
+			if parseErr != nil {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound mention", parseErr)
+			}
+			binding.SenderRef = ref
+		}
+		bindings = append(bindings, binding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("iterate inbound mentions", err)
+	}
+	return bindings, nil
 }
 
 func decodeQuotedMessage(

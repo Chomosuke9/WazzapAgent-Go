@@ -34,8 +34,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 10 {
-		t.Fatalf("migration count = %d, want 10", migrations)
+	if migrations != 11 {
+		t.Fatalf("migration count = %d, want 11", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -91,8 +91,8 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 10 {
-		t.Fatalf("upgraded migration count = %d, want 10", migrations)
+	if migrations != 11 {
+		t.Fatalf("upgraded migration count = %d, want 11", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
@@ -102,6 +102,9 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT effect_id FROM typed_effects LIMIT 0"); err != nil {
 		t.Fatalf("typed effects table is unavailable: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "SELECT message_id, token FROM message_mentions LIMIT 0"); err != nil {
+		t.Fatalf("message mention table is unavailable: %v", err)
 	}
 }
 
@@ -442,6 +445,92 @@ func TestSenderRefAndLIDResolveBothWays(t *testing.T) {
 	conflict.OccurredAt = conflict.OccurredAt.Add(time.Second)
 	if _, err := store.Inbound().ClaimAndResolveSender(context.Background(), conflict); !agent.IsCode(err, agent.ErrorIntegrityFailure) {
 		t.Fatalf("conflicting LID/phone binding error = %v", err)
+	}
+}
+
+func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	firstCandidate := testCandidate(t, "mention-source", "15550000061@s.whatsapp.net")
+	targetLID, _ := identity.ParseLID("10000000077@lid")
+	firstCandidate.Text = "halo @10000000077 dan @999999"
+	firstCandidate.Mentions = []conversation.IncomingMention{
+		{Token: "@10000000077", TargetLID: targetLID, DisplayName: "Budi"},
+		{Token: "@999999", Bot: true},
+	}
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, firstCandidate)
+	if err != nil {
+		t.Fatalf("claim mentioned message: %v", err)
+	}
+	if first.Message.Text != firstCandidate.Text || len(first.Message.Mentions) != 2 || first.Message.Mentions[0].SenderRef.IsZero() {
+		t.Fatalf("claimed mention message = %#v", first.Message)
+	}
+	var storedText, storedName string
+	var storedRef string
+	if err := store.db.QueryRowContext(ctx, `SELECT e.input_text, m.sender_ref, r.display_name
+      FROM inbound_events e
+		JOIN message_mentions m ON m.tenant_id = e.tenant_id AND m.account_id = e.account_id
+        AND m.chat_id = e.chat_id AND m.message_id = e.message_id AND m.ordinal = 0
+      JOIN sender_refs r ON r.tenant_id = m.tenant_id AND r.account_id = m.account_id
+        AND r.chat_id = m.chat_id AND r.sender_ref = m.sender_ref
+      WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.message_id = ?`,
+		first.Message.TenantID.String(), first.Message.AccountID.String(), first.Message.ChatID.String(), first.Message.ID.String(),
+	).Scan(&storedText, &storedRef, &storedName); err != nil {
+		t.Fatalf("read raw mention storage: %v", err)
+	}
+	if storedText != firstCandidate.Text || storedRef != first.Message.Mentions[0].SenderRef.String() || storedName != "Budi" {
+		t.Fatalf("raw mention storage = %q/%q/%q", storedText, storedRef, storedName)
+	}
+
+	secondCandidate := firstCandidate
+	secondCandidate.ProviderMessageID = "mention-quote"
+	secondCandidate.ProviderQuotedMessageID = firstCandidate.ProviderMessageID
+	secondCandidate.Text = "lanjut"
+	secondCandidate.Mentions = nil
+	secondCandidate.OccurredAt = secondCandidate.OccurredAt.Add(time.Second)
+	secondCandidate.ReceivedAt = secondCandidate.ReceivedAt.Add(time.Second)
+	second, err := store.Inbound().ClaimAndResolveSender(ctx, secondCandidate)
+	if err != nil {
+		t.Fatalf("claim quoted mention message: %v", err)
+	}
+	if second.Message.Quote == nil || second.Message.Quote.Text != firstCandidate.Text || len(second.Message.Quote.Mentions) != 2 {
+		t.Fatalf("resolved quote = %#v", second.Message.Quote)
+	}
+
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	if err := store.Inbound().MarkIgnored(ctx, first.Message, inbound.IgnorePolicyDenied); err != nil {
+		t.Fatalf("mark first ignored: %v", err)
+	}
+	if err := store.Inbound().MarkIgnored(ctx, second.Message, inbound.IgnorePolicyDenied); err != nil {
+		t.Fatalf("mark second ignored: %v", err)
+	}
+	now := time.Now().UTC().Add(72 * time.Hour)
+	maintained, err := store.Maintain(ctx, maintenance.Request{
+		TenantID: key.TenantID, Now: now, ScrubBefore: now.Add(-24 * time.Hour),
+		DeleteBefore: now.Add(-48 * time.Hour), BatchSize: 100,
+	})
+	if err != nil || maintained.TurnsDeleted != 2 {
+		t.Fatalf("delete inbound sources = %#v, err=%v", maintained, err)
+	}
+
+	page, err := store.History().ListIfConfigVersion(ctx, key, snapshot.Version, agent.HistoryQuery{Limit: 10})
+	if err != nil || len(page.Entries) != 2 {
+		t.Fatalf("load retained mention history = %#v, err=%v", page, err)
+	}
+	if len(page.Entries[0].Mentions) != 2 || page.Entries[0].Mentions[0].DisplayName != "Budi" ||
+		page.Entries[1].Quote == nil || len(page.Entries[1].Quote.Mentions) != 2 {
+		t.Fatalf("retained mention snapshots = %#v", page.Entries)
+	}
+	var inboundCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM inbound_events
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
+	).Scan(&inboundCount); err != nil || inboundCount != 0 {
+		t.Fatalf("remaining inbound rows = %d, err=%v", inboundCount, err)
 	}
 }
 

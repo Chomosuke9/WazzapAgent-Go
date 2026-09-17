@@ -266,7 +266,8 @@ func userHistoryEntry(messageID identity.MessageID, invocation Invocation) Histo
 	return HistoryEntry{
 		MessageID: messageID, InvocationID: invocation.ID, Causation: invocation.Causation,
 		Role: HistoryUser, Sender: cloneSender(invocation.Sender), Quote: cloneQuote(invocation.Quote),
-		Content: cloneContent(invocation.Input), Delivery: DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
+		Content: cloneContent(invocation.Input), Mentions: cloneMentions(invocation.Mentions),
+		Delivery: DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
 	}
 }
 
@@ -416,6 +417,7 @@ func cloneInvocation(invocation Invocation) Invocation {
 	invocation.Sender = cloneSender(invocation.Sender)
 	invocation.Quote = cloneQuote(invocation.Quote)
 	invocation.Input = cloneContent(invocation.Input)
+	invocation.Mentions = cloneMentions(invocation.Mentions)
 	invocation.Capabilities = CapabilitySet{values: invocation.Capabilities.Values()}
 	return invocation
 }

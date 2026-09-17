@@ -13,6 +13,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 )
 
 const (
@@ -63,6 +64,16 @@ type SenderContext struct {
 	DisplayName   string
 }
 
+// MentionContext binds one raw WhatsApp token to a model-safe identity. The
+// display name is a mutable local-registry value and is intentionally excluded
+// from identity digests.
+type MentionContext struct {
+	Token       string
+	SenderRef   identity.SenderRef
+	DisplayName string
+	Bot         bool
+}
+
 type Capability string
 
 type CapabilitySet struct {
@@ -104,6 +115,7 @@ type Invocation struct {
 	Sender        *SenderContext
 	Quote         *QuoteContext
 	Input         []ContentPart
+	Mentions      []MentionContext
 	Capabilities  CapabilitySet
 	PolicyVersion ConfigVersion
 	RequestedAt   time.Time
@@ -117,6 +129,7 @@ type QuoteContext struct {
 	Role      HistoryRole
 	SenderRef identity.SenderRef
 	Text      string
+	Mentions  []MentionContext
 }
 
 type ModelRole uint8
@@ -313,6 +326,7 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 	for _, capability := range values {
 		writeField(&canonical, string(capability))
 	}
+	writeMentionDigestExtension(&canonical, invocation.Mentions, quoteMentions(invocation.Quote))
 	return sha256.Sum256(canonical.Bytes()), nil
 }
 
@@ -364,6 +378,9 @@ func validateInvocation(key Key, invocation Invocation) error {
 			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("text exceeds %d bytes", MaxInputBytes))
 		}
 	}
+	if err := validateMentionContexts(flattenContent(invocation.Input), invocation.Mentions); err != nil {
+		return NewError(ErrorInvalidArgument, "validate invocation", err)
+	}
 	if invocation.PolicyVersion == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("policy version is required"))
 	}
@@ -386,6 +403,7 @@ func cloneQuote(quote *QuoteContext) *QuoteContext {
 		return nil
 	}
 	copyQuote := *quote
+	copyQuote.Mentions = cloneMentions(quote.Mentions)
 	return &copyQuote
 }
 
@@ -393,6 +411,68 @@ func cloneContent(parts []ContentPart) []ContentPart {
 	result := make([]ContentPart, len(parts))
 	copy(result, parts)
 	return result
+}
+
+func cloneMentions(mentions []MentionContext) []MentionContext {
+	return append([]MentionContext(nil), mentions...)
+}
+
+func validateMentionContexts(text string, mentions []MentionContext) error {
+	if len(mentions) > mention.MaxBindings {
+		return fmt.Errorf("mentions exceed %d", mention.MaxBindings)
+	}
+	seen := make(map[string]struct{}, len(mentions))
+	for _, binding := range mentions {
+		if !mention.ValidToken(binding.Token) || !mention.Contains(text, binding.Token) {
+			return fmt.Errorf("mention token is invalid or absent from text")
+		}
+		if _, exists := seen[binding.Token]; exists {
+			return fmt.Errorf("mention token is duplicated")
+		}
+		seen[binding.Token] = struct{}{}
+		if binding.Bot != binding.SenderRef.IsZero() {
+			return fmt.Errorf("mention identity is invalid")
+		}
+		if !utf8.ValidString(binding.DisplayName) || len(binding.DisplayName) > MaxDisplayNameBytes {
+			return fmt.Errorf("mention display name is invalid")
+		}
+	}
+	return nil
+}
+
+func quoteMentions(quote *QuoteContext) []MentionContext {
+	if quote == nil {
+		return nil
+	}
+	return quote.Mentions
+}
+
+func writeMentionDigestExtension(buffer *bytes.Buffer, content, quoted []MentionContext) {
+	if len(content) == 0 && len(quoted) == 0 {
+		// Keep the established digest byte-for-byte stable for pre-migration
+		// entries, which necessarily have no trusted mention bindings.
+		return
+	}
+	buffer.WriteString("\x00wazzapagent.mentions.v1")
+	writeMentionIdentities(buffer, content)
+	writeMentionIdentities(buffer, quoted)
+}
+
+func writeMentionIdentities(buffer *bytes.Buffer, mentions []MentionContext) {
+	canonical := cloneMentions(mentions)
+	sort.Slice(canonical, func(left, right int) bool {
+		return canonical[left].Token < canonical[right].Token
+	})
+	_ = binary.Write(buffer, binary.BigEndian, uint32(len(canonical)))
+	for _, binding := range canonical {
+		writeField(buffer, binding.Token)
+		if binding.Bot {
+			buffer.WriteByte(1)
+		} else {
+			buffer.WriteByte(0)
+		}
+		writeField(buffer, binding.SenderRef.String())
+	}
 }
 
 func writeField(buffer *bytes.Buffer, value string) {

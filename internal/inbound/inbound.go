@@ -315,7 +315,8 @@ func (handler *AIHandler) processBatch(
 		if err := currentAgent.History().Append(ctx, agent.HistoryEntry{
 			MessageID: message.ID, InvocationID: invocation.ID, Causation: invocation.Causation,
 			Role: agent.HistoryUser, Sender: invocation.Sender, Quote: invocation.Quote,
-			Content: invocation.Input, Delivery: agent.DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
+			Content: invocation.Input, Mentions: invocation.Mentions,
+			Delivery: agent.DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
 		}); err != nil {
 			return err
 		}
@@ -338,6 +339,7 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 		quote = &agent.QuoteContext{
 			Sequence: message.Quote.Sequence, MessageID: message.Quote.ID, Role: role,
 			SenderRef: message.Quote.SenderRef, Text: message.Quote.Text,
+			Mentions: conversationMentions(message.Quote.Mentions),
 		}
 	}
 	return agent.Invocation{
@@ -351,10 +353,19 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 		},
 		Quote:         quote,
 		Input:         []agent.ContentPart{agent.TextPart{Text: message.Text}},
+		Mentions:      conversationMentions(message.Mentions),
 		Capabilities:  capabilities,
 		PolicyVersion: version,
 		RequestedAt:   message.OccurredAt,
 	}, nil
+}
+
+func conversationMentions(bindings []conversation.MentionBinding) []agent.MentionContext {
+	mentions := make([]agent.MentionContext, len(bindings))
+	for index, binding := range bindings {
+		mentions[index] = agent.MentionContext{Token: binding.Token, SenderRef: binding.SenderRef, Bot: binding.Bot}
+	}
+	return mentions
 }
 
 func (services *handlerServices) ignore(ctx context.Context, message conversation.IncomingMessage, reason IgnoreReason) error {

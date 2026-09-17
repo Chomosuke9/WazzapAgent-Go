@@ -3,8 +3,10 @@ package agent
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 )
 
 const (
@@ -65,6 +67,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 	instructions := append([]ModelMessage(nil), messages...)
 	historyEntries := make([]builtHistoryEntry, 0, len(request.History))
+	mentionNames := historyDisplayNames(request.History)
 	currentFound := false
 	for _, entry := range request.History {
 		if _, err := DigestHistoryEntry(entry); err != nil {
@@ -80,7 +83,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			}
 			currentFound = true
 		}
-		rendered, err := serializeHistoryEntry(entry)
+		rendered, err := serializeHistoryEntry(entry, mentionNames)
 		if err != nil {
 			return nil, err
 		}
@@ -139,8 +142,12 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 }
 
-func serializeHistoryEntry(entry HistoryEntry) (string, error) {
-	text := flattenContent(entry.Content)
+func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string) (string, error) {
+	text := renderMentionView(flattenContent(entry.Content), entry.Mentions, mentionNames)
+	if entry.Quote != nil {
+		entry.Quote = cloneQuote(entry.Quote)
+		entry.Quote.Text = renderMentionView(entry.Quote.Text, entry.Quote.Mentions, mentionNames)
+	}
 	switch entry.Role {
 	case HistoryUser:
 		return formatCompactHistoryEntry(entry, text), nil
@@ -151,6 +158,51 @@ func serializeHistoryEntry(entry HistoryEntry) (string, error) {
 	default:
 		return "", NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
 	}
+}
+
+func historyDisplayNames(history []HistoryEntry) map[string]string {
+	names := make(map[string]string)
+	for _, entry := range history {
+		if entry.Sender == nil || entry.Sender.Ref.IsZero() {
+			continue
+		}
+		if name := cleanMentionName(entry.Sender.DisplayName); name != "" {
+			names[entry.Sender.Ref.String()] = name
+		}
+	}
+	return names
+}
+
+func renderMentionView(text string, bindings []MentionContext, names map[string]string) string {
+	if len(bindings) == 0 {
+		return text
+	}
+	replacements := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		if binding.Bot {
+			replacements[binding.Token] = "@Bot (bot)"
+			continue
+		}
+		name := cleanMentionName(names[binding.SenderRef.String()])
+		if name == "" {
+			name = cleanMentionName(binding.DisplayName)
+		}
+		if name == "" {
+			name = "Unknown"
+		}
+		replacements[binding.Token] = fmt.Sprintf("@%s (%s)", name, binding.SenderRef.String())
+	}
+	return mention.Rewrite(text, replacements)
+}
+
+func cleanMentionName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r == '@' || r == '(' || r == ')' || unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, name)
+	return strings.Join(strings.Fields(name), " ")
 }
 
 // formatCompactHistoryEntry deliberately keeps the compact transcript grammar

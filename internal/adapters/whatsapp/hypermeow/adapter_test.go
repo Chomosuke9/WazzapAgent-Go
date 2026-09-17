@@ -111,6 +111,47 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 	}
 }
 
+func TestNormalizePreservesRawMentionTextAndExtractsTargets(t *testing.T) {
+	adapter, ownJID := normalizationAdapter(t)
+	adapter.client.Store.Contacts = &testContactStore{pushName: "Budi"}
+	chat := types.NewJID("120363000000000011", types.GroupServer)
+	sender := types.NewJID("15550000003", types.DefaultUserServer)
+	target := types.NewJID("10000000077", types.HiddenUserServer)
+	rawText := "tolong @10000000077 bantu @15550000099!"
+	event := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true,
+			},
+			ID: "mention-bindings", Timestamp: time.Now().UTC(),
+		},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(rawText), ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{target.String(), ownJID.String()}},
+		}},
+	}
+
+	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	if !ok {
+		t.Fatal("mention message was not normalized")
+	}
+	if candidate.Text != rawText {
+		t.Fatalf("raw text changed to %q", candidate.Text)
+	}
+	if !candidate.MentionsBot || len(candidate.Mentions) != 2 {
+		t.Fatalf("mention metadata = %#v", candidate.Mentions)
+	}
+	if candidate.Mentions[0].Token != "@10000000077" || candidate.Mentions[0].TargetLID.String() != target.String() ||
+		candidate.Mentions[0].DisplayName != "Budi" || candidate.Mentions[0].Bot {
+		t.Fatalf("human mention = %#v", candidate.Mentions[0])
+	}
+	if candidate.Mentions[1].Token != "@15550000099" || !candidate.Mentions[1].Bot || !candidate.Mentions[1].TargetLID.IsZero() {
+		t.Fatalf("bot mention = %#v", candidate.Mentions[1])
+	}
+	if err := candidate.Validate(); err != nil {
+		t.Fatalf("validate candidate: %v", err)
+	}
+}
+
 func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	chat := types.NewJID("120363000000000009", types.GroupServer)

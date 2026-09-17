@@ -307,6 +307,7 @@ func (store *ActionStore) MarkUnknown(
 
 type actionQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef) (action.StoredAction, sql.NullInt64, sql.NullInt64, error) {
