@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -19,7 +21,18 @@ var PromptCommand = command.Descriptor{
 	Handler:     handlePrompt,
 }
 
-func handlePrompt(ctx context.Context, input command.Context, adapter any) error {
+func handlePrompt(ctx context.Context, input command.Context, adapter command.Adapter) error {
+	send := func(text string) error {
+		actionID, err := identity.NewActionID()
+		if err != nil {
+			return agent.NewError(agent.ErrorInternal, "create prompt response ID", err)
+		}
+		key := agent.Key{TenantID: input.Message.TenantID, AccountID: input.Message.AccountID, ChatID: input.Message.ChatID}
+		if _, err := adapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text}); err != nil {
+			return err
+		}
+		return input.Store.MarkCommandHandled(ctx, input.Message)
+	}
 	parsed := parsePromptCommand(input.Message.Text)
 	var response string
 	snapshot := input.Snapshot
@@ -47,7 +60,7 @@ func handlePrompt(ctx context.Context, input command.Context, adapter any) error
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("unknown command kind"))
 	}
-	return sendText(ctx, input, adapter, response)
+	return send(response)
 }
 
 func parsePromptCommand(raw string) command.PromptCommand {

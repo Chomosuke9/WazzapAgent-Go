@@ -25,6 +25,14 @@ Semua descriptor, termasuk command berbahaya, tetap di-inject ke registry.
 invocation itu; `Capability` tetap menjadi identitas fitur/efek yang dipakai
 oleh policy dan boundary side effect.
 
+Registrasi command tidak menggunakan `switch`/`case`. Generator mencari setiap
+variabel exported bertipe `command.Descriptor`, lalu memasukkannya ke slice
+`Descriptors` dalam `registry_gen.go`. Saat aplikasi dimulai, registry membuat
+pemetaan dari `Name` dan setiap `Aliases` ke descriptor tersebut. Pesan seperti
+`/example` kemudian di-parse melalui pemetaan itu dan `Handler` milik descriptor
+yang cocok langsung dijalankan. Nama atau alias yang duplikat akan membuat
+inisialisasi registry gagal.
+
 Contoh alurnya:
 
 ```text
@@ -41,8 +49,48 @@ tinggal bersama handler pada file command tersebut. Package `internal/command`
 hanya menyediakan registry dan payload jurnal storage; package itu bukan tempat
 parser atau implementasi command.
 
+Setiap handler menerima `command.Adapter`, bukan `any`:
+
+```go
+func handleExample(
+	ctx context.Context,
+	input command.Context,
+	adapter command.Adapter,
+) error
+```
+
+`command.Adapter` menyediakan `SendText`. Handler bertanggung jawab penuh atas
+siklus responsnya sendiri: membuat `identity.ActionID`, menyusun
+`action.SendTextRequest` dari tenant/account/chat pesan inbound, memanggil
+`adapter.SendText`, lalu memanggil `input.Store.MarkCommandHandled` hanya setelah
+pengiriman berhasil. Tidak ada helper pengiriman bersama; respons untuk format
+argumen yang salah juga harus mengikuti alur yang sama.
+
+```go
+actionID, err := identity.NewActionID()
+if err != nil {
+	return agent.NewError(agent.ErrorInternal, "create example response ID", err)
+}
+key := agent.Key{
+	TenantID:  input.Message.TenantID,
+	AccountID: input.Message.AccountID,
+	ChatID:    input.Message.ChatID,
+}
+if _, err := adapter.SendText(ctx, action.SendTextRequest{
+	Key: key, ActionID: actionID, Text: response,
+}); err != nil {
+	return err
+}
+return input.Store.MarkCommandHandled(ctx, input.Message)
+```
+
+Jangan menandai command selesai sebelum `SendText` berhasil. Mengirim tanpa
+`MarkCommandHandled` akan meninggalkan command dalam keadaan belum selesai dan
+dapat membuat recovery memprosesnya kembali.
+
 Keluarga `/group` memiliki descriptor inbound di `group.go` dan handler yang
-menerima akses native client serta target store dari adapter WhatsApp. File yang
-sama juga menjadi executor bagi command yang dibawa secara internal oleh
-`reply_message`; `groupcmd` hanya menyimpan grammar bersama untuk validasi pada
-setiap boundary sebelum efek durable dieksekusi.
+menerima `command.Adapter` untuk respons teks. Handler tersebut memperluas
+adapter menjadi `WhatsAppCommandAdapter` untuk memperoleh akses native client
+dan target store. File yang sama juga menjadi executor bagi command yang dibawa
+secara internal oleh `reply_message`; `groupcmd` hanya menyimpan grammar bersama
+untuk validasi pada setiap boundary sebelum efek durable dieksekusi.

@@ -10,6 +10,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -26,15 +27,26 @@ var GroupCommand = command.Descriptor{
 	Handler:     handleGroup,
 }
 
-func handleGroup(ctx context.Context, input command.Context, rawAdapter any) error {
+func handleGroup(ctx context.Context, input command.Context, rawAdapter command.Adapter) error {
 	adapter, ok := rawAdapter.(WhatsAppCommandAdapter)
 	if !ok || adapter == nil {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle /group command", errors.New("WhatsApp command adapter is unavailable"))
 	}
+	send := func(text string) error {
+		actionID, err := identity.NewActionID()
+		if err != nil {
+			return agent.NewError(agent.ErrorInternal, "create group response ID", err)
+		}
+		key := agent.Key{TenantID: input.Message.TenantID, AccountID: input.Message.AccountID, ChatID: input.Message.ChatID}
+		if _, err := rawAdapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text}); err != nil {
+			return err
+		}
+		return input.Store.MarkCommandHandled(ctx, input.Message)
+	}
 	raw := input.Message.Text
 	parsed, err := groupcmd.Parse(raw)
 	if err != nil {
-		return sendText(ctx, input, rawAdapter, groupCommandUsage())
+		return send(groupCommandUsage())
 	}
 	var target identity.MessageID
 	if parsed.Kind == groupcmd.Delete && input.Message.Quote != nil {
@@ -43,11 +55,11 @@ func handleGroup(ctx context.Context, input command.Context, rawAdapter any) err
 	key := agent.Key{TenantID: input.Message.TenantID, AccountID: input.Message.AccountID, ChatID: input.Message.ChatID}
 	if err := HandleGroup(ctx, adapter, key, raw, target, time.Now().UTC()); err != nil {
 		if agent.IsCode(err, agent.ErrorInvalidArgument) {
-			return sendText(ctx, input, rawAdapter, groupCommandUsage())
+			return send(groupCommandUsage())
 		}
 		return err
 	}
-	return sendText(ctx, input, rawAdapter, fmt.Sprintf("Perintah /group %s berhasil dijalankan.", parsed.Kind))
+	return send(fmt.Sprintf("Perintah /group %s berhasil dijalankan.", parsed.Kind))
 }
 
 func groupCommandUsage() string {

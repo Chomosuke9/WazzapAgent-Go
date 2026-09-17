@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
@@ -37,7 +38,7 @@ func newHandlerServices(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter any,
+	adapter command.Adapter,
 ) (handlerServices, error) {
 	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
 		return handlerServices{}, agent.NewError(agent.ErrorInvalidArgument, "create inbound lane services", errors.New("store, registry, policy, response writer, and observer are required"))
@@ -69,7 +70,7 @@ func NewCommandHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter any,
+	adapter command.Adapter,
 ) (*CommandHandler, error) {
 	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)
 	if err != nil {
@@ -86,7 +87,7 @@ func NewAIHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter any,
+	adapter command.Adapter,
 	options BatchOptions,
 ) (*AIHandler, error) {
 	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)

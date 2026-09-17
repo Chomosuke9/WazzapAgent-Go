@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
@@ -19,7 +20,11 @@ type Name string
 
 var tokenPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-type Handler func(context.Context, Context, any) error
+type Adapter interface {
+	SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error)
+}
+
+type Handler func(context.Context, Context, Adapter) error
 
 // PermissionFacts is an alias for the policy facts accepted by the permission
 // DSL. Keeping the alias here lets command modules remain declarative while
@@ -54,7 +59,7 @@ type Context struct {
 	Registry *Registry
 	Store    CommandStore
 	Observer Observer
-	Adapter  any
+	Adapter  Adapter
 }
 
 type CommandStore interface {

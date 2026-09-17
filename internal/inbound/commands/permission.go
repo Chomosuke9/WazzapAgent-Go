@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -20,19 +22,30 @@ var PermissionCommand = command.Descriptor{
 	Handler:     handlePermission,
 }
 
-func handlePermission(ctx context.Context, input command.Context, adapter any) error {
+func handlePermission(ctx context.Context, input command.Context, adapter command.Adapter) error {
+	send := func(text string) error {
+		actionID, err := identity.NewActionID()
+		if err != nil {
+			return agent.NewError(agent.ErrorInternal, "create permission response ID", err)
+		}
+		key := agent.Key{TenantID: input.Message.TenantID, AccountID: input.Message.AccountID, ChatID: input.Message.ChatID}
+		if _, err := adapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text}); err != nil {
+			return err
+		}
+		return input.Store.MarkCommandHandled(ctx, input.Message)
+	}
 	parsed := parsePermissionCommand(input.Message.Text)
 	switch parsed.Kind {
 	case command.PermissionView:
-		return sendText(ctx, input, adapter, formatModerationLevel(input.Snapshot.Permission.ModerationLevel))
+		return send(formatModerationLevel(input.Snapshot.Permission.ModerationLevel))
 	case command.PermissionSet:
 		_, err := applyPermissionMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		return sendText(ctx, input, adapter, "Permission diperbarui. "+formatModerationLevel(parsed.Level))
+		return send("Permission diperbarui. " + formatModerationLevel(parsed.Level))
 	case command.PermissionInvalid:
-		return sendText(ctx, input, adapter, "Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
+		return send("Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("unknown command kind"))
 	}

@@ -134,7 +134,7 @@ type handlerServices struct {
 	policy    Policy
 	responses ResponseWriter
 	observer  Observer
-	adapter   any
+	adapter   command.Adapter
 	stripes   *[64]sync.Mutex
 }
 
