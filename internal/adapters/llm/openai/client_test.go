@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 )
 
 func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
@@ -35,7 +38,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, err := New(Config{
 		Endpoint: server.URL, APIKey: secret, ProviderID: providerID,
-		SystemPolicy: "NON OVERRIDABLE", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
+		SystemPolicy: "NON OVERRIDABLE", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
@@ -43,6 +46,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	request := modelRequest(t, providerID)
 	request.Messages = append(request.Messages[:1],
 		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "chat override"},
+		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenanceChatInformation, Content: "Chat information:\n- Chat state: private"},
 		request.Messages[1],
 	)
 	result, err := client.Generate(context.Background(), request)
@@ -56,14 +60,14 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	if encoded.Stream || encoded.MaxTokens != request.Model.MaxOutputTokens || len(encoded.Messages) != 4 {
 		t.Fatalf("request envelope = %#v", encoded)
 	}
-	wantRoles := []string{"system", "system", "user", "user"}
+	wantRoles := []string{"system", "user", "user", "user"}
 	for index, role := range wantRoles {
 		if encoded.Messages[index].Role != role {
 			t.Fatalf("message %d role = %q, want %q", index, encoded.Messages[index].Role, role)
 		}
 	}
-	if encoded.Messages[0].Content != "NON OVERRIDABLE" || encoded.Messages[1].Content != "base prompt" ||
-		encoded.Messages[2].Content != "chat override" || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
+	if encoded.Messages[0].Content != "NON OVERRIDABLE\n\nbase prompt" || encoded.Messages[1].Content != "chat override" ||
+		!strings.HasPrefix(encoded.Messages[2].Content, "Chat information:") || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
 	content := encoded.Messages[3].Content
@@ -90,7 +94,7 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	request := modelRequest(t, providerID)
 	current := request.Messages[len(request.Messages)-1]
 	request.Messages = []agent.ModelMessage{
@@ -119,7 +123,7 @@ func TestProviderFailuresAreTypedAndRedacted(t *testing.T) {
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: secret, ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: secret, ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	_, err := client.Generate(context.Background(), modelRequest(t, providerID))
 	if !agent.IsCode(err, agent.ErrorRateLimited) {
 		t.Fatalf("provider error = %v, want rate_limited", err)
@@ -129,13 +133,40 @@ func TestProviderFailuresAreTypedAndRedacted(t *testing.T) {
 	}
 }
 
+func TestProviderTransportFailurePreservesNativeError(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	nativeErr := fmt.Errorf("dial tcp: connection refused")
+	client, err := New(Config{
+		Endpoint: "https://provider.invalid/v1/chat/completions", APIKey: "secret", ProviderID: providerID,
+		SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
+		Commands: inbound.CommandRegistry(),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, nativeErr
+		})},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	_, err = client.Generate(context.Background(), modelRequest(t, providerID))
+	if !agent.IsCode(err, agent.ErrorUnavailable) {
+		t.Fatalf("transport error = %v, want unavailable", err)
+	}
+	if !errors.Is(err, nativeErr) || !strings.Contains(err.Error(), nativeErr.Error()) {
+		t.Fatalf("native transport error was not preserved: %v", err)
+	}
+	if strings.Contains(err.Error(), "provider.invalid") {
+		t.Fatalf("transport error exposed the configured provider URL: %v", err)
+	}
+}
+
 func TestMalformedToolCallsAreRejected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"unsafe"}]}}]}`))
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	_, err := client.Generate(context.Background(), modelRequest(t, providerID))
 	if !agent.IsCode(err, agent.ErrorProviderFailure) {
 		t.Fatalf("tool-call error = %v, want provider_failure", err)
@@ -154,7 +185,7 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	request := modelRequest(t, providerID)
 	currentMessageID, _ := identity.NewMessageID()
 	capabilities, _ := agent.NewCapabilitySet("message.react")
@@ -188,9 +219,21 @@ func TestToolCallsDecodeToCurrentMessageBoundTypedEffects(t *testing.T) {
 	if !strings.Contains(encoded.Tools[0].Function.Description, "@Name (senderRef)") ||
 		!strings.Contains(replySchema.Properties["text"].Description, "@Budi (a1b2c3)") ||
 		!strings.Contains(replySchema.Properties["text"].Description, "@a1b2c3") ||
-		!strings.Contains(replySchema.Properties["command"].Description, "/group description <non-empty text>") ||
-		!strings.Contains(replySchema.Properties["command"].Description, "group description <non-empty text>") {
+		!strings.Contains(replySchema.Properties["command"].Description, "No registered command") {
 		t.Fatalf("reply mention guidance = %q / %q", encoded.Tools[0].Function.Description, replySchema.Properties["text"].Description)
+	}
+}
+
+func TestReactionOnlyToolCallDoesNotRequireReplyText(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
+	request.ContextMessages = map[string]identity.MessageID{"019277": request.CurrentMessageID}
+	raw := json.RawMessage(`[{"id":"call_react_to_message_1789904909252_0","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"019277\",\"emoji\":\"👍\"}"}}]`)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
+	if err != nil || text != "" || !replyTo.IsZero() || len(effects) != 1 ||
+		effects[0].Intent.Kind != agent.EffectReact || effects[0].Intent.TargetMessageID != request.CurrentMessageID || effects[0].Intent.Emoji != "👍" {
+		t.Fatalf("reaction-only decode = text %q, reply %#v, effects %#v, err %v", text, replyTo, effects, err)
 	}
 }
 
@@ -207,7 +250,7 @@ func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
 				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"reply","tool_calls":[` + toolCall + `]}}]}`))
 			}))
 			defer server.Close()
-			client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096})
+			client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 			request := modelRequest(t, providerID)
 			request.CurrentMessageID, _ = identity.NewMessageID()
 			request.ContextMessages = map[string]identity.MessageID{"000001": request.CurrentMessageID}
@@ -223,23 +266,28 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	target := request.ContextMessages["000001"]
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "group.mute", "group.kick")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "group.mute", "group.kick", "command.execute")
+	request.Commands = []string{"group"}
 
-	tools, err := completionTools(request)
+	tools, err := completionTools(request, inbound.CommandRegistry())
 	if err != nil {
 		t.Fatalf("build tools: %v", err)
 	}
 	if len(tools) != 2 || tools[0].Function.Name != "reply_message" || tools[1].Function.Name != "react_to_message" {
 		t.Fatalf("provider tools = %#v", tools)
 	}
+	if bytes.Contains(tools[0].Function.Parameters, []byte("@Bot (bot)")) ||
+		!bytes.Contains(tools[0].Function.Parameters, []byte("configured assistant name")) {
+		t.Fatalf("reply tool bot mention guidance = %s", tools[0].Function.Parameters)
+	}
 
 	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (abcdef) 15\",\"/group kick @Bob (123456)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
-	text, replyTo, effects, err := decodeModelOutput("", raw, request)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil {
 		t.Fatalf("decode reply command: %v", err)
 	}
 	if text != "done" || replyTo != target || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
-		effects[0].Intent.Capability() != "group.delete" || effects[1].Intent.Capability() != "group.mute" || effects[2].Intent.Capability() != "group.kick" {
+		effects[0].Intent.Capability() != "command.execute" || effects[1].Intent.Capability() != "command.execute" || effects[2].Intent.Capability() != "command.execute" {
 		t.Fatalf("decoded reply command = %q, %#v", text, effects)
 	}
 }
@@ -247,7 +295,8 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("group.description")
+	request.Capabilities, _ = agent.NewCapabilitySet("group.description", "command.execute")
+	request.Commands = []string{"group"}
 	tests := []struct {
 		name    string
 		command string
@@ -258,46 +307,61 @@ func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			text, replyTo, effects, err := decodeModelOutput("", test.raw, request)
-			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != test.command || effects[0].Intent.Capability() != "group.description" {
+			text, replyTo, effects, err := decodeModelOutput("", test.raw, request, inbound.CommandRegistry())
+			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != "/group description Aturan baru" || effects[0].Intent.Capability() != "command.execute" {
 				t.Fatalf("decoded description command %q = %q, %v, %#v", test.command, text, err, effects)
 			}
 		})
 	}
 }
 
-func TestReplyMessageReportsMalformedGroupCommandAsProviderFailure(t *testing.T) {
+func TestReplyMessageUsesAnyRegisteredCommandWithoutPerCommandSchema(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("group.description")
-	raw := json.RawMessage(`[{"id":"reply_invalid_description","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"/group description\"],\"command_context_msg_id\":[\"none\"]}"}}]`)
-	_, _, _, err := decodeModelOutput("", raw, request)
-	if !agent.IsCode(err, agent.ErrorProviderFailure) || !strings.Contains(err.Error(), "description is required") {
-		t.Fatalf("malformed description error = %v", err)
+	request.Capabilities, _ = agent.NewCapabilitySet("command.execute")
+	request.Commands = []string{"help"}
+	raw := json.RawMessage(`[{"id":"reply_help","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Baik.\",\"command\":[\"help\"],\"command_context_msg_id\":[\"none\"]}"}}]`)
+
+	text, _, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
+	if err != nil || text != "Baik." || len(effects) != 1 || effects[0].Intent.Command != "/help" {
+		t.Fatalf("registered command = %q, %#v, %v", text, effects, err)
 	}
-	if strings.Contains(err.Error(), "only /group moderation commands are enabled") {
-		t.Fatalf("malformed description retained permission error: %v", err)
+}
+
+func TestReplyMessageSkipsMalformedGroupCommandAndKeepsReply(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet("group.description", "command.execute")
+	request.Commands = []string{"group"}
+	raw := json.RawMessage(`[{"id":"reply_invalid_command","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"none\",\"/group description\",\"/group description Aturan baru\"],\"command_context_msg_id\":[\"none\",\"none\",\"none\"]}"}}]`)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
+	if err != nil || text != "trying" || !replyTo.IsZero() {
+		t.Fatalf("reply with malformed commands = %q, %v, %v", text, replyTo, err)
+	}
+	if len(effects) != 2 || effects[0].Intent.Command != "/group description" || effects[1].CallID != "reply_invalid_command:2" || effects[1].Intent.Command != "/group description Aturan baru" {
+		t.Fatalf("registered effects after unknown command = %#v", effects)
 	}
 }
 
 func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "command.execute")
+	request.Commands = []string{"group"}
 	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
-	_, replyTo, effects, err := decodeModelOutput("", raw, request)
+	_, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("default command anchor = %#v, %v", effects, err)
 	}
 
 	plain := json.RawMessage(`[{"id":"reply_2","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":null,\"command_context_msg_id\":null}"}}]`)
-	text, replyTo, effects, err := decodeModelOutput("", plain, request)
+	text, replyTo, effects, err := decodeModelOutput("", plain, request, inbound.CommandRegistry())
 	if err != nil || text != "x" || !replyTo.IsZero() || len(effects) != 0 {
 		t.Fatalf("unknown plain reply context = %q, %#v, %v", text, effects, err)
 	}
 
 	delete := json.RawMessage(`[{"id":"reply_3","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
-	if _, _, _, err := decodeModelOutput("", delete, request); !agent.IsCode(err, agent.ErrorProviderFailure) {
+	if _, _, _, err := decodeModelOutput("", delete, request, inbound.CommandRegistry()); !agent.IsCode(err, agent.ErrorProviderFailure) {
 		t.Fatalf("unknown delete anchor error = %v", err)
 	}
 }
@@ -305,16 +369,17 @@ func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *t
 func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "command.execute")
+	request.Commands = []string{"group"}
 
 	empty := json.RawMessage(`[{"id":"reply_empty","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"plain reply\",\"command\":[],\"command_context_msg_id\":[]}"}}]`)
-	text, replyTo, effects, err := decodeModelOutput("", empty, request)
+	text, replyTo, effects, err := decodeModelOutput("", empty, request, inbound.CommandRegistry())
 	if err != nil || text != "plain reply" || replyTo != request.ContextMessages["000001"] || len(effects) != 0 {
 		t.Fatalf("empty command arrays = %q, %#v, %v", text, effects, err)
 	}
 
 	shortContexts := json.RawMessage(`[{"id":"reply_short","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[]}"}}]`)
-	_, replyTo, effects, err = decodeModelOutput("", shortContexts, request)
+	_, replyTo, effects, err = decodeModelOutput("", shortContexts, request, inbound.CommandRegistry())
 	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("short command contexts = %#v, %v", effects, err)
 	}
@@ -326,7 +391,7 @@ func TestReplyMessageCarriesSelectedQuoteWithNoCommands(t *testing.T) {
 	target, _ := identity.NewMessageID()
 	request.ContextMessages["000354"] = target
 	raw := json.RawMessage(`[{"id":"reply_354","type":"function","function":{"name":"reply_message","arguments":"{\"command_context_msg_id\":[\"none\"],\"command\":[],\"context_msg_id\":\"000354\",\"text\":\"Halo! Ini balasan untuk pesan terbaru kamu.\"}"}}]`)
-	text, replyTo, effects, err := decodeModelOutput("", raw, request)
+	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil || text != "Halo! Ini balasan untuk pesan terbaru kamu." || replyTo != target || len(effects) != 0 {
 		t.Fatalf("selected reply target = %q, %v, %#v, %v", text, replyTo, effects, err)
 	}
@@ -340,7 +405,7 @@ func TestConfiguredResponseLimitIsEnforced(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, err := New(Config{
 		Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY",
-		Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 5,
+		Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 5, Commands: inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
@@ -360,7 +425,7 @@ func TestClientTimeoutAppliesToCustomHTTPClient(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, err := New(Config{
 		Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY",
-		Timeout: 20 * time.Millisecond, Concurrency: 1, MaxResponseBytes: 4096, HTTPClient: &http.Client{},
+		Timeout: 20 * time.Millisecond, Concurrency: 1, MaxResponseBytes: 4096, HTTPClient: &http.Client{}, Commands: inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
@@ -388,7 +453,7 @@ func TestProviderBodyLimitAndMalformedJSONAreRejected(t *testing.T) {
 			defer server.Close()
 			client, err := New(Config{
 				Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY",
-				Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
+				Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
 			})
 			if err != nil {
 				t.Fatalf("create client: %v", err)
@@ -424,6 +489,7 @@ func TestGlobalModelConcurrencyIsBounded(t *testing.T) {
 		Endpoint: "https://llm.example.invalid/v1/chat/completions", APIKey: "secret", ProviderID: providerID,
 		SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
 		HTTPClient: &http.Client{Transport: transport},
+		Commands:   inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
@@ -462,7 +528,7 @@ func TestRedirectIsNotFollowedWithAuthorizationHeader(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, err := New(Config{
 		Endpoint: source.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY",
-		Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
+		Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)

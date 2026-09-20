@@ -111,7 +111,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 	}
 	allowlist := make(map[string]struct{}, len(config.Allowlist))
 	for _, raw := range config.Allowlist {
-		normalized, err := normalizeAddress(raw)
+		normalized, err := normalizeAllowlistAddress(raw)
 		if err != nil {
 			return nil, agent.NewError(agent.ErrorInvalidArgument, "normalize configured allowlist", err)
 		}
@@ -551,9 +551,6 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 			}
 			return "ephemeral-read", nil
 		}
-	case effect.RunGroupCommand:
-		err := inboundcommands.HandleGroup(requestCtx, adapter, stored.Request.Ref.Key, typed.Command, typed.TargetMessageID, time.Now().UTC())
-		return "", err
 	}
 	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
 }
@@ -561,6 +558,43 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 func (adapter *Adapter) CommandClient() inboundcommands.WhatsAppCommandClient { return adapter.client }
 
 func (adapter *Adapter) CommandTargets() inboundcommands.GroupTargetStore { return adapter.targets }
+
+// ReadChatContext returns only the provider-neutral details used in the model's
+// chat-information block. It does not grant authority for native effects.
+func (adapter *Adapter) ReadChatContext(ctx context.Context, key agent.Key) (agent.ChatContext, error) {
+	if err := key.Validate(); err != nil {
+		return agent.ChatContext{}, err
+	}
+	if !adapter.ready.Load() {
+		return agent.ChatContext{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat context", errors.New("account is not connected"))
+	}
+	chat, err := adapter.resolveChatTarget(ctx, key)
+	if err != nil {
+		return agent.ChatContext{}, err
+	}
+	if chat.Server != types.GroupServer {
+		return agent.ChatContext{Kind: "private"}, nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
+	defer cancel()
+	info, err := adapter.client.GetGroupInfo(readCtx, chat)
+	if err != nil {
+		return agent.ChatContext{}, nativeEffectError(readCtx, "read WhatsApp chat context", err)
+	}
+	botLID := adapter.client.Store.GetLID().ToNonAD()
+	botPhone := adapter.client.Store.GetJID().ToNonAD()
+	result := agent.ChatContext{Kind: "group", Name: info.Name, Description: info.Topic}
+	for _, participant := range info.Participants {
+		if participantMatches(participant, botLID) || participantMatches(participant, botPhone) {
+			result.BotIsAdmin = participant.IsAdmin || participant.IsSuperAdmin
+			break
+		}
+	}
+	if err := result.Validate(); err != nil {
+		return agent.ChatContext{}, agent.NewError(agent.ErrorIntegrityFailure, "read WhatsApp chat context", err)
+	}
+	return result, nil
+}
 
 // ReadChatAuthority obtains a fresh provider observation for policy. It does
 // not expose WhatsApp group DTOs across the adapter boundary and does not turn
@@ -679,6 +713,10 @@ func (adapter *Adapter) handleEvent(event any) {
 	switch typed := event.(type) {
 	case *events.PairSuccess:
 		adapter.logger.Info("WhatsApp pairing completed")
+	case *events.PairError:
+		adapter.logger.Error("WhatsApp pairing failed", "error", typed.Error)
+	case *events.PairPasskeyError:
+		adapter.logger.Error("WhatsApp passkey pairing failed", "error", typed.Error, "continuation", typed.Continuation)
 	case *events.Connected:
 		adapter.ready.Store(true)
 		adapter.logger.Info("WhatsApp account connected")
@@ -688,7 +726,9 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.logger.Warn("WhatsApp account disconnected; reconnecting")
 		adapter.emitConnection(account.ConnectionEvent{Connected: false, Code: "reconnecting"})
 	case *events.StreamError:
-		adapter.logger.Warn("WhatsApp stream error", "reason", streamErrorReason(typed))
+		adapter.logger.Warn("WhatsApp stream error", "reason", streamErrorReason(typed), "code", typed.Code, "raw", typed.Raw)
+	case *events.CATRefreshError:
+		adapter.logger.Error("WhatsApp CAT refresh failed", "error", typed.Error)
 	case *events.KeepAliveTimeout:
 		adapter.logger.Warn("WhatsApp keepalive timeout", "consecutive_failures", typed.ErrorCount)
 	case events.PermanentDisconnect:
@@ -697,7 +737,7 @@ func (adapter *Adapter) handleEvent(event any) {
 	case *events.Message:
 		candidate, ok := adapter.normalizeMessage(adapter.rootCtx, typed)
 		if !ok {
-			adapter.logger.Info("inbound event ignored", "reason", ignoredNativeReason(typed))
+			adapter.logger.Debug("inbound event ignored", "reason", ignoredNativeReason(typed))
 			return
 		}
 		// Blocking here is intentional bounded backpressure. Accepted native text
@@ -710,7 +750,7 @@ func (adapter *Adapter) handleEvent(event any) {
 }
 
 func (adapter *Adapter) handleReconnectFailure(err error) bool {
-	adapter.logger.Warn("WhatsApp reconnect attempt failed", "reason", reconnectFailureReason(err))
+	adapter.logger.Warn("WhatsApp reconnect attempt failed", "error", err, "reason", reconnectFailureReason(err))
 	return adapter.rootCtx == nil || adapter.rootCtx.Err() == nil
 }
 
@@ -826,17 +866,7 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 		chatKind = conversation.ChatGroup
 	}
 	chatAddress := chat.String()
-	_, allowlisted := adapter.allowlist[chatAddress]
-	if !allowlisted && !event.Info.IsGroup {
-		for _, alternative := range []types.JID{event.Info.SenderAlt, event.Info.RecipientAlt} {
-			if !alternative.IsEmpty() {
-				if _, exists := adapter.allowlist[alternative.ToNonAD().String()]; exists {
-					allowlisted = true
-					break
-				}
-			}
-		}
-	}
+	allowlisted := adapter.chatAllowlisted(chatKind, chatAddress, event.Info.SenderAlt, event.Info.RecipientAlt)
 	mentioned := false
 	mentions := []conversation.IncomingMention(nil)
 	quotedMessageID := ""
@@ -1128,6 +1158,36 @@ func normalizeAddress(raw string) (string, error) {
 		return "", fmt.Errorf("invalid provider address")
 	}
 	return jid.ToNonAD().String(), nil
+}
+
+func normalizeAllowlistAddress(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if policy.IsChatAllowlistWildcard(value) {
+		return value, nil
+	}
+	return normalizeAddress(value)
+}
+
+func (adapter *Adapter) chatAllowlisted(kind conversation.ChatKind, address string, alternatives ...types.JID) bool {
+	if _, exists := adapter.allowlist[address]; exists {
+		return true
+	}
+	for _, wildcard := range []string{policy.ChatAllowlistAll, policy.ChatAllowlistDirect, policy.ChatAllowlistGroup} {
+		if _, exists := adapter.allowlist[wildcard]; exists && policy.ChatAllowlistWildcardMatches(wildcard, kind) {
+			return true
+		}
+	}
+	if kind == conversation.ChatGroup {
+		return false
+	}
+	for _, alternative := range alternatives {
+		if !alternative.IsEmpty() {
+			if _, exists := adapter.allowlist[alternative.ToNonAD().String()]; exists {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TerminalPairingSink intentionally bypasses structured logging. It should be

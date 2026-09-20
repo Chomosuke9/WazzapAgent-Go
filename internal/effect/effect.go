@@ -14,7 +14,6 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -27,7 +26,7 @@ const (
 	KindDeleteMessage
 	KindMarkRead
 	KindSetChatPresence
-	KindRunGroupCommand
+	KindRunCommand
 )
 
 type PresenceState string
@@ -100,28 +99,19 @@ func (effect SetChatPresence) Validate() error {
 	return nil
 }
 
-type RunGroupCommand struct {
+type RunCommand struct {
 	Command         string
 	TargetMessageID identity.MessageID
 }
 
-func (RunGroupCommand) isEffect()     {}
-func (RunGroupCommand) Kind() Kind    { return KindRunGroupCommand }
-func (RunGroupCommand) Durable() bool { return true }
-func (command RunGroupCommand) Capability() policy.Capability {
-	parsed, err := groupcmd.Parse(command.Command)
-	if err == nil {
-		return policy.Capability(parsed.Capability())
-	}
-	return ""
-}
-func (command RunGroupCommand) Validate() error {
-	parsed, err := groupcmd.Parse(command.Command)
-	if err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", err)
-	}
-	if err := parsed.ValidateTarget(command.TargetMessageID); err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate group command", err)
+func (RunCommand) isEffect()                     {}
+func (RunCommand) Kind() Kind                    { return KindRunCommand }
+func (RunCommand) Durable() bool                 { return true }
+func (RunCommand) Capability() policy.Capability { return policy.CapabilityCommandExecute }
+func (command RunCommand) Validate() error {
+	if strings.TrimSpace(command.Command) != command.Command || !strings.HasPrefix(command.Command, "/") ||
+		len(command.Command) == 0 || len(command.Command) > agent.MaxInputBytes || !utf8.ValidString(command.Command) {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate command", errors.New("registered command is malformed"))
 	}
 	return nil
 }
@@ -174,7 +164,7 @@ func DigestPlan(request PlanRequest) ([32]byte, error) {
 		writeDigestField(&canonical, typed.TargetMessageID.String())
 	case SetChatPresence:
 		writeDigestField(&canonical, string(typed.State))
-	case RunGroupCommand:
+	case RunCommand:
 		writeDigestField(&canonical, typed.Command)
 		writeDigestField(&canonical, typed.TargetMessageID.String())
 	default:
@@ -246,6 +236,11 @@ type Sender interface {
 	ExecuteEffect(context.Context, Stored) (providerReceipt string, err error)
 }
 
+type CommandExecutor interface {
+	AuthorizeCommandEffect(context.Context, Stored, RunCommand) error
+	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
+}
+
 // Dispatcher is an outbox state machine for durable effects. Ephemeral
 // mark-read and presence hints are persisted for auditing/planning but are
 // never retried: an interrupted or failed attempt becomes skipped.
@@ -254,6 +249,15 @@ type Dispatcher struct {
 	authorizer Authorizer
 	sender     Sender
 	clock      agent.Clock
+	commands   CommandExecutor
+}
+
+func (dispatcher *Dispatcher) BindCommandExecutor(executor CommandExecutor) error {
+	if executor == nil || dispatcher.commands != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "bind command executor", errors.New("one command executor is required"))
+	}
+	dispatcher.commands = executor
+	return nil
 }
 
 func NewDispatcher(store Store, authorizer Authorizer, sender Sender, clock agent.Clock) (*Dispatcher, error) {
@@ -294,13 +298,23 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if !dispatcher.sender.Ready() {
 		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
-	if err := dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
-		Key: stored.Request.Ref.Key, Principal: stored.Request.Principal, Capability: stored.Request.Effect.Capability(),
-	}); err != nil {
-		if retryablePreExecutionError(err) {
-			return dispatcher.requeuePreExecution(stored, err)
+	var authorizeErr error
+	if command, ok := stored.Request.Effect.(RunCommand); ok {
+		if dispatcher.commands == nil {
+			authorizeErr = agent.NewError(agent.ErrorNotReady, "authorize command effect", errors.New("command executor is not bound"))
+		} else {
+			authorizeErr = dispatcher.commands.AuthorizeCommandEffect(ctx, stored, command)
 		}
-		return dispatcher.finalizePreExecution(stored, agent.CodeOf(err), err)
+	} else {
+		authorizeErr = dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
+			Key: stored.Request.Ref.Key, Principal: stored.Request.Principal, Capability: stored.Request.Effect.Capability(),
+		})
+	}
+	if authorizeErr != nil {
+		if retryablePreExecutionError(authorizeErr) {
+			return dispatcher.requeuePreExecution(stored, authorizeErr)
+		}
+		return dispatcher.finalizePreExecution(stored, agent.CodeOf(authorizeErr), authorizeErr)
 	}
 	if !dispatcher.sender.Ready() {
 		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
@@ -308,7 +322,13 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if err := dispatcher.store.MarkExecuting(ctx, ref, stored.Lease, dispatcher.clock.Now()); err != nil {
 		return err
 	}
-	receipt, executeErr := dispatcher.sender.ExecuteEffect(ctx, stored)
+	var receipt string
+	var executeErr error
+	if command, ok := stored.Request.Effect.(RunCommand); ok {
+		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, command)
+	} else {
+		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
+	}
 	if executeErr != nil {
 		if stored.Request.Effect.Durable() {
 			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())

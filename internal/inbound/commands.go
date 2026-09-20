@@ -27,6 +27,8 @@ func parseRegisteredCommand(text string) (command.Request, command.Descriptor, b
 	return builtinCommandRegistry.Parse(text)
 }
 
+func CommandRegistry() *command.Registry { return builtinCommandRegistry }
+
 // The aliases below preserve the inbound package API used by persistence and
 // existing callers while keeping command grammar/types in internal/command.
 type PromptMutation = command.PromptMutation

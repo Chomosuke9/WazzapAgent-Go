@@ -11,6 +11,7 @@ import (
 
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
@@ -71,6 +72,54 @@ func TestAgentAtomicallyPlansAndDispatchesGrantedTypedEffect(t *testing.T) {
 	record, err := store.Turns().Load(context.Background(), key, invocation.ID)
 	if err != nil || record.Plan == nil || len(record.Plan.Effects) != 1 || effects.last != record.Plan.Effects[0] {
 		t.Fatalf("atomic stored effect plan = %#v, last=%#v, err=%v", record.Plan, effects.last, err)
+	}
+}
+
+func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
+	store := openStore(t)
+	model := &reactionOnlyModel{}
+	responses := &fakeDispatcher{}
+	effects := &fakeEffectDispatcher{}
+	key := newKey(t)
+	deps := dependencies(store, model, responses, &eventRecorder{})
+	deps.Effects = effects
+	current, err := agent.New(context.Background(), key, deps)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	invocation := newInvocation(t, agent.InitialConfigVersion, "react please")
+	invocation.Capabilities, _ = agent.NewCapabilitySet("message.react")
+	first, err := current.Invoke(context.Background(), invocation)
+	if err != nil {
+		t.Fatalf("invoke reaction-only turn: %v", err)
+	}
+	if first.Text != "" || !first.ActionID.IsZero() || !first.ResponseID.IsZero() || first.Delivery != agent.DeliverySucceeded ||
+		responses.calls.Load() != 0 || effects.calls.Load() != 1 {
+		t.Fatalf("reaction-only result = %#v, text sends=%d, effects=%d", first, responses.calls.Load(), effects.calls.Load())
+	}
+	record, err := store.Turns().Load(context.Background(), key, invocation.ID)
+	if err != nil || record.Plan == nil || record.State != agent.TurnSucceeded || len(record.Plan.Effects) != 1 {
+		t.Fatalf("durable reaction-only plan = %#v, err=%v", record, err)
+	}
+	actions, err := store.Actions().ListRecoverable(context.Background(), key.TenantID, time.Now().UTC(), 10)
+	if err != nil || len(actions) != 0 {
+		t.Fatalf("reaction-only outbound text actions = %#v, err=%v", actions, err)
+	}
+	history, err := current.History().List(context.Background(), agent.InitialConfigVersion, agent.HistoryQuery{Limit: 10})
+	if err != nil || len(history.Entries) != 1 || history.Entries[0].Role != agent.HistoryUser {
+		t.Fatalf("reaction-only history = %#v, err=%v", history, err)
+	}
+	recoverable, err := store.Effects().ListRecoverableEffects(context.Background(), key.TenantID, time.Now().UTC(), 10)
+	if err != nil || len(recoverable) != 1 || recoverable[0].EffectID != record.Plan.Effects[0].EffectID {
+		t.Fatalf("recoverable reaction = %#v, err=%v", recoverable, err)
+	}
+	claimedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: record.Plan.Effects[0].EffectID}, time.Now().UTC())
+	if err != nil || claimedEffect.State != effect.StateClaimed {
+		t.Fatalf("reaction-only effect claim = %#v, err=%v", claimedEffect, err)
+	}
+	second, err := current.Invoke(context.Background(), invocation)
+	if err != nil || second.Delivery != agent.DeliverySucceeded || model.calls.Load() != 1 || responses.calls.Load() != 0 {
+		t.Fatalf("reaction-only replay = %#v, model=%d, sends=%d, err=%v", second, model.calls.Load(), responses.calls.Load(), err)
 	}
 }
 
@@ -389,7 +438,7 @@ func newAgent(
 func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher agent.ResponseDispatcher, events agent.ConfigEventSink) agent.Dependencies {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part1-chat-gate.v1")
-	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes)
+	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes, "Vivy")
 	return agent.Dependencies{
 		Defaults: agent.ConfigValues{
 			Model:      agent.ModelConfig{ProviderID: providerID, Model: "test-model", MaxOutputTokens: 256},
@@ -400,12 +449,19 @@ func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher a
 		HistoryStore:  store.History(),
 		Turns:         store.Turns(),
 		Context:       contextBuilder,
+		ChatContext:   staticChatContextReader{},
 		HistoryWindow: agent.DefaultHistoryWindow,
 		Model:         model,
 		Responses:     dispatcher,
 		Events:        events,
 		Clock:         agent.SystemClock{},
 	}
+}
+
+type staticChatContextReader struct{}
+
+func (staticChatContextReader) ReadChatContext(context.Context, agent.Key) (agent.ChatContext, error) {
+	return agent.ChatContext{Kind: "private"}, nil
 }
 
 func newKey(t *testing.T) agent.Key {
@@ -441,6 +497,15 @@ type fakeModel struct {
 }
 
 type currentReactionModel struct{ calls atomic.Int32 }
+
+type reactionOnlyModel struct{ calls atomic.Int32 }
+
+func (model *reactionOnlyModel) Generate(_ context.Context, request agent.ModelRequest) (agent.ModelResult, error) {
+	model.calls.Add(1)
+	return agent.ModelResult{Effects: []agent.ModelEffect{{
+		CallID: "call_react", Intent: agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: request.CurrentMessageID, Emoji: "👍"},
+	}}}, nil
+}
 
 func (model *currentReactionModel) Generate(_ context.Context, request agent.ModelRequest) (agent.ModelResult, error) {
 	model.calls.Add(1)

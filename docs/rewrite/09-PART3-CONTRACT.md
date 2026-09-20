@@ -11,6 +11,9 @@ The model receives exactly these provider tools:
 - `reply_message`: visible reply plus optional silent slash commands;
 - `react_to_message`: reaction to a message from the supplied history.
 
+A turn must contain a visible reply or at least one valid effect. A reaction-only
+turn is valid and must not create a text message or a fake outbound send.
+
 `mark-read` and composing presence are automatic AI-lane behavior. They are
 not permissions and are never offered to the model. Delete, mute, and kick are
 not model tools either: they are `/group delete`, `/group mute`, and
@@ -127,9 +130,11 @@ either the command or AI queue. Expired mute rows are removed lazily.
 Incoming human commands and ordinary AI messages use separate bounded queues
 and worker pools. A frozen model call therefore cannot consume command workers.
 
-Model-generated group commands use the typed effect outbox. They execute only
-after the companion visible reply has a successful durable receipt. A network
-outcome that might already have changed WhatsApp becomes `unknown_outcome` and
+Model-generated effects use the typed effect outbox. When a turn also sends
+text, effects execute only after that reply has a successful durable receipt.
+For an effect-only turn, the committed turn releases its effects without an
+outbound text action. A network outcome that might already have changed
+WhatsApp becomes `unknown_outcome` and
 is not blindly replayed. SQLite migrations preserve the moderation level,
 group-command payload, and mute state across restart.
 

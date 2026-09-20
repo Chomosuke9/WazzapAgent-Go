@@ -188,11 +188,21 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 				  AND outbound_actions.chat_id = typed_effects.chat_id
 				  AND outbound_actions.invocation_id = typed_effects.invocation_id
 				  AND outbound_actions.state = ?
+			) OR EXISTS (
+				SELECT 1 FROM inbound_events
+				WHERE inbound_events.tenant_id = typed_effects.tenant_id
+				  AND inbound_events.account_id = typed_effects.account_id
+				  AND inbound_events.chat_id = typed_effects.chat_id
+				  AND inbound_events.invocation_id = typed_effects.invocation_id
+				  AND inbound_events.turn_state = ?
+				  AND inbound_events.delivery_status = ?
+				  AND inbound_events.action_id IS NULL
+				  AND inbound_events.invocation_digest IS NOT NULL
 			)
 		)
       ORDER BY updated_at_ms, effect_id
       LIMIT ?`,
-		tenantID.String(), uint8(effect.StatePending), uint8(effect.StateClaimed), uint8(effect.StateExecuting), now.UTC().UnixMilli(), uint8(action.StateSucceeded), limit,
+		tenantID.String(), uint8(effect.StatePending), uint8(effect.StateClaimed), uint8(effect.StateExecuting), now.UTC().UnixMilli(), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded), limit,
 	)
 	if err != nil {
 		return nil, storageError("list recoverable effects", err)
@@ -224,9 +234,8 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 	return refs, nil
 }
 
-// modelEffectResponseDelivered prevents the effect-recovery worker from
-// performing a model-requested side effect before the same turn's text reply
-// has a durable success receipt. Non-model effects have no such dependency.
+// modelEffectResponseDelivered waits for a text reply's receipt, or for an
+// effect-only turn to be durably committed. Non-model effects have no dependency.
 func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref effect.Ref) (bool, error) {
 	var modelCall sql.NullString
 	err := query.QueryRowContext(ctx, `SELECT model_call_id FROM typed_effects
@@ -251,7 +260,23 @@ func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref 
 	if err != nil {
 		return false, storageError("read model effect response dependency", err)
 	}
-	return completed == 1, nil
+	if completed == 1 {
+		return true, nil
+	}
+	var effectOnly int
+	err = query.QueryRowContext(ctx, `SELECT COUNT(*) FROM inbound_events
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
+        AND invocation_id = (SELECT invocation_id FROM typed_effects
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?)
+		AND turn_state = ? AND delivery_status = ?
+		AND action_id IS NULL AND invocation_digest IS NOT NULL`,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded),
+	).Scan(&effectOnly)
+	if err != nil {
+		return false, storageError("read effect-only turn dependency", err)
+	}
+	return effectOnly == 1, nil
 }
 
 func (store *EffectStore) MarkExecuting(ctx context.Context, ref effect.Ref, lease effect.Lease, now time.Time) error {
@@ -368,7 +393,7 @@ func effectTarget(value effect.Effect) (identity.MessageID, bool) {
 		return typed.TargetMessageID, true
 	case effect.MarkRead:
 		return typed.TargetMessageID, true
-	case effect.RunGroupCommand:
+	case effect.RunCommand:
 		if !typed.TargetMessageID.IsZero() {
 			return typed.TargetMessageID, true
 		}
@@ -399,7 +424,7 @@ func storedEffect(value effect.Effect) (target, emoji, presence, commandText any
 		return typed.TargetMessageID.String(), nil, nil, nil
 	case effect.SetChatPresence:
 		return nil, nil, string(typed.State), nil
-	case effect.RunGroupCommand:
+	case effect.RunCommand:
 		return nullableMessageID(typed.TargetMessageID), nil, nil, typed.Command
 	default:
 		return nil, nil, nil, nil
@@ -515,7 +540,7 @@ func decodeStoredEffect(kind effect.Kind, target, emoji, presence, commandText s
 		return effect.MarkRead{TargetMessageID: messageID}, nil
 	case effect.KindSetChatPresence:
 		return effect.SetChatPresence{State: effect.PresenceState(presence.String)}, nil
-	case effect.KindRunGroupCommand:
+	case effect.KindRunCommand:
 		var messageID identity.MessageID
 		var err error
 		if target.Valid {
@@ -524,7 +549,7 @@ func decodeStoredEffect(kind effect.Kind, target, emoji, presence, commandText s
 				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode group command effect", err)
 			}
 		}
-		return effect.RunGroupCommand{Command: commandText.String, TargetMessageID: messageID}, nil
+		return effect.RunCommand{Command: commandText.String, TargetMessageID: messageID}, nil
 	default:
 		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect kind is invalid"))
 	}

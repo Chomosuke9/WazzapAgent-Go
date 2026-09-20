@@ -58,6 +58,9 @@ func newAIHandler(services handlerServices, options BatchOptions) (*AIHandler, e
 	if options.Activity == nil {
 		options.Activity = discardAIActivity{}
 	}
+	if options.Events == nil {
+		options.Events = discardAgentLifecycleObserver{}
+	}
 	services.stripes = new([64]sync.Mutex)
 	return &AIHandler{handlerServices: services, batch: options}, nil
 }

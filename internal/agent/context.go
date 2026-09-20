@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
@@ -14,12 +15,37 @@ const (
 	DefaultMaxContextBytes  = 64 * 1024
 	MaxContextBytes         = 1024 * 1024
 	compactContextIDModulus = 1_000_000
+	contextReasoning        = "<reasoning>\nCheck the latest message and its sender first. Identify the intended reply target and copy context IDs or senderRefs only from the transcript. Consider whether text or an available action is needed. Do not include this checklist in the reply.\n</reasoning>"
 )
 
 type ContextBuildRequest struct {
 	Config              ConfigSnapshot
+	Chat                ChatContext
 	History             []HistoryEntry
 	CurrentInvocationID identity.InvocationID
+}
+
+// ChatContext is the provider-neutral, read-only chat metadata shown to the
+// model. It is not an authorization decision; effects still recheck authority.
+type ChatContext struct {
+	Kind        string
+	Name        string
+	Description string
+	BotIsAdmin  bool
+}
+
+func (chat ChatContext) Validate() error {
+	if chat.Kind != "group" && chat.Kind != "private" {
+		return fmt.Errorf("chat kind must be group or private")
+	}
+	if !utf8.ValidString(chat.Name) || !utf8.ValidString(chat.Description) ||
+		len(chat.Name) > 512 || len(chat.Description) > 4096 {
+		return fmt.Errorf("chat metadata is invalid")
+	}
+	if chat.Kind == "private" && chat.BotIsAdmin {
+		return fmt.Errorf("private chat cannot have group admin role")
+	}
+	return nil
 }
 
 type ContextBuilder interface {
@@ -27,14 +53,18 @@ type ContextBuilder interface {
 }
 
 type DeterministicContextBuilder struct {
-	maxBytes uint32
+	maxBytes      uint32
+	assistantName string
 }
 
-func NewDeterministicContextBuilder(maxBytes uint32) (*DeterministicContextBuilder, error) {
+func NewDeterministicContextBuilder(maxBytes uint32, assistantName string) (*DeterministicContextBuilder, error) {
 	if maxBytes == 0 || maxBytes > MaxContextBytes {
 		return nil, NewError(ErrorInvalidArgument, "create context builder", fmt.Errorf("max context bytes must be between 1 and %d", MaxContextBytes))
 	}
-	return &DeterministicContextBuilder{maxBytes: maxBytes}, nil
+	if assistantName == "" || cleanMentionName(assistantName) != assistantName {
+		return nil, NewError(ErrorInvalidArgument, "create context builder", fmt.Errorf("assistant name is invalid for bot mentions"))
+	}
+	return &DeterministicContextBuilder{maxBytes: maxBytes, assistantName: assistantName}, nil
 }
 
 func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) ([]ModelMessage, error) {
@@ -44,11 +74,14 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	if err := validateConfigSnapshot(request.Config); err != nil {
 		return nil, NewError(ErrorIntegrityFailure, "build model context", err)
 	}
+	if err := request.Chat.Validate(); err != nil {
+		return nil, NewError(ErrorIntegrityFailure, "build model context", err)
+	}
 	// Model history is intentionally one logical user block. The transcript
 	// renderer is compact and already carries role/sender/quote markers, so
 	// turning every durable entry into a provider message wastes tokens and
 	// changes the compact prompt shape selected for this project.
-	messages := make([]ModelMessage, 0, 3)
+	messages := make([]ModelMessage, 0, 4)
 	if request.Config.PromptOverride == nil || request.Config.PromptOverride.Mode != PromptReplace {
 		messages = append(messages, ModelMessage{
 			Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: request.Config.Prompt,
@@ -59,6 +92,10 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			Role: ModelUser, Provenance: ProvenancePromptOverride, Content: request.Config.PromptOverride.Text,
 		})
 	}
+	messages = append(messages, ModelMessage{
+		Role: ModelUser, Provenance: ProvenanceChatInformation,
+		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel),
+	})
 	type builtHistoryEntry struct {
 		rendered     string
 		invocationID identity.InvocationID
@@ -83,7 +120,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			}
 			currentFound = true
 		}
-		rendered, err := serializeHistoryEntry(entry, mentionNames)
+		rendered, err := serializeHistoryEntry(entry, mentionNames, builder.assistantName)
 		if err != nil {
 			return nil, err
 		}
@@ -99,18 +136,19 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 	for {
 		messages = append(messages[:0], instructions...)
-		rendered := make([]string, 0, len(historyEntries)+2)
+		rendered := make([]string, 0, len(historyEntries)+3)
 		burstStart := 0
 		for index, entry := range historyEntries {
 			if entry.role == HistoryAssistant {
 				burstStart = index + 1
 			}
 		}
-		rendered = append(rendered, "Older messages:")
+		rendered = append(rendered, "older messages:")
 		for _, entry := range historyEntries[:burstStart] {
 			rendered = append(rendered, entry.rendered)
 		}
-		rendered = append(rendered, "Current messages (burst):")
+		rendered = append(rendered, contextReasoning)
+		rendered = append(rendered, "current messages(burst):")
 		for _, entry := range historyEntries[burstStart:] {
 			rendered = append(rendered, entry.rendered)
 		}
@@ -142,11 +180,52 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	}
 }
 
-func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string) (string, error) {
-	text := renderMentionView(flattenContent(entry.Content), entry.Mentions, mentionNames)
+func formatChatInformation(chat ChatContext, level ModerationLevel) string {
+	name := strings.Join(strings.Fields(chat.Name), " ")
+	description := strings.Join(strings.Fields(chat.Description), " ")
+	if name == "" {
+		name = "(unnamed group)"
+	}
+	if description == "" {
+		description = "(none)"
+	}
+	lines := []string{"Chat information:"}
+	if chat.Kind == "group" {
+		lines = append(lines, "- Group name: "+name, "- Group description: "+description)
+	} else {
+		lines = append(lines, "- Chat name: (private chat)")
+	}
+	role := "regular member"
+	if chat.Kind == "group" && chat.BotIsAdmin {
+		role = "admin"
+	}
+	capabilities := "none"
+	effectiveLevel := ModerationNone
+	if chat.Kind == "group" && chat.BotIsAdmin {
+		effectiveLevel = level
+		switch level {
+		case ModerationDelete:
+			capabilities = "delete messages"
+		case ModerationDeleteMute:
+			capabilities = "delete messages, mute members"
+		case ModerationDeleteMuteKick:
+			capabilities = "delete messages, mute members, kick members"
+		}
+	}
+	lines = append(lines,
+		"- Chat state: "+chat.Kind,
+		"- Bot role: "+role,
+		fmt.Sprintf("- Bot moderation permission: %d", effectiveLevel),
+		"- Bot moderation capabilities: "+capabilities+" (configured maximum; command permissions apply separately)",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
+	text := renderMentionView(flattenContent(entry.Content), entry.Mentions, mentionNames, assistantName)
 	if entry.Quote != nil {
 		entry.Quote = cloneQuote(entry.Quote)
-		entry.Quote.Text = renderMentionView(entry.Quote.Text, entry.Quote.Mentions, mentionNames)
+		entry.Quote.Text = renderMentionView(entry.Quote.Text, entry.Quote.Mentions, mentionNames, assistantName)
 	}
 	switch entry.Role {
 	case HistoryUser:
@@ -173,14 +252,14 @@ func historyDisplayNames(history []HistoryEntry) map[string]string {
 	return names
 }
 
-func renderMentionView(text string, bindings []MentionContext, names map[string]string) string {
+func renderMentionView(text string, bindings []MentionContext, names map[string]string, assistantName string) string {
 	if len(bindings) == 0 {
 		return text
 	}
 	replacements := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
 		if binding.Bot {
-			replacements[binding.Token] = "@Bot (bot)"
+			replacements[binding.Token] = "@" + assistantName + " (bot)"
 			continue
 		}
 		name := cleanMentionName(names[binding.SenderRef.String()])
@@ -239,7 +318,7 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	}
 
 	if entry.Role == HistoryAssistant {
-		lines = append(lines, fmt.Sprintf("You 【bot】: %s", text))
+		lines = append(lines, fmt.Sprintf("You 【You】: %s", text))
 		return strings.Join(lines, "\n")
 	}
 
@@ -315,6 +394,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	currentCount := 0
 	basePromptCount := 0
 	overrideCount := 0
+	chatInformationCount := 0
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
@@ -333,6 +413,10 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			// system instructions. The application safety policy remains the
 			// provider-owned system message that precedes this list.
 			valid = promptPhase && message.Role == ModelUser
+			promptPhase = false
+		case ProvenanceChatInformation:
+			chatInformationCount++
+			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0
 			promptPhase = false
 		case ProvenanceHistorySystem:
 			promptPhase = false
@@ -364,7 +448,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	} else if currentCount != 1 || last != ProvenanceCurrentUser {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("current user message must be last"))
 	}
-	if basePromptCount > 1 || overrideCount > 1 {
+	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model prompts must not be duplicated"))
 	}
 	return nil

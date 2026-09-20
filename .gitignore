@@ -6,6 +6,7 @@
 *.db-shm
 *.db-wal
 /.env
+/internal/config/embedded.env
 /data/
 /dist/
 /.idea/WazzapAgent-Go.iml

@@ -46,10 +46,24 @@ type BatchClaim struct {
 }
 
 type BatchOptions struct {
-	Debounce time.Duration
-	BurstCap uint32
-	Clock    agent.Clock
-	Activity AIActivity
+	Debounce    time.Duration
+	BurstCap    uint32
+	Clock       agent.Clock
+	Activity    AIActivity
+	Events      AgentLifecycleObserver
+	ChatContext agent.ChatContextReader
+}
+
+type AgentLifecycleObserver interface {
+	ObserveAgentTriggered(conversation.IncomingMessage, uint32, string)
+	ObserveAgentSucceeded(conversation.IncomingMessage, agent.InvokeResult, time.Duration, string)
+}
+
+type discardAgentLifecycleObserver struct{}
+
+func (discardAgentLifecycleObserver) ObserveAgentTriggered(conversation.IncomingMessage, uint32, string) {
+}
+func (discardAgentLifecycleObserver) ObserveAgentSucceeded(conversation.IncomingMessage, agent.InvokeResult, time.Duration, string) {
 }
 
 // AIActivity owns best-effort WhatsApp UX signals. They are runtime behavior,
@@ -161,7 +175,7 @@ func (handler *CommandHandler) resumeCommand(
 	if err != nil {
 		return err
 	}
-	facts, err := handler.commandPermissionFacts(ctx, principal, snapshot.Permission, message)
+	facts, err := handler.commandPermissionFacts(ctx, principal, snapshot.Permission, message.FromMe, message.ChatKind)
 	if err != nil {
 		if agent.IsCode(err, agent.ErrorPermissionDenied) {
 			reply := descriptor.DeniedReply
@@ -213,23 +227,24 @@ func commandPrincipal(message conversation.IncomingMessage) (policy.Principal, e
 	return policy.ModelPrincipal(key, message.InvocationID)
 }
 
-func (handler *CommandHandler) commandPermissionFacts(
+func (handler *handlerServices) commandPermissionFacts(
 	ctx context.Context,
 	principal policy.Principal,
 	permission agent.PermissionConfig,
-	message conversation.IncomingMessage,
+	fromMe bool,
+	chatKind conversation.ChatKind,
 ) (command.PermissionFacts, error) {
 	if provider, ok := handler.policy.(CommandPermissionFactsProvider); ok {
-		facts, err := provider.CommandPermissionFacts(ctx, principal, permission, message.FromMe)
+		facts, err := provider.CommandPermissionFacts(ctx, principal, permission, fromMe)
 		return command.PermissionFacts(facts), err
 	}
 	// A custom policy that does not expose trusted role lookup can still use
 	// structural expressions such as "public and !fromMe". Owner/admin facts
 	// deliberately remain false instead of trusting inbound flags.
 	return command.PermissionFacts{
-		IsGroup:   message.ChatKind == conversation.ChatGroup,
-		IsPrivate: message.ChatKind == conversation.ChatDirect,
-		FromMe:    message.FromMe,
+		IsGroup:   chatKind == conversation.ChatGroup,
+		IsPrivate: chatKind == conversation.ChatDirect,
+		FromMe:    fromMe,
 	}, nil
 }
 
@@ -297,7 +312,43 @@ func (handler *AIHandler) processBatch(
 			return err
 		}
 	}
-	key := agent.Key{TenantID: messages[0].TenantID, AccountID: messages[0].AccountID, ChatID: messages[0].ChatID}
+	anchorMessage := messages[len(messages)-1]
+	key := agent.Key{TenantID: anchorMessage.TenantID, AccountID: anchorMessage.AccountID, ChatID: anchorMessage.ChatID}
+	modelPrincipal, err := policy.ModelPrincipal(key, anchorMessage.InvocationID)
+	if err != nil {
+		return err
+	}
+	facts, err := handler.commandPermissionFacts(ctx, modelPrincipal, snapshot.Permission, true, anchorMessage.ChatKind)
+	if err != nil {
+		return err
+	}
+	commandNames := make([]string, 0)
+	for _, descriptor := range builtinCommandRegistry.Descriptors() {
+		allowed, evaluateErr := command.EvaluatePermission(descriptor.Permission, facts)
+		if evaluateErr != nil {
+			return agent.NewError(agent.ErrorIntegrityFailure, "list model commands", evaluateErr)
+		}
+		if allowed {
+			commandNames = append(commandNames, string(descriptor.Name))
+		}
+	}
+	if len(commandNames) > 0 && !capabilities.Has("command.execute") {
+		values := append(capabilities.Values(), agent.Capability("command.execute"))
+		capabilities, err = agent.NewCapabilitySet(values...)
+		if err != nil {
+			return err
+		}
+	}
+	chatName := anchorMessage.SenderName
+	if anchorMessage.ChatKind == conversation.ChatGroup {
+		chatName = ""
+		if handler.batch.ChatContext != nil {
+			if chat, readErr := handler.batch.ChatContext.ReadChatContext(ctx, key); readErr == nil {
+				chatName = chat.Name
+			}
+		}
+	}
+	handler.batch.Events.ObserveAgentTriggered(anchorMessage, uint32(len(messages)), chatName)
 	for _, message := range messages {
 		_ = handler.batch.Activity.MarkRead(ctx, key, message.ID)
 	}
@@ -308,7 +359,7 @@ func (handler *AIHandler) processBatch(
 		_ = handler.batch.Activity.SetComposing(pauseCtx, key, false)
 	}()
 	for _, message := range messages[:len(messages)-1] {
-		invocation, err := invocationFromMessage(message, snapshot.Version, capabilities)
+		invocation, err := invocationFromMessage(message, snapshot.Version, capabilities, commandNames)
 		if err != nil {
 			return err
 		}
@@ -321,15 +372,19 @@ func (handler *AIHandler) processBatch(
 			return err
 		}
 	}
-	anchor, err := invocationFromMessage(messages[len(messages)-1], snapshot.Version, capabilities)
+	anchor, err := invocationFromMessage(anchorMessage, snapshot.Version, capabilities, commandNames)
 	if err != nil {
 		return err
 	}
-	_, err = currentAgent.Invoke(ctx, anchor)
+	started := time.Now()
+	result, err := currentAgent.Invoke(ctx, anchor)
+	if err == nil && result.Delivery == agent.DeliverySucceeded {
+		handler.batch.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
+	}
 	return err
 }
 
-func invocationFromMessage(message conversation.IncomingMessage, version agent.ConfigVersion, capabilities agent.CapabilitySet) (agent.Invocation, error) {
+func invocationFromMessage(message conversation.IncomingMessage, version agent.ConfigVersion, capabilities agent.CapabilitySet, commands []string) (agent.Invocation, error) {
 	var quote *agent.QuoteContext
 	if message.Quote != nil {
 		role := agent.HistoryUser
@@ -355,6 +410,7 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 		Input:         []agent.ContentPart{agent.TextPart{Text: message.Text}},
 		Mentions:      conversationMentions(message.Mentions),
 		Capabilities:  capabilities,
+		Commands:      append([]string(nil), commands...),
 		PolicyVersion: version,
 		RequestedAt:   message.OccurredAt,
 	}, nil

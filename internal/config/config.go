@@ -18,7 +18,7 @@ const (
 	defaultDataDir             = "./data"
 	defaultHTTPAddress         = "127.0.0.1:8080"
 	defaultLogLevel            = "info"
-	defaultLogFormat           = "json"
+	defaultLogFormat           = "compact"
 	defaultShutdownTimeout     = 30 * time.Second
 	defaultLLMTimeout          = 60 * time.Second
 	defaultConnectTimeout      = 90 * time.Second

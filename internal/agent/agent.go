@@ -16,12 +16,29 @@ type Dependencies struct {
 	HistoryStore  HistoryStore
 	Turns         TurnStore
 	Context       ContextBuilder
+	ChatContext   ChatContextReader
 	HistoryWindow uint32
 	Model         ModelInvoker
 	Responses     ResponseDispatcher
 	Effects       EffectDispatcher
 	Events        ConfigEventSink
+	InvokeEvents  InvokeObserver
 	Clock         Clock
+}
+
+type ChatContextReader interface {
+	ReadChatContext(context.Context, Key) (ChatContext, error)
+}
+
+type InvokeObserver interface {
+	ObserveAgentInvokeStarted(Key, ModelConfig, string)
+	ObserveAgentInvokeFinished(Key, ModelConfig, string, time.Duration, ModelResult, error)
+}
+
+type DiscardInvokeObserver struct{}
+
+func (DiscardInvokeObserver) ObserveAgentInvokeStarted(Key, ModelConfig, string) {}
+func (DiscardInvokeObserver) ObserveAgentInvokeFinished(Key, ModelConfig, string, time.Duration, ModelResult, error) {
 }
 
 type Agent struct {
@@ -31,9 +48,11 @@ type Agent struct {
 	turns         TurnStore
 	model         ModelInvoker
 	context       ContextBuilder
+	chatContext   ChatContextReader
 	historyWindow uint32
 	responses     ResponseDispatcher
 	effects       EffectDispatcher
+	invokeEvents  InvokeObserver
 	clock         Clock
 	gate          *operationGate
 }
@@ -43,7 +62,7 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 		return nil, err
 	}
 	if dependencies.ConfigStore == nil || dependencies.HistoryStore == nil || dependencies.Turns == nil ||
-		dependencies.Context == nil || dependencies.Model == nil ||
+		dependencies.Context == nil || dependencies.ChatContext == nil || dependencies.Model == nil ||
 		dependencies.Responses == nil || dependencies.Events == nil || dependencies.Clock == nil {
 		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("all Part 2 dependencies are required"))
 	}
@@ -52,6 +71,9 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 	}
 	if dependencies.Effects == nil {
 		dependencies.Effects = rejectedEffectDispatcher{}
+	}
+	if dependencies.InvokeEvents == nil {
+		dependencies.InvokeEvents = DiscardInvokeObserver{}
 	}
 	config, err := newConfig(
 		ctx,
@@ -76,9 +98,11 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 		turns:         dependencies.Turns,
 		model:         dependencies.Model,
 		context:       dependencies.Context,
+		chatContext:   dependencies.ChatContext,
 		historyWindow: dependencies.HistoryWindow,
 		responses:     dependencies.Responses,
 		effects:       dependencies.Effects,
+		invokeEvents:  dependencies.InvokeEvents,
 		clock:         dependencies.Clock,
 		gate:          gate,
 	}
@@ -113,8 +137,12 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 	if err != nil {
 		return nil, NewError(ErrorIntegrityFailure, "build agent input", err)
 	}
+	chat, err := agent.chatContext.ReadChatContext(ctx, agent.key)
+	if err != nil {
+		return nil, err
+	}
 	messages, err := agent.context.Build(ContextBuildRequest{
-		Config: snapshot, History: page.Entries, CurrentInvocationID: currentInvocationID,
+		Config: snapshot, Chat: chat, History: page.Entries, CurrentInvocationID: currentInvocationID,
 	})
 	if err != nil {
 		return nil, NewError(ErrorIntegrityFailure, "build agent input", err)
@@ -201,8 +229,13 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
+	chat, err := agent.chatContext.ReadChatContext(ctx, agent.key)
+	if err != nil {
+		agent.failGeneration(invocation.ID, claim.Lease, err)
+		return InvokeResult{}, err
+	}
 	messages, err := agent.context.Build(ContextBuildRequest{
-		Config: snapshot, History: page.Entries, CurrentInvocationID: invocation.ID,
+		Config: snapshot, Chat: chat, History: page.Entries, CurrentInvocationID: invocation.ID,
 	})
 	if err != nil {
 		wrappedErr := NewError(ErrorIntegrityFailure, "invoke agent", err)
@@ -218,19 +251,32 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		Model:            snapshot.Model,
 		Messages:         messages,
 		Capabilities:     CapabilitySet{values: invocation.Capabilities.Values()},
+		Commands:         append([]string(nil), invocation.Commands...),
 		ContextMessages:  contextMessageMap(page.Entries),
 	}
+	invokeStarted := time.Now()
+	chatName := chat.Name
+	if chat.Kind == "private" && invocation.Sender != nil {
+		chatName = invocation.Sender.DisplayName
+	}
+	agent.invokeEvents.ObserveAgentInvokeStarted(agent.key, request.Model, chatName)
 	generated, err := agent.model.Generate(ctx, request)
 	if err != nil {
+		agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), ModelResult{}, err)
 		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
 		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
 		return InvokeResult{}, wrappedErr
+	}
+	if strings.TrimSpace(generated.Text) == "" && utf8.ValidString(generated.Text) {
+		generated.Text = ""
 	}
 	if err := validateModelResult(generated, request.Capabilities, request.ContextMessages); err != nil {
+		agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), generated, err)
 		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
 		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
+	agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), generated, nil)
 
 	plan, err := agent.turns.CommitPlan(ctx, CommitPlanRequest{
 		Key:              agent.key,
@@ -325,28 +371,35 @@ func (agent *Agent) dispatchPlan(ctx context.Context, plan StoredPlan) (InvokeRe
 		Text:          plan.Text,
 		Delivery:      DeliveryPending,
 	}
-	delivery, err := agent.responses.Dispatch(ctx, plan.Dispatch)
-	if delivery.ActionID.IsZero() && err != nil {
-		return result, err
-	}
-	if delivery.ActionID != plan.ActionID {
-		return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("dispatcher returned a different action ID"))
-	}
-	switch delivery.Status {
-	case DeliveryPending, DeliverySucceeded, DeliveryFailedTerminal, DeliveryUnknownOutcome:
-		result.Delivery = delivery.Status
-	default:
-		return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("dispatcher returned an invalid delivery status"))
-	}
-	if err != nil {
-		return result, err
+	if plan.ActionID.IsZero() {
+		if strings.TrimSpace(plan.Text) != "" || !plan.ResponseID.IsZero() || len(plan.Effects) == 0 {
+			return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("effect-only plan is invalid"))
+		}
+		result.Delivery = DeliverySucceeded
+	} else {
+		delivery, err := agent.responses.Dispatch(ctx, plan.Dispatch)
+		if delivery.ActionID.IsZero() && err != nil {
+			return result, err
+		}
+		if delivery.ActionID != plan.ActionID {
+			return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("dispatcher returned a different action ID"))
+		}
+		switch delivery.Status {
+		case DeliveryPending, DeliverySucceeded, DeliveryFailedTerminal, DeliveryUnknownOutcome:
+			result.Delivery = delivery.Status
+		default:
+			return result, NewError(ErrorIntegrityFailure, "dispatch response", fmt.Errorf("dispatcher returned an invalid delivery status"))
+		}
+		if err != nil {
+			return result, err
+		}
 	}
 	for _, ref := range plan.Effects {
 		if err := agent.effects.DispatchEffect(ctx, ref); err != nil {
 			return result, err
 		}
 	}
-	return result, err
+	return result, nil
 }
 
 type rejectedEffectDispatcher struct{}
@@ -377,8 +430,14 @@ func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease Tur
 func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
 func validateModelResult(result ModelResult, capabilities CapabilitySet, contextMessages map[string]identity.MessageID) error {
-	if strings.TrimSpace(result.Text) == "" || !utf8.ValidString(result.Text) {
-		return Errorf(ErrorProviderFailure, "validate model result", "provider returned empty or invalid UTF-8 text")
+	if !utf8.ValidString(result.Text) {
+		return Errorf(ErrorProviderFailure, "validate model result", "provider returned invalid UTF-8 text")
+	}
+	if strings.TrimSpace(result.Text) == "" && len(result.Effects) == 0 {
+		return Errorf(ErrorProviderFailure, "validate model result", "provider returned neither text nor an effect")
+	}
+	if strings.TrimSpace(result.Text) == "" && !result.ReplyToMessageID.IsZero() {
+		return Errorf(ErrorProviderFailure, "validate model result", "reply target requires text")
 	}
 	if len(result.Text) > MaxResponseBytes {
 		return Errorf(ErrorProviderFailure, "validate model result", "provider response exceeds %d bytes", MaxResponseBytes)
@@ -419,6 +478,7 @@ func cloneInvocation(invocation Invocation) Invocation {
 	invocation.Input = cloneContent(invocation.Input)
 	invocation.Mentions = cloneMentions(invocation.Mentions)
 	invocation.Capabilities = CapabilitySet{values: invocation.Capabilities.Values()}
+	invocation.Commands = append([]string(nil), invocation.Commands...)
 	return invocation
 }
 

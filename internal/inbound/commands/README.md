@@ -5,7 +5,8 @@ harus mengekspor satu `command.Descriptor` yang berisi `Name`, `Aliases`,
 `Capability`, `Permission`, metadata bantuan, dan `Handler`.
 
 `Permission` adalah ekspresi boolean yang dievaluasi untuk setiap invocation.
-Atom yang tersedia adalah `public`, `owner`/`isOwner`, `admin`/`isAdmin`,
+Atom yang tersedia adalah `public`, `owner`/`isOwner`,
+`admin`/`isAdmin`/`senderIsAdmin`,
 `group`/`isGroup`, `private`/`isPrivate`, dan `fromMe`/`from_me`. Operator
 `!` memiliki prioritas tertinggi, lalu `and`, lalu `or`; gunakan tanda kurung
 untuk memperjelas. Contoh:
@@ -19,6 +20,11 @@ Untuk mencegah bot menjalankan command tersebut, tambahkan `and !fromMe`:
 ```go
 Permission: "(isPrivate or isAdmin or isOwner) and !fromMe",
 ```
+
+Command dari parameter Agent dianggap berasal dari akun WhatsApp bot:
+`fromMe=true`, dan `senderIsAdmin` mengikuti status admin akun bot saat ini.
+Karena itu tidak ada pengecualian khusus untuk Agent; seluruh keputusan tetap
+berasal dari ekspresi `Permission` pada descriptor command.
 
 Semua descriptor, termasuk command berbahaya, tetap di-inject ke registry.
 `Permission` hanya menentukan siapa yang boleh menjalankan command pada

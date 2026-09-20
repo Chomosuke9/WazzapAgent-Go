@@ -60,21 +60,21 @@ func TestDeliveryForTurnStatePreservesTerminalReplayStatus(t *testing.T) {
 	}
 }
 
-func TestGroupCommandIntentAcceptsOnlyBoundedSupportedForms(t *testing.T) {
+func TestCommandIntentAcceptsRegisteredCommandShape(t *testing.T) {
 	target, _ := identity.NewMessageID()
-	for _, command := range []string{"/group close", "/group open", "/group description New group rules"} {
-		intent := EffectIntent{Kind: EffectRunGroupCommand, Command: command}
+	for _, command := range []string{"/group close", "/help", "/future any arguments"} {
+		intent := EffectIntent{Kind: EffectRunCommand, Command: command}
 		if err := intent.Validate(); err != nil {
 			t.Errorf("%q rejected: %v", command, err)
 		}
 	}
-	for _, command := range []string{"/group close now", "/group description", "/group pin 7", "/group delete"} {
-		intent := EffectIntent{Kind: EffectRunGroupCommand, Command: command}
+	for _, command := range []string{"group close", " /help", ""} {
+		intent := EffectIntent{Kind: EffectRunCommand, Command: command}
 		if err := intent.Validate(); err == nil {
 			t.Errorf("%q accepted without valid form/target", command)
 		}
 	}
-	if err := (EffectIntent{Kind: EffectRunGroupCommand, Command: "/group delete", TargetMessageID: target}).Validate(); err != nil {
+	if err := (EffectIntent{Kind: EffectRunCommand, Command: "/group delete", TargetMessageID: target}).Validate(); err != nil {
 		t.Fatalf("targeted delete rejected: %v", err)
 	}
 }

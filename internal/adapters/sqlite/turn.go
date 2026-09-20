@@ -89,7 +89,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	if len(row.digest.Bytes) != sha256.Size || !equalDigest(row.digest.Bytes, request.Digest) {
 		return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim turn", errors.New("invocation ID is bound to different input"))
 	}
-	if row.actionID.Valid {
+	if row.actionID.Valid || agent.TurnState(row.state) == agent.TurnSucceeded {
 		plan, err := row.plan(request.Key, request.Invocation.ID)
 		if err != nil {
 			return agent.TurnClaim{}, err
@@ -179,7 +179,9 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err := request.Key.Validate(); err != nil {
 		return agent.StoredPlan{}, err
 	}
-	if request.InvocationID.IsZero() || request.Lease == "" || request.ConfigVersion == 0 || strings.TrimSpace(request.ResponseText) == "" {
+	if request.InvocationID.IsZero() || request.Lease == "" || request.ConfigVersion == 0 ||
+		(request.ResponseText != "" && strings.TrimSpace(request.ResponseText) == "") ||
+		(strings.TrimSpace(request.ResponseText) == "" && (len(request.Effects) == 0 || !request.ReplyToMessageID.IsZero())) {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorInvalidArgument, "commit response plan", errors.New("complete response plan is required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -194,7 +196,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, storageError("load response plan", err)
 	}
-	if row.actionID.Valid {
+	if row.actionID.Valid || agent.TurnState(row.state) == agent.TurnSucceeded {
 		plan, planErr := row.plan(request.Key, request.InvocationID)
 		if planErr != nil {
 			return agent.StoredPlan{}, planErr
@@ -230,6 +232,31 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	}
 	if err := validateModelEffects(request.Effects, request.Capabilities); err != nil {
 		return agent.StoredPlan{}, err
+	}
+	if request.ResponseText == "" {
+		effectRefs, err := insertModelEffectsTx(ctx, tx, request.Key, request.InvocationID, request.Effects, nowMS)
+		if err != nil {
+			return agent.StoredPlan{}, err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
+        config_version = ?, turn_state = ?, delivery_status = ?,
+        generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
+        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ? AND action_id IS NULL`,
+			uint64(request.ConfigVersion), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded), nowMS,
+			request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
+			uint8(agent.TurnGenerating), string(request.Lease), nowMS,
+		)
+		if err := requireOne(result, err, "publish effect-only plan"); err != nil {
+			return agent.StoredPlan{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return agent.StoredPlan{}, storageError("commit effect-only plan", err)
+		}
+		return agent.StoredPlan{
+			InvocationID: request.InvocationID, ConfigVersion: request.ConfigVersion,
+			CreatedAt: createdAt, Effects: effectRefs,
+		}, nil
 	}
 	responseID, err := identity.NewMessageID()
 	if err != nil {
@@ -410,8 +437,8 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 		return effect.MarkRead{TargetMessageID: intent.TargetMessageID}, nil
 	case agent.EffectSetChatPresence:
 		return effect.SetChatPresence{State: effect.PresenceState(intent.Presence)}, nil
-	case agent.EffectRunGroupCommand:
-		return effect.RunGroupCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
+	case agent.EffectRunCommand:
+		return effect.RunCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
 	default:
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", errors.New("effect kind is invalid"))
 	}
@@ -513,7 +540,7 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 		return agent.TurnRecord{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn message ID", parseErr)
 	}
 	record.MessageID = messageID
-	if row.actionID.Valid {
+	if row.actionID.Valid || agent.TurnState(row.state) == agent.TurnSucceeded {
 		plan, err := row.plan(key, invocationID)
 		if err != nil {
 			return agent.TurnRecord{}, err
@@ -688,6 +715,15 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 }
 
 func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agent.StoredPlan, error) {
+	if agent.TurnState(row.state) == agent.TurnSucceeded && !row.actionID.Valid && !row.responseID.Valid && !row.responseText.Valid {
+		if !row.configVersion.Valid || row.deliveryStatus != int64(agent.DeliverySucceeded) {
+			return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode effect-only plan", errors.New("partial effect-only plan"))
+		}
+		return agent.StoredPlan{
+			InvocationID: invocationID, ConfigVersion: agent.ConfigVersion(row.configVersion.Int64),
+			CreatedAt: time.UnixMilli(row.updatedAt).UTC(),
+		}, nil
+	}
 	if !row.configVersion.Valid || !row.responseID.Valid || !row.actionID.Valid || !row.responseText.Valid || !row.responseCreatedAt.Valid {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response plan", errors.New("partial response plan"))
 	}

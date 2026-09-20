@@ -223,10 +223,9 @@ func TestNormalizeFailsClosedWithoutSenderLID(t *testing.T) {
 func TestIgnoredNativeEventLogDoesNotExposePayloadOrProviderIdentity(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	var output bytes.Buffer
-	adapter.logger = slog.New(slog.NewJSONHandler(&output, nil))
 	secretText := "message-body-must-not-be-logged"
 	secretID := "provider-id-must-not-be-logged"
-	adapter.handleEvent(&events.Message{
+	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{
 				Chat:   types.NewJID("15550000022", types.DefaultUserServer),
@@ -235,7 +234,14 @@ func TestIgnoredNativeEventLogDoesNotExposePayloadOrProviderIdentity(t *testing.
 			ID: types.MessageID(secretID), Timestamp: time.Now().UTC(),
 		},
 		Message: &waE2E.Message{Conversation: proto.String(secretText)}, IsEdit: true,
-	})
+	}
+	adapter.logger = slog.New(slog.NewJSONHandler(&output, nil))
+	adapter.handleEvent(event)
+	if output.Len() != 0 {
+		t.Fatalf("ignored native event should be hidden at info level: %s", output.String())
+	}
+	adapter.logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	adapter.handleEvent(event)
 	logged := output.String()
 	if !strings.Contains(logged, "edited_message") {
 		t.Fatalf("ignore reason missing from log: %s", logged)
@@ -266,6 +272,44 @@ func TestDirectMessageUsesLIDIdentityAndPhoneAliasForAllowlist(t *testing.T) {
 	}
 	if candidate.ProviderChatAddress != phone.String() || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
 		t.Fatalf("did not preserve LID identity and phone alias: %#v", candidate)
+	}
+}
+
+func TestAllowlistWildcardsMatchExpectedChatKinds(t *testing.T) {
+	direct := types.NewJID("10000000001", types.HiddenUserServer)
+	group := types.NewJID("120363000000000001", types.GroupServer)
+	status := types.StatusBroadcastJID
+	tests := []struct {
+		name    string
+		pattern string
+		kind    conversation.ChatKind
+		address string
+		want    bool
+	}{
+		{name: "all direct", pattern: policy.ChatAllowlistAll, kind: conversation.ChatDirect, address: direct.String(), want: true},
+		{name: "all group", pattern: policy.ChatAllowlistAll, kind: conversation.ChatGroup, address: group.String(), want: true},
+		{name: "all excludes status", pattern: policy.ChatAllowlistAll, kind: conversation.ChatStatus, address: status.String(), want: false},
+		{name: "direct wildcard direct", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatDirect, address: direct.String(), want: true},
+		{name: "direct wildcard group", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatGroup, address: group.String(), want: false},
+		{name: "group wildcard group", pattern: policy.ChatAllowlistGroup, kind: conversation.ChatGroup, address: group.String(), want: true},
+		{name: "group wildcard direct", pattern: policy.ChatAllowlistGroup, kind: conversation.ChatDirect, address: direct.String(), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := &Adapter{allowlist: map[string]struct{}{test.pattern: {}}}
+			if got := adapter.chatAllowlisted(test.kind, test.address); got != test.want {
+				t.Fatalf("chatAllowlisted(%q, %v) = %v, want %v", test.pattern, test.kind, got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeAllowlistAddressAcceptsWildcards(t *testing.T) {
+	for _, wildcard := range []string{policy.ChatAllowlistAll, policy.ChatAllowlistDirect, policy.ChatAllowlistGroup} {
+		got, err := normalizeAllowlistAddress(wildcard)
+		if err != nil || got != wildcard {
+			t.Fatalf("normalize wildcard %q = %q, %v", wildcard, got, err)
+		}
 	}
 }
 
@@ -301,6 +345,19 @@ func TestReadDirectChatAuthorityDoesNotTrustMessageFlags(t *testing.T) {
 	authority, err := adapter.ReadChatAuthority(context.Background(), principal)
 	if err != nil || authority.ChatKind != conversation.ChatDirect || authority.ActorIsAdmin || authority.BotIsAdmin || authority.ObservedAt <= 0 {
 		t.Fatalf("direct authority = %#v, %v", authority, err)
+	}
+}
+
+func TestReadDirectChatContextDoesNotInventGroupMetadata(t *testing.T) {
+	adapter, _ := normalizationAdapter(t)
+	chatID, _ := identity.NewChatID()
+	adapter.targets = staticTargets{chatAddress: "15550000077@s.whatsapp.net"}
+	adapter.ready.Store(true)
+	context, err := adapter.ReadChatContext(context.Background(), agent.Key{
+		TenantID: adapter.tenantID, AccountID: adapter.accountID, ChatID: chatID,
+	})
+	if err != nil || context.Kind != "private" || context.Name != "" || context.Description != "" || context.BotIsAdmin {
+		t.Fatalf("direct chat context = %#v, %v", context, err)
 	}
 }
 

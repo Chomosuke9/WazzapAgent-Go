@@ -183,7 +183,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	contextBuilder, err := agent.NewDeterministicContextBuilder(application.config.MaxContextBytes())
+	contextBuilder, err := agent.NewDeterministicContextBuilder(application.config.MaxContextBytes(), application.config.AssistantName())
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +222,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		MaxResponseBytes: application.config.MaxResponseBytes(),
 		HTTPClient:       llmHTTPClient,
 		Observer:         application.metrics,
+		Commands:         inbound.CommandRegistry(),
 	})
 	if err != nil {
 		return nil, err
@@ -238,6 +239,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			MaxResponseBytes: application.config.MaxResponseBytes(),
 			HTTPClient:       llmHTTPClient,
 			Observer:         application.metrics,
+			Commands:         inbound.CommandRegistry(),
 		})
 		if fallbackErr != nil {
 			return nil, fallbackErr
@@ -309,6 +311,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	events := &configEventRelay{}
+	agentLogs := observability.NewAgentLogger(application.logger)
 	defaults := agent.ConfigValues{
 		Model: agent.ModelConfig{
 			ProviderID:      application.config.LLMProviderID(),
@@ -328,14 +331,23 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			HistoryStore:  store.History(),
 			Turns:         store.Turns(),
 			Context:       contextBuilder,
+			ChatContext:   waAdapter,
 			HistoryWindow: application.config.HistoryWindow(),
 			Model:         model,
 			Responses:     dispatcher,
 			Effects:       effectDispatcher,
 			Events:        events,
+			InvokeEvents:  agentLogs,
 			Clock:         agent.SystemClock{},
 		})
 	})
+	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, waAdapter, application.metrics, agent.SystemClock{})
+	if err != nil {
+		return nil, err
+	}
+	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
+		return nil, err
+	}
 	registry, err = agent.NewRegistry(ctx, factory, agent.RegistryLimits{
 		MaxLive:             application.config.RegistryMaxLive(),
 		IdleTTL:             application.config.RegistryIdleTTL(),
@@ -358,10 +370,12 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	aiHandler, err := inbound.NewAIHandler(
 		store.Inbound(), registry, gate, commandResponses, application.metrics, waAdapter,
 		inbound.BatchOptions{
-			Debounce: application.config.MessageDebounce(),
-			BurstCap: application.config.MessageBurstCap(),
-			Clock:    agent.SystemClock{},
-			Activity: waAdapter,
+			Debounce:    application.config.MessageDebounce(),
+			BurstCap:    application.config.MessageBurstCap(),
+			Clock:       agent.SystemClock{},
+			Activity:    waAdapter,
+			Events:      agentLogs,
+			ChatContext: waAdapter,
 		},
 	)
 	if err != nil {

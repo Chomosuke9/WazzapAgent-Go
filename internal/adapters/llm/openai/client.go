@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +14,8 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
 )
 
 const maxProviderBodyBytes = 1 << 20
@@ -29,6 +30,7 @@ type Config struct {
 	MaxResponseBytes uint32
 	HTTPClient       *http.Client
 	Observer         Observer
+	Commands         *command.Registry
 }
 
 type Observer interface {
@@ -49,6 +51,7 @@ type Client struct {
 	timeout          time.Duration
 	maxResponseBytes uint32
 	observer         Observer
+	commands         *command.Registry
 }
 
 func New(config Config) (*Client, error) {
@@ -56,7 +59,7 @@ func New(config Config) (*Client, error) {
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create LLM client", err)
 	}
-	if strings.TrimSpace(config.APIKey) == "" || config.ProviderID.IsZero() || strings.TrimSpace(config.SystemPolicy) == "" {
+	if strings.TrimSpace(config.APIKey) == "" || config.ProviderID.IsZero() || strings.TrimSpace(config.SystemPolicy) == "" || config.Commands == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create LLM client", fmt.Errorf("credentials, provider ID, and system policy are required"))
 	}
 	if config.Timeout <= 0 || config.Timeout > 10*time.Minute {
@@ -92,6 +95,7 @@ func New(config Config) (*Client, error) {
 		timeout:          config.Timeout,
 		maxResponseBytes: config.MaxResponseBytes,
 		observer:         observer,
+		commands:         config.Commands,
 	}, nil
 }
 
@@ -136,7 +140,7 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 		if requestCtx.Err() != nil {
 			return agent.ModelResult{}, llmContextError("invoke model", requestCtx.Err())
 		}
-		return agent.ModelResult{}, agent.NewError(agent.ErrorUnavailable, "invoke model", fmt.Errorf("provider request failed"))
+		return agent.ModelResult{}, agent.NewError(agent.ErrorUnavailable, "invoke model", providerRequestError(err))
 	}
 	defer httpResponse.Body.Close()
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
@@ -145,14 +149,14 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	}
 	body, err := io.ReadAll(io.LimitReader(httpResponse.Body, maxProviderBodyBytes+1))
 	if err != nil {
-		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "read model response", fmt.Errorf("provider response could not be read"))
+		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "read model response", err)
 	}
 	if len(body) > maxProviderBodyBytes {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "read model response", fmt.Errorf("provider response body is too large"))
 	}
 	var decoded completionResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider returned invalid JSON"))
+		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", err)
 	}
 	if len(decoded.Choices) == 0 {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider returned no choices"))
@@ -164,7 +168,7 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	if len(message.Content) > int(client.maxResponseBytes) {
 		return agent.ModelResult{}, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("provider response exceeds configured byte limit"))
 	}
-	text, replyTo, effects, err := decodeModelOutput(message.Content, message.ToolCalls, request)
+	text, replyTo, effects, err := decodeModelOutput(message.Content, message.ToolCalls, request, client.commands)
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
@@ -178,12 +182,21 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	if err := agent.ValidateModelMessages(request.Messages); err != nil {
 		return nil, nil, err
 	}
-	tools, err := completionTools(request)
+	tools, err := completionTools(request, client.commands)
 	if err != nil {
 		return nil, nil, err
 	}
-	messages := []completionMessage{{Role: "system", Content: client.systemPolicy}}
+	systemContent := client.systemPolicy
 	for _, message := range request.Messages {
+		if message.Provenance == agent.ProvenanceBasePrompt {
+			systemContent += "\n\n" + message.Content
+		}
+	}
+	messages := []completionMessage{{Role: "system", Content: systemContent}}
+	for _, message := range request.Messages {
+		if message.Provenance == agent.ProvenanceBasePrompt {
+			continue
+		}
 		role := ""
 		switch message.Role {
 		case agent.ModelSystem:
@@ -238,13 +251,30 @@ type completionToolCall struct {
 	Function completionFunction `json:"function"`
 }
 
-func completionTools(request agent.ModelRequest) ([]completionTool, error) {
+func completionTools(request agent.ModelRequest, registry *command.Registry) ([]completionTool, error) {
 	capabilities := request.Capabilities.Values()
 	if request.CurrentMessageID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "build model tools", fmt.Errorf("current message identity is required for tools"))
 	}
 	contextIDs := sortedContextMessageIDs(request.ContextMessages)
 	replyContextIDs := append([]string{"none"}, contextIDs...)
+	commandDescription := "No registered command is available for this invocation; use null."
+	if len(request.Commands) > 0 {
+		available := make([]string, 0, len(request.Commands))
+		descriptors := registry.Descriptors()
+		byName := make(map[string]command.Descriptor, len(descriptors))
+		for _, descriptor := range descriptors {
+			byName[string(descriptor.Name)] = descriptor
+		}
+		for _, name := range request.Commands {
+			descriptor, ok := byName[name]
+			if !ok {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "build model tools", fmt.Errorf("command is not registered"))
+			}
+			available = append(available, fmt.Sprintf("/%s - %s", name, descriptor.Description))
+		}
+		commandDescription = "Each item must be one complete registered command, with or without the initial slash. Available commands: " + strings.Join(available, "; ")
+	}
 	replyParameters, err := json.Marshal(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -256,13 +286,13 @@ func completionTools(request agent.ModelRequest) ([]completionTool, error) {
 			"text": map[string]any{
 				"type":        "string",
 				"minLength":   1,
-				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and `@Bot (bot)`.",
+				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and the bot mention `@<assistant name> (bot)` using the configured assistant name from the system prompt.",
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},
 				"items":       map[string]any{"type": "string"},
 				"maxItems":    8,
-				"description": "Each item must be one complete group command, with or without the initial slash: `/group close` or `group close`, `/group open` or `group open`, `/group description <non-empty text>` or `group description <non-empty text>`, `/group delete` or `group delete`, `/group mute @Name (senderRef) <minutes>` or `group mute @Name (senderRef) <minutes>`, or `/group kick @Name (senderRef)` or `group kick @Name (senderRef)`. Never put natural-language instructions here. For description, include the complete text after `group description`.",
+				"description": commandDescription,
 			},
 			"command_context_msg_id": map[string]any{
 				"type":        []string{"array", "null"},
@@ -328,7 +358,7 @@ func toolSchema(capability agent.Capability, contextIDs []string) (string, strin
 	}
 }
 
-func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelRequest) (string, identity.MessageID, []agent.ModelEffect, error) {
+func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelRequest, registry *command.Registry) (string, identity.MessageID, []agent.ModelEffect, error) {
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
 		return content, identity.MessageID{}, nil, nil
 	}
@@ -339,7 +369,10 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model response", fmt.Errorf("tool response has no current message target"))
 	}
 	var calls []completionToolCall
-	if err := json.Unmarshal(raw, &calls); err != nil || len(calls) == 0 || len(calls) > agent.MaxModelEffects {
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", err)
+	}
+	if len(calls) == 0 || len(calls) > agent.MaxModelEffects {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool calls are invalid or exceed the limit"))
 	}
 	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
@@ -363,7 +396,7 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 			if replySeen {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reply_message may only be called once"))
 			}
-			text, target, commands, err := decodeReplyMessage(call, request)
+			text, target, commands, err := decodeReplyMessage(call, request, registry)
 			if err != nil {
 				return "", identity.MessageID{}, nil, err
 			}
@@ -424,7 +457,7 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 	}
 }
 
-func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (string, identity.MessageID, []agent.ModelEffect, error) {
+func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, identity.MessageID, []agent.ModelEffect, error) {
 	var raw struct {
 		ContextMessageID        string          `json:"context_msg_id"`
 		Text                    string          `json:"text"`
@@ -472,20 +505,27 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 	if len(commands) > agent.MaxModelEffects {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands exceed the allowed limit"))
 	}
-	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
-	for _, capability := range request.Capabilities.Values() {
-		allowed[capability] = struct{}{}
+	allowed := make(map[string]struct{}, len(request.Commands))
+	for _, name := range request.Commands {
+		allowed[name] = struct{}{}
 	}
 	effects := make([]agent.ModelEffect, 0, len(commands))
 	for index, commandText := range commands {
 		commandText = strings.TrimSpace(commandText)
-		parsed, err := groupcmd.Parse(commandText)
-		if err != nil {
-			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("invalid group command: %w", err))
+		if commandText != "" && !strings.HasPrefix(commandText, "/") {
+			commandText = "/" + commandText
 		}
-		capability := agent.Capability(parsed.Capability())
-		if _, ok := allowed[capability]; !ok {
-			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("group command exceeds current permission level"))
+		parsed, _, recognized := registry.Parse(commandText)
+		if !recognized {
+			// A malformed optional command must not suppress the visible reply.
+			continue
+		}
+		if _, ok := allowed[string(parsed.Name)]; !ok {
+			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("registered command is not allowed for bot origin"))
+		}
+		canonical := "/" + string(parsed.Name)
+		if parsed.ArgumentsPresent {
+			canonical += " " + parsed.Arguments
 		}
 		var commandTarget identity.MessageID
 		if args.CommandContextMessageID != nil && index < len(*args.CommandContextMessageID) {
@@ -499,34 +539,33 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest) (st
 					return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
 				}
 			}
-		} else if parsed.Kind == groupcmd.Delete && args.ContextMessageID != "none" {
+		} else if args.ContextMessageID != "none" {
 			var ok bool
 			commandTarget, ok = request.ContextMessages[args.ContextMessageID]
 			if !ok {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
 			}
 		}
-		var target identity.MessageID
-		if parsed.Kind == groupcmd.Delete {
-			target = commandTarget
-		}
-		if err := parsed.ValidateTarget(target); err != nil {
-			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", err)
-		}
-		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunGroupCommand, TargetMessageID: target, Command: commandText}})
+		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunCommand, TargetMessageID: commandTarget, Command: canonical}})
 	}
 	return args.Text, replyTo, effects, nil
 }
 
 func decodeArguments(raw json.RawMessage, value any) error {
+	if len(raw) > 4*1024 {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the allowed limit"))
+	}
 	var arguments string
-	if err := json.Unmarshal(raw, &arguments); err != nil || len(arguments) > 4*1024 {
-		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+	if err := json.Unmarshal(raw, &arguments); err != nil {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", err)
+	}
+	if len(arguments) > 4*1024 {
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the allowed limit"))
 	}
 	decoder := json.NewDecoder(strings.NewReader(arguments))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
+		return agent.NewError(agent.ErrorProviderFailure, "decode model response", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments contain extra values"))
@@ -559,6 +598,16 @@ func statusError(status int) error {
 	default:
 		return agent.NewError(agent.ErrorProviderFailure, "invoke model", fmt.Errorf("provider returned HTTP %d", status))
 	}
+}
+
+func providerRequestError(err error) error {
+	var requestError *url.Error
+	if errors.As(err, &requestError) && requestError.Err != nil {
+		// Preserve the native transport failure without echoing the configured
+		// provider URL, which may itself contain deployment-sensitive routing.
+		return requestError.Err
+	}
+	return err
 }
 
 func llmContextError(operation string, err error) error {

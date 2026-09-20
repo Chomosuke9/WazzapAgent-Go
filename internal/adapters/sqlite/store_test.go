@@ -17,6 +17,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
@@ -373,6 +374,48 @@ func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 	).Scan(&owner); err != nil || owner != 1 {
 		t.Fatalf("current owner was not restored: owner=%d err=%v", owner, err)
 	}
+}
+
+func TestAccountPolicyReconciliationAppliesChatAllowlistWildcards(t *testing.T) {
+	store := openTestStore(t)
+	direct := testCandidate(t, "wildcard-direct", "10000000001@lid")
+	group := direct
+	group.ProviderMessageID = "wildcard-group"
+	group.ProviderChatAddress = "120363000000000001@g.us"
+	group.ChatKind = conversation.ChatGroup
+	status := direct
+	status.ProviderMessageID = "wildcard-status"
+	status.ProviderChatAddress = "status@broadcast"
+	status.ChatKind = conversation.ChatStatus
+
+	candidates := []conversation.IncomingCandidate{direct, group, status}
+	keys := make([]agent.Key, 0, len(candidates))
+	for _, candidate := range candidates {
+		claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
+		if err != nil {
+			t.Fatalf("claim %s: %v", candidate.ProviderMessageID, err)
+		}
+		keys = append(keys, agent.Key{TenantID: candidate.TenantID, AccountID: candidate.AccountID, ChatID: claimed.Message.ChatID})
+	}
+
+	assertAllowed := func(pattern string, want ...bool) {
+		t.Helper()
+		if err := store.Inbound().ReconcileAccountPolicy(
+			context.Background(), direct.TenantID, direct.AccountID, direct.ProviderSenderPhone, []string{pattern},
+		); err != nil {
+			t.Fatalf("reconcile wildcard %q: %v", pattern, err)
+		}
+		for index, key := range keys {
+			got, err := store.Inbound().IsChatAllowlisted(context.Background(), key)
+			if err != nil || got != want[index] {
+				t.Fatalf("wildcard %q chat %d = %v, %v; want %v", pattern, index, got, err, want[index])
+			}
+		}
+	}
+
+	assertAllowed(policy.ChatAllowlistDirect, true, false, false)
+	assertAllowed(policy.ChatAllowlistGroup, false, true, false)
+	assertAllowed(policy.ChatAllowlistAll, true, true, false)
 }
 
 func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T) {

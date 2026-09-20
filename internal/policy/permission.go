@@ -229,7 +229,7 @@ func resolvePermissionAtom(name string, facts PermissionFacts) (bool, error) {
 		return true, nil
 	case "owner", "isowner":
 		return facts.IsOwner, nil
-	case "admin", "isadmin":
+	case "admin", "isadmin", "senderisadmin", "sender_is_admin", "sender-is-admin":
 		return facts.IsAdmin, nil
 	case "group", "isgroup":
 		return facts.IsGroup, nil

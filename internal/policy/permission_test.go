@@ -20,6 +20,18 @@ func TestEvaluatePermissionSupportsNegatedBotOrigin(t *testing.T) {
 	}
 }
 
+func TestEvaluatePermissionUsesActualBotSenderFacts(t *testing.T) {
+	bot := policy.PermissionFacts{IsGroup: true, IsAdmin: true, FromMe: true}
+	allowed, err := policy.EvaluatePermission("isGroup and senderIsAdmin", bot)
+	if err != nil || !allowed {
+		t.Fatalf("admin bot permission = %v, %v", allowed, err)
+	}
+	allowed, err = policy.EvaluatePermission("(isGroup and senderIsAdmin) and !fromMe", bot)
+	if err != nil || allowed {
+		t.Fatalf("fromMe bot permission = %v, %v", allowed, err)
+	}
+}
+
 func TestEvaluatePermissionHonorsNotAndPrecedence(t *testing.T) {
 	facts := policy.PermissionFacts{IsOwner: true, IsGroup: true, IsAdmin: false}
 	for expression, want := range map[string]bool{

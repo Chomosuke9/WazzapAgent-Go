@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands/groupcmd"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 )
 
@@ -117,6 +116,7 @@ type Invocation struct {
 	Input         []ContentPart
 	Mentions      []MentionContext
 	Capabilities  CapabilitySet
+	Commands      []string
 	PolicyVersion ConfigVersion
 	RequestedAt   time.Time
 }
@@ -145,6 +145,7 @@ type ModelProvenance uint8
 const (
 	ProvenanceBasePrompt ModelProvenance = iota + 1
 	ProvenancePromptOverride
+	ProvenanceChatInformation
 	ProvenanceHistoryUser
 	ProvenanceHistoryAssistant
 	ProvenanceHistorySystem
@@ -169,6 +170,7 @@ type ModelRequest struct {
 	Model            ModelConfig
 	Messages         []ModelMessage
 	Capabilities     CapabilitySet
+	Commands         []string
 	ContextMessages  map[string]identity.MessageID
 }
 
@@ -184,7 +186,7 @@ const (
 	EffectDeleteMessage
 	EffectMarkRead
 	EffectSetChatPresence
-	EffectRunGroupCommand
+	EffectRunCommand
 )
 
 type PresenceState string
@@ -212,19 +214,15 @@ func (intent EffectIntent) Capability() Capability {
 		return "message.mark-read"
 	case EffectSetChatPresence:
 		return "chat.presence"
-	case EffectRunGroupCommand:
-		parsed, err := groupcmd.Parse(intent.Command)
-		if err == nil {
-			return Capability(parsed.Capability())
-		}
-		return ""
+	case EffectRunCommand:
+		return "command.execute"
 	default:
 		return ""
 	}
 }
 
 func (intent EffectIntent) Durable() bool {
-	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage || intent.Kind == EffectRunGroupCommand
+	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage || intent.Kind == EffectRunCommand
 }
 
 func (intent EffectIntent) Validate() error {
@@ -241,13 +239,11 @@ func (intent EffectIntent) Validate() error {
 		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Command != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
 			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
 		}
-	case EffectRunGroupCommand:
-		parsed, err := groupcmd.Parse(intent.Command)
-		if err != nil || intent.Emoji != "" || intent.Presence != "" {
-			return NewError(ErrorInvalidArgument, "validate group command intent", fmt.Errorf("group command is unsupported or malformed"))
-		}
-		if err := parsed.ValidateTarget(intent.TargetMessageID); err != nil {
-			return NewError(ErrorInvalidArgument, "validate group command intent", err)
+	case EffectRunCommand:
+		if strings.TrimSpace(intent.Command) != intent.Command || !strings.HasPrefix(intent.Command, "/") ||
+			len(intent.Command) == 0 || len(intent.Command) > MaxInputBytes || !utf8.ValidString(intent.Command) ||
+			intent.Emoji != "" || intent.Presence != "" {
+			return NewError(ErrorInvalidArgument, "validate command intent", fmt.Errorf("registered command is malformed"))
 		}
 	default:
 		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("effect kind is invalid"))
@@ -290,7 +286,7 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 		return InvocationDigest{}, NewError(ErrorIntegrityFailure, "digest invocation", err)
 	}
 	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.invocation.v2")
+	canonical.WriteString("wazzapagent.invocation.v3")
 	writeField(&canonical, key.TenantID.String())
 	writeField(&canonical, key.AccountID.String())
 	writeField(&canonical, key.ChatID.String())
@@ -325,6 +321,10 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(values)))
 	for _, capability := range values {
 		writeField(&canonical, string(capability))
+	}
+	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Commands)))
+	for _, name := range invocation.Commands {
+		writeField(&canonical, name)
 	}
 	writeMentionDigestExtension(&canonical, invocation.Mentions, quoteMentions(invocation.Quote))
 	return sha256.Sum256(canonical.Bytes()), nil
@@ -380,6 +380,17 @@ func validateInvocation(key Key, invocation Invocation) error {
 	}
 	if err := validateMentionContexts(flattenContent(invocation.Input), invocation.Mentions); err != nil {
 		return NewError(ErrorInvalidArgument, "validate invocation", err)
+	}
+	for index, name := range invocation.Commands {
+		if name == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, " /\t\r\n") {
+			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("model command name is invalid"))
+		}
+		if index > 0 && invocation.Commands[index-1] >= name {
+			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("model command names must be sorted and unique"))
+		}
+	}
+	if invocation.Capabilities.Has("command.execute") != (len(invocation.Commands) > 0) {
+		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("command capability and names must be present together"))
 	}
 	if invocation.PolicyVersion == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("policy version is required"))

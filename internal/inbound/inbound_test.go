@@ -121,7 +121,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	output := fixture.sender.last().Text
 	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
 		!strings.Contains(output, "=== USER ===\n") ||
-		strings.Count(output, "=== USER ===") != 1 ||
+		strings.Count(output, "=== USER ===") != 2 ||
 		strings.Contains(output, "=== ASSISTANT ===") ||
 		!strings.Contains(output, "/dump") || !strings.Contains(output, "【#000") {
 		t.Fatalf("dump output = %q", output)
@@ -312,10 +312,10 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 		t.Fatalf("handle follow-up after restart: %v", err)
 	}
 	request := secondRuntime.model.lastRequest()
-	if len(request.Messages) != 2 ||
-		!strings.Contains(request.Messages[1].Content, "remember blue") ||
-		!strings.Contains(request.Messages[1].Content, "reply: remember blue") ||
-		!strings.Contains(request.Messages[1].Content, "what color?") {
+	if len(request.Messages) != 3 ||
+		!strings.Contains(request.Messages[2].Content, "remember blue") ||
+		!strings.Contains(request.Messages[2].Content, "reply: remember blue") ||
+		!strings.Contains(request.Messages[2].Content, "what color?") {
 		t.Fatalf("recreated model context = %#v", request.Messages)
 	}
 }
@@ -567,6 +567,9 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
+	if !request.Capabilities.Has("command.execute") || len(request.Commands) != 2 || request.Commands[0] != "help" || request.Commands[1] != "info" {
+		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
+	}
 
 	denied := fixture.candidate("permission-3", chat, conversation.ChatDirect, "/permission 0")
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
@@ -781,11 +784,11 @@ func newFixtureAtPath(
 		Prompt:     "base prompt",
 		Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
 	}
-	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes)
+	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes, "Vivy")
 	factory := agent.FactoryFunc(func(ctx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(ctx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
-			Context: contextBuilder, HistoryWindow: agent.DefaultHistoryWindow, Model: model,
+			Context: contextBuilder, ChatContext: staticChatContextReader{}, HistoryWindow: agent.DefaultHistoryWindow, Model: model,
 			Responses: dispatcher, Events: agent.DiscardConfigEvents{}, Clock: agent.SystemClock{},
 		})
 	})
@@ -877,6 +880,12 @@ type recordingSender struct {
 }
 
 type staticChatAuthority struct{}
+
+type staticChatContextReader struct{}
+
+func (staticChatContextReader) ReadChatContext(context.Context, agent.Key) (agent.ChatContext, error) {
+	return agent.ChatContext{Kind: "private"}, nil
+}
 
 func (staticChatAuthority) ReadChatAuthority(_ context.Context, _ policy.Principal) (policy.ChatAuthority, error) {
 	return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}, nil

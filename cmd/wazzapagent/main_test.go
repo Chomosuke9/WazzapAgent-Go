@@ -8,7 +8,7 @@ import (
 
 func TestEmbeddedSystemPromptRendersSupportedPlaceholders(t *testing.T) {
 	rendered := renderSystemPrompt(embeddedSystemPrompt, "Wazzap", time.Date(2026, 9, 15, 1, 2, 3, 0, time.UTC))
-	for _, value := range []string{"The assistant is Wazzap", "Today's date: 15 Sep 2026"} {
+	for _, value := range []string{"The assistant is Wazzap", "Today's date: 15 Sep 2026", "@Wazzap (bot)"} {
 		if !strings.Contains(rendered, value) {
 			t.Fatalf("rendered prompt lacks %q", value)
 		}
@@ -17,6 +17,9 @@ func TestEmbeddedSystemPromptRendersSupportedPlaceholders(t *testing.T) {
 		if strings.Contains(rendered, token) {
 			t.Fatalf("placeholder %q was not rendered", token)
 		}
+	}
+	if strings.Contains(rendered, "@Bot (bot)") {
+		t.Fatal("rendered prompt still contains the old bot mention")
 	}
 }
 

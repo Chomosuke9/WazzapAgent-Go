@@ -483,7 +483,7 @@ Exit: percakapan text survive restart, ordering benar, dan tidak bergantung pada
 - `reply_message` membawa visible text dan optional command keluarga `/group *`; `react_to_message` adalah model tool kedua yang selalu aktif;
 - level 0 tidak memberi moderasi, level 1 mengizinkan delete, level 2 menambah mute, dan level 3 menambah kick;
 - mark-read serta composing/paused presence adalah perilaku runtime otomatis, bukan model tool atau permission;
-- command/effect model baru dieksekusi setelah text response invocation yang sama berhasil terkirim;
+- bila turn mengirim teks, command/effect model dieksekusi setelah teks tersebut berhasil terkirim; turn effect-only tidak memerlukan pengiriman teks;
 - provider fallback dan bounded retry policy;
 - model hanya dapat membawa `/group delete|mute|kick` sesuai level dan tidak pernah memperoleh human authority.
 
@@ -493,7 +493,7 @@ Exit: semua side effect melewati validation, authorization, durable claim, dan r
 
 - Contract `reply_message`/`react_to_message`, command `/permission` level 0–3, automatic mark-read/presence, fallback model, serta typed group-command effect outbox/recovery: implemented dan durable di SQLite.
 - Authorization command tetap berada di application/policy layer. Agent core menerima capability snapshot yang sudah diotorisasi dan tidak menerima actor atau permission DTO.
-- Effect model re-check capability, allowlist, policy revision, dan current chat authority tepat sebelum edge WhatsApp. Native effect tidak dapat berjalan sebelum response text invocation yang sama sukses.
+- Effect model re-check capability, allowlist, policy revision, dan current chat authority tepat sebelum edge WhatsApp. Bila ada response text, native effect menunggu pengirimannya sukses; turn effect-only dilepas setelah plan durable tanpa aksi kirim teks.
 - Media, scheduler, dan command execution di luar `/group delete|mute|kick` belum dibawa ke Part 3.
 - Local gate lulus: `go test ./...`, `go test -race ./...`, `go vet ./...`, `go build ./cmd/wazzapagent`, dan `git diff --check`.
 - Real-device canary untuk capability model masih pending; statusnya **Part 3 implementation complete locally**, bukan production-canary complete.

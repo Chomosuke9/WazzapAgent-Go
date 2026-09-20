@@ -324,10 +324,21 @@ func (store *InboundStore) ReconcileAccountPolicy(
 		return storageError("clear durable chat allowlist", err)
 	}
 	for _, address := range allowlist {
-		if _, err := tx.ExecContext(ctx, `UPDATE chats SET allowlisted = 1
-          WHERE tenant_id = ? AND account_id = ? AND provider_address = ?`,
-			tenantID.String(), accountID.String(), address,
-		); err != nil {
+		query := `UPDATE chats SET allowlisted = 1
+          WHERE tenant_id = ? AND account_id = ? AND provider_address = ?`
+		args := []any{tenantID.String(), accountID.String(), address}
+		switch address {
+		case policy.ChatAllowlistAll:
+			query = `UPDATE chats SET allowlisted = 1 WHERE tenant_id = ? AND account_id = ? AND kind IN (?, ?)`
+			args = []any{tenantID.String(), accountID.String(), uint8(conversation.ChatDirect), uint8(conversation.ChatGroup)}
+		case policy.ChatAllowlistDirect:
+			query = `UPDATE chats SET allowlisted = 1 WHERE tenant_id = ? AND account_id = ? AND kind = ?`
+			args = []any{tenantID.String(), accountID.String(), uint8(conversation.ChatDirect)}
+		case policy.ChatAllowlistGroup:
+			query = `UPDATE chats SET allowlisted = 1 WHERE tenant_id = ? AND account_id = ? AND kind = ?`
+			args = []any{tenantID.String(), accountID.String(), uint8(conversation.ChatGroup)}
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return storageError("apply durable chat allowlist", err)
 		}
 	}
