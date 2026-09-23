@@ -137,15 +137,13 @@ func (handler *AIHandler) Resume(ctx context.Context, message conversation.Incom
 		return handler.ignore(ctx, message, IgnoreStatus)
 	case !message.Allowlisted:
 		return handler.ignore(ctx, message, IgnoreNotAllowlisted)
-	case message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot:
-		return handler.ignore(ctx, message, IgnoreGroupNotMentioned)
 	}
 
 	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
 	if err != nil {
 		return err
 	}
-	if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot.Permission); err != nil {
+	if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot); err != nil {
 		return handler.ignore(ctx, message, IgnorePolicyDenied)
 	}
 	if resumed, err := handler.responses.Resume(ctx, message); err != nil || resumed {

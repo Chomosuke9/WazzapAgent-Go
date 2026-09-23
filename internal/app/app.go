@@ -2,129 +2,191 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	llmopenai "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/llm/openai"
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/fallback"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-// nonOverridableSystemPolicy is loaded from internal/agent/systemprompt.txt at startup
-var nonOverridableSystemPolicy string
-
-// SetSystemPolicy sets the system policy from the loaded file
-func SetSystemPolicy(policy string) {
-	nonOverridableSystemPolicy = policy
+// Options contains process-owned dependencies which are intentionally kept out
+// of config.Snapshot. GUI callers can provide a pairing sink without making
+// the core runtime write to a terminal.
+type Options struct {
+	SystemPolicy string
+	Pairing      whatsapp.PairingSink
 }
 
+type runtimeHandle interface {
+	run(context.Context) error
+	close(context.Context) error
+}
+
+type lifecycleState uint8
+
 const (
-	generationLeaseMargin = 30 * time.Second
-	actionLeaseMargin     = 10 * time.Second
-	maintenanceInterval   = time.Hour
-	terminalContentAge    = 24 * time.Hour
-	terminalRetentionAge  = 30 * 24 * time.Hour
+	lifecycleNew lifecycleState = iota
+	lifecycleRunning
+	lifecycleDone
+	lifecycleClosed
 )
 
 type Application struct {
-	config       config.Snapshot
-	logger       *slog.Logger
+	config  config.Snapshot
+	logger  *slog.Logger
+	options Options
+
 	ready        atomic.Bool
 	accountState atomic.Pointer[account.Runtime]
 	adapterState atomic.Pointer[whatsapp.Adapter]
+	runtimeState atomic.Pointer[conversationRuntime]
 	metrics      *observability.Metrics
+
+	mu             sync.Mutex
+	state          lifecycleState
+	runCancel      context.CancelFunc
+	runDone        chan struct{}
+	runStopping    <-chan struct{}
+	runErr         error
+	runtimeFactory func(context.Context) (runtimeHandle, error)
 }
 
-type healthResponse struct {
-	Status       string `json:"status"`
-	AccountState string `json:"account_state,omitempty"`
-	ErrorCode    string `json:"error_code,omitempty"`
-}
-
-type conversationRuntime struct {
-	store           *appsqlite.Store
-	registry        *agent.Registry
-	langSmith       *observability.LangSmith
-	account         *account.Runtime
-	adapter         *whatsapp.Adapter
-	recovery        *action.RecoveryWorker
-	effectRecovery  *effect.RecoveryWorker
-	inboundRecovery *inbound.RecoveryWorker
-	inboundDispatch *inbound.SplitDispatcher
-	maintenance     *maintenance.Worker
-}
-
-func New(cfg config.Snapshot, logger *slog.Logger) *Application {
+// New creates a single-use application owner. A stopped application cannot be
+// restarted; create a fresh Application for a subsequent run.
+func New(cfg config.Snapshot, logger *slog.Logger, options Options) *Application {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Application{config: cfg, logger: logger, metrics: observability.NewMetrics()}
+	application := &Application{
+		config:  cfg,
+		logger:  logger,
+		options: options,
+		metrics: observability.NewMetrics(),
+		state:   lifecycleNew,
+	}
+	application.runtimeFactory = func(ctx context.Context) (runtimeHandle, error) {
+		return application.composeRuntime(ctx)
+	}
+	return application
 }
 
+// Run owns only the core runtime. It never binds the optional diagnostics HTTP
+// listener, even when WAZZAP_HTTP_ADDRESS is configured.
 func (application *Application) Run(ctx context.Context) error {
+	return application.run(ctx, false, nil)
+}
+
+// RunCLI owns the diagnostics HTTP listener and the same core runtime used by
+// Run. GUI callers should use Run and obtain status through their controller.
+func (application *Application) RunCLI(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	started := make(chan struct{})
+	result := make(chan error, 1)
+	go func() { result <- application.run(ctx, true, started) }()
+	select {
+	case err := <-result:
+		return err
+	case <-started:
+	}
+	application.mu.Lock()
+	stopping := application.runStopping
+	application.mu.Unlock()
+	select {
+	case err := <-result:
+		return err
+	case <-stopping:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
+		closeErr := application.Close(shutdownCtx)
+		cancel()
+		if closeErr != nil {
+			return closeErr
+		}
+		return <-result
+	}
+}
+
+func (application *Application) run(parent context.Context, diagnostics bool, started chan struct{}) (result error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	runCtx, cancel, done, err := application.begin(parent)
+	if err != nil {
+		return err
+	}
+	if started != nil {
+		close(started)
+	}
+	defer func() { application.finish(done, result) }()
+	defer cancel()
+
 	if err := prepareDataDir(application.config.DataDir()); err != nil {
 		return fmt.Errorf("prepare data directory: %w", err)
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
-	var runtime *conversationRuntime
-	var err error
+	var runtime runtimeHandle
 	if application.config.WhatsAppEnabled() {
-		runtime, err = application.composeRuntime(runCtx)
+		runtime, err = application.runtimeFactory(runCtx)
 		if err != nil {
 			return fmt.Errorf("compose conversation runtime: %w", err)
 		}
-		application.accountState.Store(runtime.account)
-		application.adapterState.Store(runtime.adapter)
+		application.setRuntime(runtime)
+		defer func() {
+			if err := runtime.close(context.Background()); err != nil {
+				result = errors.Join(result, fmt.Errorf("close conversation runtime: %w", err))
+			}
+		}()
+	}
+	if runCtx.Err() != nil {
+		return nil
 	}
 
-	listener, err := net.Listen("tcp", application.config.HTTPAddress())
-	if err != nil {
-		if runtime != nil {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
-			_ = runtime.close(closeCtx)
-			closeCancel()
-		}
-		return fmt.Errorf("listen on %s: %w", application.config.HTTPAddress(), err)
-	}
-	server := &http.Server{
-		Handler:           application.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	var server *http.Server
+	var listener net.Listener
 	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- server.Serve(listener) }()
+	if diagnostics {
+		listener, err = net.Listen("tcp", application.config.HTTPAddress())
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", application.config.HTTPAddress(), err)
+		}
+		server = &http.Server{
+			Handler:           application.Handler(),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		go func() { serverErrors <- server.Serve(listener) }()
+	}
+	if runCtx.Err() != nil {
+		if server != nil {
+			_ = server.Close()
+		}
+		return nil
+	}
+
+	application.ready.Store(true)
+	if listener != nil {
+		application.logger.Info("application started", "address", listener.Addr().String(), "config", application.config.Redacted())
+	} else {
+		application.logger.Info("application started", "config", application.config.Redacted())
+	}
 	runtimeErrors := make(chan error, 1)
 	if runtime != nil {
 		go func() { runtimeErrors <- runtime.run(runCtx) }()
 	}
 
-	application.ready.Store(true)
-	application.logger.Info("application started", "address", listener.Addr().String(), "config", application.config.Redacted())
-
-	var result error
+	var runtimeErr error
 	runtimeFinished := false
 	select {
 	case err := <-serverErrors:
@@ -132,474 +194,112 @@ func (application *Application) Run(ctx context.Context) error {
 			result = fmt.Errorf("serve HTTP: %w", err)
 		}
 	case err := <-runtimeErrors:
+		runtimeErr = err
 		runtimeFinished = true
 		if err != nil {
 			result = fmt.Errorf("run conversation runtime: %w", err)
 		}
-	case <-ctx.Done():
+	case <-runCtx.Done():
 	}
 
+	// Cancellation is shared by the CLI server and runtime. Resource cleanup
+	// is deliberately allowed to finish after a caller's Close timeout;
+	// this prevents a late worker from using a database which was already closed.
 	application.ready.Store(false)
 	cancel()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
-	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
-		if result == nil {
-			result = fmt.Errorf("shutdown HTTP: %w", err)
+	if server != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
+		shutdownErr := server.Shutdown(shutdownCtx)
+		shutdownCancel()
+		if shutdownErr != nil {
+			_ = server.Close()
+			result = errors.Join(result, fmt.Errorf("shutdown HTTP: %w", shutdownErr))
 		}
 	}
-	if runtime != nil {
-		if !runtimeFinished {
-			select {
-			case err := <-runtimeErrors:
-				if err != nil && result == nil {
-					result = fmt.Errorf("stop conversation runtime: %w", err)
-				}
-			case <-shutdownCtx.Done():
-				if result == nil {
-					result = fmt.Errorf("stop conversation runtime: %w", shutdownCtx.Err())
-				}
-			}
-		}
-		if err := runtime.close(shutdownCtx); err != nil && result == nil {
-			result = err
+	if runtime != nil && !runtimeFinished {
+		runtimeErr = <-runtimeErrors
+		if runtimeErr != nil {
+			result = errors.Join(result, fmt.Errorf("stop conversation runtime: %w", runtimeErr))
 		}
 	}
-	application.accountState.Store(nil)
-	application.adapterState.Store(nil)
-	application.logger.Info("application stopped")
 	return result
 }
 
-func (application *Application) composeRuntime(ctx context.Context) (_ *conversationRuntime, resultErr error) {
-	if err := prepareDataDir(application.config.TenantDataDir()); err != nil {
-		return nil, agent.NewError(agent.ErrorStorageFailure, "prepare tenant data directory", err)
+func (application *Application) begin(parent context.Context) (context.Context, context.CancelFunc, chan struct{}, error) {
+	application.mu.Lock()
+	defer application.mu.Unlock()
+	if application.state != lifecycleNew {
+		return nil, nil, nil, agent.NewError(agent.ErrorConflict, "start application", errors.New("application is single-use and has already been started or closed"))
 	}
-	store, err := appsqlite.OpenWithOptions(ctx, application.config.AppDatabasePath(), appsqlite.Options{
-		GenerationLeaseTTL: application.config.LLMTimeout() + generationLeaseMargin,
-		ActionLeaseTTL:     application.config.SendTimeout() + actionLeaseMargin,
-	})
-	if err != nil {
-		return nil, err
-	}
-	contextBuilder, err := agent.NewDeterministicContextBuilder(application.config.MaxContextBytes(), application.config.AssistantName())
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if resultErr != nil {
-			_ = store.Close()
-		}
-	}()
-	var registry *agent.Registry
-	defer func() {
-		if resultErr != nil && registry != nil {
-			closeCtx, cancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
-			defer cancel()
-			_ = registry.Close(closeCtx)
-		}
-	}()
-	langSmith, err := observability.NewLangSmith(application.config.LangSmithAPIKey())
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if resultErr != nil {
-			closeCtx, cancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
-			defer cancel()
-			_ = langSmith.Shutdown(closeCtx)
-		}
-	}()
-	llmHTTPClient := langSmith.WrapHTTPClient(&http.Client{Timeout: application.config.LLMTimeout()})
-	primaryModel, err := llmopenai.New(llmopenai.Config{
-		Endpoint:         application.config.LLMEndpoint(),
-		APIKey:           application.config.LLMAPIKey(),
-		ProviderID:       application.config.LLMProviderID(),
-		SystemPolicy:     nonOverridableSystemPolicy,
-		Timeout:          application.config.LLMTimeout(),
-		Concurrency:      application.config.LLMConcurrency(),
-		MaxResponseBytes: application.config.MaxResponseBytes(),
-		HTTPClient:       llmHTTPClient,
-		Observer:         application.metrics,
-		Commands:         inbound.CommandRegistry(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	candidates := []fallback.Candidate{{Name: "primary", Model: primaryModel}}
-	if application.config.LLMFallbackEndpoint() != "" {
-		fallbackModel, fallbackErr := llmopenai.New(llmopenai.Config{
-			Endpoint:         application.config.LLMFallbackEndpoint(),
-			APIKey:           application.config.LLMFallbackAPIKey(),
-			ProviderID:       application.config.LLMProviderID(),
-			SystemPolicy:     nonOverridableSystemPolicy,
-			Timeout:          application.config.LLMTimeout(),
-			Concurrency:      application.config.LLMConcurrency(),
-			MaxResponseBytes: application.config.MaxResponseBytes(),
-			HTTPClient:       llmHTTPClient,
-			Observer:         application.metrics,
-			Commands:         inbound.CommandRegistry(),
-		})
-		if fallbackErr != nil {
-			return nil, fallbackErr
-		}
-		candidates = append(candidates, fallback.Candidate{Name: "fallback-1", Model: fallbackModel})
-	}
-	model, err := fallback.New(candidates)
-	if err != nil {
-		return nil, err
-	}
-	var pairing whatsapp.PairingSink
-	if application.config.PairingOutput() == "terminal" {
-		pairing = &whatsapp.TerminalPairingSink{Writer: os.Stdout}
-	}
-	waAdapter, err := whatsapp.Open(ctx, whatsapp.Config{
-		TenantID:        application.config.TenantID(),
-		AccountID:       application.config.AccountID(),
-		DeviceStorePath: application.config.WhatsAppDatabasePath(),
-		OwnerAddress:    application.config.OwnerAddress(),
-		Allowlist:       application.config.Allowlist(),
-		QueueCapacity:   application.config.InboundQueue(),
-		Workers:         application.config.InboundWorkers(),
-		ConnectTimeout:  application.config.ConnectTimeout(),
-		SendTimeout:     application.config.SendTimeout(),
-		Pairing:         pairing,
-		Targets:         store.Inbound(),
-		Logger:          application.logger,
-	})
-	if err != nil {
-		return nil, err
-	}
-	adapterOwned := true
-	defer func() {
-		if resultErr != nil && adapterOwned {
-			closeCtx, cancel := context.WithTimeout(context.Background(), application.config.ShutdownTimeout())
-			defer cancel()
-			_ = waAdapter.Stop(closeCtx)
-		}
-	}()
-	gate, err := policy.NewFixedGate(
-		application.config.PolicyID(),
-		application.config.PolicyRevision(),
-		store.Configs(),
-		store.Inbound(),
-		waAdapter,
-		application.config.AgentEnabled(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	dispatcher, err := action.NewDispatcher(store.Actions(), gate, waAdapter, agent.SystemClock{}, application.metrics)
-	if err != nil {
-		return nil, err
-	}
-	effectDispatcher, err := effect.NewDispatcher(store.Effects(), gate, waAdapter, agent.SystemClock{})
-	if err != nil {
-		return nil, err
-	}
-	recovery, err := action.NewRecoveryWorker(
-		application.config.TenantID(), store.Actions(), dispatcher, agent.SystemClock{}, time.Second, 64,
-	)
-	if err != nil {
-		return nil, err
-	}
-	effectRecovery, err := effect.NewRecoveryWorker(
-		application.config.TenantID(), store.Effects(), effectDispatcher, agent.SystemClock{}, time.Second, 64,
-	)
-	if err != nil {
-		return nil, err
-	}
-	events := &configEventRelay{}
-	agentLogs := observability.NewAgentLogger(application.logger)
-	defaults := agent.ConfigValues{
-		Model: agent.ModelConfig{
-			ProviderID:      application.config.LLMProviderID(),
-			Model:           application.config.LLMModel(),
-			MaxOutputTokens: application.config.MaxOutputTokens(),
-		},
-		Prompt: application.config.BasePrompt(),
-		Permission: agent.PermissionConfig{
-			PolicyID: application.config.PolicyID(),
-			Revision: application.config.PolicyRevision(),
-		},
-	}
-	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
-		return agent.New(factoryCtx, key, agent.Dependencies{
-			Defaults:      defaults,
-			ConfigStore:   store.Configs(),
-			HistoryStore:  store.History(),
-			Turns:         store.Turns(),
-			Context:       contextBuilder,
-			ChatContext:   waAdapter,
-			HistoryWindow: application.config.HistoryWindow(),
-			Model:         model,
-			Responses:     dispatcher,
-			Effects:       effectDispatcher,
-			Events:        events,
-			InvokeEvents:  agentLogs,
-			Clock:         agent.SystemClock{},
-		})
-	})
-	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, waAdapter, application.metrics, agent.SystemClock{})
-	if err != nil {
-		return nil, err
-	}
-	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
-		return nil, err
-	}
-	registry, err = agent.NewRegistry(ctx, factory, agent.RegistryLimits{
-		MaxLive:             application.config.RegistryMaxLive(),
-		IdleTTL:             application.config.RegistryIdleTTL(),
-		ConstructionTimeout: application.config.ConstructionTimeout(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	events.bind(registry)
-	commandResponses, err := action.NewCommandResponder(store.Actions(), dispatcher)
-	if err != nil {
-		return nil, err
-	}
-	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, commandResponses, application.metrics, waAdapter,
-	)
-	if err != nil {
-		return nil, err
-	}
-	aiHandler, err := inbound.NewAIHandler(
-		store.Inbound(), registry, gate, commandResponses, application.metrics, waAdapter,
-		inbound.BatchOptions{
-			Debounce:    application.config.MessageDebounce(),
-			BurstCap:    application.config.MessageBurstCap(),
-			Clock:       agent.SystemClock{},
-			Activity:    waAdapter,
-			Events:      agentLogs,
-			ChatContext: waAdapter,
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	inboundDispatch, err := inbound.NewSplitDispatcher(
-		store.Inbound(), commandHandler, aiHandler, application.metrics,
-		application.config.CommandQueue(), application.config.AIQueue(),
-		application.config.CommandWorkers(), application.config.AIWorkers(),
-		func(lane inbound.Lane, err error) {
-			// Error() is intentionally safe here: provider adapters redact response
-			// bodies and credentials before returning typed errors. The code alone is
-			// not actionable when diagnosing an endpoint or schema mismatch.
-			application.logger.Error("inbound lane processing failed", "lane", lane, "code", agent.CodeOf(err), "error", err)
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := inboundDispatch.EnableMuteEnforcement(waAdapter, agent.SystemClock{}); err != nil {
-		return nil, err
-	}
-	if err := waAdapter.BindHandler(inboundDispatch); err != nil {
-		return nil, err
-	}
-	inboundRecovery, err := inbound.NewRecoveryWorker(
-		application.config.TenantID(), store.Inbound(), inboundDispatch, agent.SystemClock{}, 2*time.Second, 5*time.Second, 64,
-	)
-	if err != nil {
-		return nil, err
-	}
-	maintenanceWorker, err := maintenance.NewWorkerWithHistory(
-		application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval,
-		terminalContentAge, terminalRetentionAge, 500,
-		agent.RetentionPolicy{
-			KeepLatest: application.config.HistoryKeepLatest(),
-			MaxAge:     application.config.HistoryMaxAge(),
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	accountRuntime, err := account.NewRuntime(
-		application.config.TenantID(),
-		application.config.AccountID(),
-		waAdapter,
-		application.config.ShutdownTimeout(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	adapterOwned = false
-	return &conversationRuntime{
-		store: store, registry: registry, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
-		recovery: recovery, effectRecovery: effectRecovery, inboundRecovery: inboundRecovery, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
-	}, nil
+	runCtx, cancel := context.WithCancel(parent)
+	application.state = lifecycleRunning
+	application.runCancel = cancel
+	application.runDone = make(chan struct{})
+	application.runStopping = runCtx.Done()
+	return runCtx, cancel, application.runDone, nil
 }
 
-func (runtime *conversationRuntime) run(ctx context.Context) error {
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	runners := []func(context.Context) error{
-		runtime.account.Run,
-		runtime.recovery.Run,
-		runtime.effectRecovery.Run,
-		runtime.inboundRecovery.Run,
-		runtime.inboundDispatch.Run,
-		runtime.maintenance.Run,
+func (application *Application) setRuntime(runtime runtimeHandle) {
+	if concrete, ok := runtime.(*conversationRuntime); ok {
+		application.accountState.Store(concrete.account)
+		application.adapterState.Store(concrete.adapter)
+		application.runtimeState.Store(concrete)
 	}
-	errorsChannel := make(chan error, len(runners))
-	for _, runner := range runners {
-		runner := runner
-		go func() { errorsChannel <- runner(runCtx) }()
-	}
-	joined := <-errorsChannel
-	cancel()
-	for index := 1; index < len(runners); index++ {
-		joined = errors.Join(joined, <-errorsChannel)
-	}
-	return joined
 }
 
-func (runtime *conversationRuntime) close(ctx context.Context) error {
-	var joined error
-	if runtime.adapter != nil {
-		joined = errors.Join(joined, runtime.adapter.Stop(ctx))
-	}
-	if runtime.registry != nil {
-		joined = errors.Join(joined, runtime.registry.Close(ctx))
-	}
-	if runtime.store != nil {
-		joined = errors.Join(joined, runtime.store.Checkpoint(ctx), runtime.store.Close())
-	}
-	if runtime.langSmith != nil {
-		joined = errors.Join(joined, runtime.langSmith.Shutdown(ctx))
-	}
-	return joined
+func (application *Application) finish(done chan struct{}, runErr error) {
+	application.ready.Store(false)
+	application.accountState.Store(nil)
+	application.adapterState.Store(nil)
+	application.runtimeState.Store(nil)
+	application.mu.Lock()
+	application.runCancel = nil
+	application.runErr = runErr
+	application.state = lifecycleDone
+	close(done)
+	application.mu.Unlock()
+	application.logger.Info("application stopped")
 }
 
-func prepareDataDir(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+// Close requests shutdown and waits for the complete lifecycle, including
+// worker termination and resource cleanup. If ctx expires, ownership remains
+// with this application and a later Close call may wait again.
+func (application *Application) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	application.mu.Lock()
+	switch application.state {
+	case lifecycleNew:
+		application.state = lifecycleClosed
+		application.mu.Unlock()
+		return nil
+	case lifecycleDone:
+		err := application.runErr
+		application.mu.Unlock()
 		return err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return errors.New("configured data path is not a directory")
-	}
-	return nil
-}
-
-func (application *Application) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health/live", func(writer http.ResponseWriter, _ *http.Request) {
-		writeHealth(writer, http.StatusOK, healthResponse{Status: "live"})
-	})
-	mux.HandleFunc("GET /health/ready", func(writer http.ResponseWriter, _ *http.Request) {
-		response := healthResponse{Status: "ready"}
-		ready := application.ready.Load()
-		if runtime := application.accountState.Load(); runtime != nil {
-			snapshot := runtime.Snapshot()
-			response.AccountState = snapshot.State.String()
-			response.ErrorCode = string(snapshot.ErrorCode)
-			ready = ready && runtime.Ready()
+	case lifecycleClosed:
+		application.mu.Unlock()
+		return nil
+	case lifecycleRunning:
+		application.ready.Store(false)
+		cancel := application.runCancel
+		done := application.runDone
+		application.mu.Unlock()
+		if cancel != nil {
+			cancel()
 		}
-		if !ready {
-			response.Status = "not_ready"
-			writeHealth(writer, http.StatusServiceUnavailable, response)
-			return
+		select {
+		case <-done:
+			application.mu.Lock()
+			err := application.runErr
+			application.mu.Unlock()
+			return err
+		case <-ctx.Done():
+			return fmt.Errorf("close application: %w", ctx.Err())
 		}
-		writeHealth(writer, http.StatusOK, response)
-	})
-	mux.HandleFunc("GET /metrics", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		writer.Header().Set("Cache-Control", "no-store")
-		snapshot := application.metrics.Snapshot()
-		queueDepth, queueCapacity := 0, 0
-		if adapter := application.adapterState.Load(); adapter != nil {
-			queueDepth, queueCapacity = adapter.QueueUsage()
-		}
-		_, _ = fmt.Fprintf(writer, `# TYPE wazzap_inbound_claimed_total counter
-wazzap_inbound_claimed_total %d
-# TYPE wazzap_inbound_duplicate_total counter
-wazzap_inbound_duplicate_total %d
-# TYPE wazzap_inbound_ignored_total counter
-wazzap_inbound_ignored_total %d
-# TYPE wazzap_inbound_batches_total counter
-wazzap_inbound_batches_total %d
-# TYPE wazzap_inbound_batched_messages_total counter
-wazzap_inbound_batched_messages_total %d
-# TYPE wazzap_history_resets_total counter
-wazzap_history_resets_total %d
-# TYPE wazzap_model_calls_total counter
-wazzap_model_calls_total %d
-# TYPE wazzap_model_failures_total counter
-wazzap_model_failures_total %d
-# TYPE wazzap_model_timeouts_total counter
-wazzap_model_timeouts_total %d
-# TYPE wazzap_model_duration_seconds_sum counter
-wazzap_model_duration_seconds_sum %.6f
-# TYPE wazzap_delivery_dispatch_total counter
-wazzap_delivery_dispatch_total %d
-# TYPE wazzap_delivery_pending_total counter
-wazzap_delivery_pending_total %d
-# TYPE wazzap_delivery_succeeded_total counter
-wazzap_delivery_succeeded_total %d
-# TYPE wazzap_delivery_failed_total counter
-wazzap_delivery_failed_total %d
-# TYPE wazzap_delivery_unknown_total counter
-wazzap_delivery_unknown_total %d
-# TYPE wazzap_delivery_errors_total counter
-wazzap_delivery_errors_total %d
-# TYPE wazzap_inbound_queue_depth gauge
-wazzap_inbound_queue_depth %d
-# TYPE wazzap_inbound_queue_capacity gauge
-wazzap_inbound_queue_capacity %d
-# TYPE wazzap_process_goroutines gauge
-wazzap_process_goroutines %d
-`, snapshot.InboundClaimed, snapshot.InboundDuplicates, snapshot.InboundIgnored,
-			snapshot.InboundBatches, snapshot.InboundBatchedMessages, snapshot.HistoryResets,
-			snapshot.ModelCalls, snapshot.ModelFailures, snapshot.ModelTimeouts,
-			float64(snapshot.ModelDurationNS)/float64(time.Second), snapshot.DeliveryDispatch,
-			snapshot.DeliveryPending, snapshot.DeliverySucceeded, snapshot.DeliveryFailed,
-			snapshot.DeliveryUnknown, snapshot.DeliveryErrors, queueDepth, queueCapacity, runtime.NumGoroutine())
-	})
-	return mux
-}
-
-func (application *Application) Ready() bool {
-	if !application.ready.Load() {
-		return false
+	default:
+		application.mu.Unlock()
+		return nil
 	}
-	if runtime := application.accountState.Load(); runtime != nil {
-		return runtime.Ready()
-	}
-	return true
-}
-
-func writeHealth(writer http.ResponseWriter, status int, response healthResponse) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(response)
-}
-
-type configEventRelay struct {
-	mu       sync.RWMutex
-	registry *agent.Registry
-}
-
-func (relay *configEventRelay) bind(registry *agent.Registry) {
-	relay.mu.Lock()
-	relay.registry = registry
-	relay.mu.Unlock()
-}
-
-func (relay *configEventRelay) TryPublish(event agent.ConfigChanged) bool {
-	relay.mu.RLock()
-	registry := relay.registry
-	relay.mu.RUnlock()
-	if registry != nil {
-		registry.NotifyConfigChanged(event)
-	}
-	return true
 }

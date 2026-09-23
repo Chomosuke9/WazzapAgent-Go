@@ -66,6 +66,54 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	}
 }
 
+func TestTriggerCommandConfiguresCustomRegexForGroupInvocation(t *testing.T) {
+	fixture := newFixture(t)
+	chat := "120363000000000015@g.us"
+	dmFixture := newFixture(t)
+	ownerDM := dmFixture.candidate("trigger-owner-dm", "155500000015@s.whatsapp.net", conversation.ChatDirect, "/trigger mention off")
+	ownerDM.Owner = true
+	if err := dmFixture.handler.Handle(context.Background(), ownerDM); err != nil {
+		t.Fatalf("handle owner trigger command in DM: %v", err)
+	}
+	if dmFixture.sender.count() != 1 {
+		t.Fatalf("owner trigger DM response count = %d", dmFixture.sender.count())
+	}
+	if reply := dmFixture.sender.last().Text; !strings.Contains(reply, "in a group") {
+		t.Fatalf("owner trigger DM response = %q", reply)
+	}
+
+	denialFixture := newFixture(t)
+	denied := denialFixture.candidate("trigger-denied", chat, conversation.ChatGroup, "/trigger mention off")
+	if err := denialFixture.handler.Handle(context.Background(), denied); err != nil {
+		t.Fatalf("handle non-owner trigger command: %v", err)
+	}
+	if !strings.Contains(denialFixture.sender.last().Text, "can only be used by the owner") {
+		t.Fatalf("trigger command denial = %q", denialFixture.sender.last().Text)
+	}
+	configure := fixture.candidate("trigger-configure", chat, conversation.ChatGroup, `/trigger pattern (?i)\bvivy\b.*help`)
+	configure.Owner = true
+	if err := fixture.handler.Handle(context.Background(), configure); err != nil {
+		t.Fatalf("configure name regex: %v", err)
+	}
+	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), configure)
+	if err != nil {
+		t.Fatalf("claim trigger command: %v", err)
+	}
+	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
+	snapshot, err := fixture.store.Configs().Load(context.Background(), key)
+	if err != nil || !snapshot.Triggers.Name || !snapshot.Triggers.NameRegex || snapshot.Triggers.NamePattern != `(?i)\bvivy\b.*help` {
+		t.Fatalf("stored trigger settings = %#v, err=%v", snapshot.Triggers, err)
+	}
+
+	message := fixture.candidate("trigger-regex-match", chat, conversation.ChatGroup, "VIVY could you help with this?")
+	if err := fixture.handler.Handle(context.Background(), message); err != nil {
+		t.Fatalf("handle regex-triggered group message: %v", err)
+	}
+	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 2 {
+		t.Fatalf("regex trigger model/sender calls = %d/%d, want 1/2", fixture.model.calls.Load(), fixture.sender.count())
+	}
+}
+
 func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
 	fixture := newFixture(t)
 	command := fixture.candidate("group-command", "120363000000000001@g.us", conversation.ChatGroup, "/help")
@@ -103,7 +151,7 @@ func TestBotOriginatedOwnerCommandIsBlockedByFromMePermission(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
 		t.Fatalf("handle bot owner command: %v", err)
 	}
-	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "hanya dapat digunakan oleh owner") {
+	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "can only be used by the configured owner") {
 		t.Fatalf("bot owner denial count/text = %d/%q", fixture.sender.count(), fixture.sender.last().Text)
 	}
 	if fixture.model.calls.Load() != 0 {
@@ -337,21 +385,21 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), info); err != nil {
 		t.Fatalf("info: %v", err)
 	}
-	if !strings.Contains(fixture.sender.last().Text, "History: aktif") {
+	if !strings.Contains(fixture.sender.last().Text, "History: active") {
 		t.Fatalf("info response = %q", fixture.sender.last().Text)
 	}
 	malformedInfo := fixture.candidate("control-info-malformed", chat, conversation.ChatDirect, "/info unexpected")
 	if err := fixture.handler.Handle(context.Background(), malformedInfo); err != nil {
 		t.Fatalf("malformed info: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "Format perintah /info tidak menerima argumen." {
+	if got := fixture.sender.last().Text; got != "The /info command does not accept arguments." {
 		t.Fatalf("malformed info response = %q", got)
 	}
 	denied := fixture.candidate("control-reset-denied", chat, conversation.ChatDirect, "/reset")
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
 		t.Fatalf("denied reset: %v", err)
 	}
-	if !strings.Contains(fixture.sender.last().Text, "hanya dapat digunakan oleh owner") {
+	if !strings.Contains(fixture.sender.last().Text, "can only be used by the configured owner") {
 		t.Fatalf("reset denial = %q", fixture.sender.last().Text)
 	}
 	reset := fixture.candidate("control-reset", chat, conversation.ChatDirect, "/reset")
@@ -378,7 +426,7 @@ func TestKnownMalformedCommandDoesNotFallThroughToModel(t *testing.T) {
 	if fixture.model.calls.Load() != 0 {
 		t.Fatalf("malformed command invoked model %d times", fixture.model.calls.Load())
 	}
-	if got := fixture.sender.last().Text; got != "Format perintah /help tidak menerima argumen." {
+	if got := fixture.sender.last().Text; got != "The /help command does not accept arguments." {
 		t.Fatalf("malformed command response = %q", got)
 	}
 }
@@ -397,7 +445,7 @@ func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
 	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
 		t.Fatalf("resume command: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi." {
+	if got := fixture.sender.last().Text; got != "The /reset command can only be used by the configured owner." {
 		t.Fatalf("forged owner command response = %q", got)
 	}
 }
@@ -431,7 +479,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), view); err != nil {
 		t.Fatalf("view prompt: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "Prompt override saat ini:\nspeak concisely" {
+	if got := fixture.sender.last().Text; got != "Current prompt override:\nspeak concisely" {
 		t.Fatalf("view response = %q", got)
 	}
 
@@ -444,7 +492,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if afterDenied.Version != snapshot.Version || afterDenied.PromptOverride.Text != "speak concisely" {
 		t.Fatalf("non-owner changed config: %#v", afterDenied)
 	}
-	if got := fixture.sender.last().Text; got != "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi." {
+	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by the configured owner." {
 		t.Fatalf("denial response = %q", got)
 	}
 
@@ -579,7 +627,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	if err != nil || afterDenied.Permission.ModerationLevel != agent.ModerationDeleteMuteKick {
 		t.Fatalf("non-owner changed moderation level: %#v, %v", afterDenied.Permission, err)
 	}
-	if got := fixture.sender.last().Text; got != "Perintah /permission hanya dapat digunakan oleh owner yang dikonfigurasi." {
+	if got := fixture.sender.last().Text; got != "The /permission command can only be used by the configured owner." {
 		t.Fatalf("permission denial response = %q", got)
 	}
 }
@@ -771,7 +819,8 @@ func newFixtureAtPath(
 	model := &echoModel{}
 	sender := &recordingSender{}
 	sender.ready.Store(true)
-	gate, err := policy.NewFixedGate(policyID, 1, store.Configs(), store.Inbound(), staticChatAuthority{}, true)
+	chats := store.Inbound()
+	gate, err := policy.NewFixedGate(policyID, 1, store.Configs(), chats, staticChatAuthority{chats: chats}, "Vivy", true)
 	if err != nil {
 		t.Fatalf("create policy: %v", err)
 	}
@@ -783,6 +832,7 @@ func newFixtureAtPath(
 		Model:      agent.ModelConfig{ProviderID: providerID, Model: "fake-model", MaxOutputTokens: 256},
 		Prompt:     "base prompt",
 		Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
+		Triggers:   agent.DefaultTriggerConfig(),
 	}
 	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes, "Vivy")
 	factory := agent.FactoryFunc(func(ctx context.Context, key agent.Key) (*agent.Agent, error) {
@@ -879,7 +929,9 @@ type recordingSender struct {
 	ready    atomic.Bool
 }
 
-type staticChatAuthority struct{}
+type staticChatAuthority struct {
+	chats policy.HumanAccessReader
+}
 
 type staticChatContextReader struct{}
 
@@ -887,8 +939,15 @@ func (staticChatContextReader) ReadChatContext(context.Context, agent.Key) (agen
 	return agent.ChatContext{Kind: "private"}, nil
 }
 
-func (staticChatAuthority) ReadChatAuthority(_ context.Context, _ policy.Principal) (policy.ChatAuthority, error) {
-	return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}, nil
+func (authority staticChatAuthority) ReadChatAuthority(ctx context.Context, principal policy.Principal) (policy.ChatAuthority, error) {
+	if principal.Kind == policy.PrincipalModel {
+		return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}, nil
+	}
+	access, err := authority.chats.ReadHumanAccess(ctx, principal)
+	if err != nil {
+		return policy.ChatAuthority{}, err
+	}
+	return policy.ChatAuthority{ChatKind: access.ChatKind, ObservedAt: time.Now().UTC().UnixMilli()}, nil
 }
 
 func (sender *recordingSender) Ready() bool { return sender.ready.Load() }

@@ -405,7 +405,15 @@ func (store *InboundStore) ResolveMessageTarget(
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
 	).Scan(&chatAddress, &providerMessageID, &occurredAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", time.Time{}, agent.NewError(agent.ErrorNotFound, "resolve message target", errors.New("target message is not natively addressable"))
+		err = store.db.QueryRowContext(ctx, `SELECT c.provider_address, m.provider_receipt, m.created_at_ms
+          FROM manual_message_targets m
+          JOIN chats c ON c.tenant_id = m.tenant_id AND c.account_id = m.account_id AND c.id = m.chat_id
+          WHERE m.tenant_id = ? AND m.account_id = ? AND m.chat_id = ? AND m.message_id = ?`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
+		).Scan(&chatAddress, &providerMessageID, &occurredAtMS)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", "", time.Time{}, agent.NewError(agent.ErrorNotFound, "resolve message target", errors.New("target message is not natively addressable"))
+		}
 	}
 	if err != nil {
 		return "", "", "", time.Time{}, storageError("resolve assistant message target", err)

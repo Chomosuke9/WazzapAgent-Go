@@ -27,6 +27,7 @@ func (store *InboundStore) BeginPromptMutation(
 }
 
 const permissionMutationKind = 100
+const triggerMutationKind = 101
 
 func (store *InboundStore) BeginPermissionMutation(
 	ctx context.Context,
@@ -39,6 +40,19 @@ func (store *InboundStore) BeginPermissionMutation(
 	}
 	digest := permissionCommandDigest(message, command)
 	return store.beginConfigMutation(ctx, message, permissionMutationKind, digest, expected)
+}
+
+func (store *InboundStore) BeginTriggerMutation(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	command inbound.TriggerCommand,
+	expected agent.ConfigVersion,
+) (inbound.PromptMutation, error) {
+	if expected == 0 || command.Kind < inbound.TriggerSetMention || command.Kind > inbound.TriggerSetPattern {
+		return inbound.PromptMutation{}, agent.NewError(agent.ErrorInvalidArgument, "begin trigger mutation", errors.New("mutation command and config version are required"))
+	}
+	digest := triggerCommandDigest(message, command)
+	return store.beginConfigMutation(ctx, message, triggerMutationKind, digest, expected)
 }
 
 func (store *InboundStore) beginConfigMutation(
@@ -138,6 +152,15 @@ func (store *InboundStore) MarkPermissionMutationApplied(
 	return store.markConfigMutationApplied(ctx, message, expected, applied)
 }
 
+func (store *InboundStore) MarkTriggerMutationApplied(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	expected agent.ConfigVersion,
+	applied agent.ConfigVersion,
+) error {
+	return store.markConfigMutationApplied(ctx, message, expected, applied)
+}
+
 func (store *InboundStore) markConfigMutationApplied(
 	ctx context.Context,
 	message conversation.IncomingMessage,
@@ -167,4 +190,9 @@ func promptCommandDigest(message conversation.IncomingMessage, command inbound.P
 
 func permissionCommandDigest(message conversation.IncomingMessage, command inbound.PermissionCommand) [32]byte {
 	return sha256.Sum256([]byte(fmt.Sprintf("wazzapagent.permission.v2\x00%s\x00%d", message.InvocationID.String(), command.Level)))
+}
+
+func triggerCommandDigest(message conversation.IncomingMessage, command inbound.TriggerCommand) [32]byte {
+	return sha256.Sum256([]byte(fmt.Sprintf("wazzapagent.trigger.v1\x00%s\x00%d\x00%t\x00%d\x00%s",
+		message.InvocationID.String(), command.Kind, command.Enabled, len(command.Pattern), command.Pattern)))
 }

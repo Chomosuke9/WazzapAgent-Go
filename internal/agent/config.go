@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -12,10 +13,11 @@ import (
 )
 
 const (
-	InitialConfigVersion ConfigVersion = 1
-	MaxPromptBytes                     = 16 * 1024
-	MaxModelNameBytes                  = 256
-	MaxOutputTokens                    = 65_536
+	InitialConfigVersion   ConfigVersion = 1
+	MaxPromptBytes                       = 16 * 1024
+	MaxModelNameBytes                    = 256
+	MaxTriggerPatternBytes               = 512
+	MaxOutputTokens                      = 65_536
 )
 
 type ConfigVersion uint64
@@ -42,6 +44,55 @@ type PermissionConfig struct {
 	PolicyID        identity.PolicyID
 	Revision        uint64
 	ModerationLevel ModerationLevel
+}
+
+// TriggerConfig defines the group-message conditions that may invoke the Agent.
+// Direct chats remain eligible without an invocation trigger.
+type TriggerConfig struct {
+	Mention     bool
+	Name        bool
+	Reply       bool
+	NameRegex   bool
+	NamePattern string
+}
+
+func DefaultTriggerConfig() TriggerConfig {
+	return TriggerConfig{Mention: true, Reply: true}
+}
+
+func (triggers TriggerConfig) Validate() error {
+	if !utf8.ValidString(triggers.NamePattern) || len(triggers.NamePattern) > MaxTriggerPatternBytes {
+		return Errorf(ErrorInvalidArgument, "validate trigger config", "name trigger pattern must be valid UTF-8 and at most %d bytes", MaxTriggerPatternBytes)
+	}
+	if triggers.NameRegex {
+		if triggers.Name && strings.TrimSpace(triggers.NamePattern) == "" {
+			return Errorf(ErrorInvalidArgument, "validate trigger config", "a name pattern is required when regex mode is enabled")
+		}
+		if triggers.NamePattern != "" {
+			if _, err := regexp.Compile(triggers.NamePattern); err != nil {
+				return NewError(ErrorInvalidArgument, "validate trigger config", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (triggers TriggerConfig) Matches(mentionsBot, repliedToBot bool, text, assistantName string) bool {
+	if triggers.Mention && mentionsBot || triggers.Reply && repliedToBot {
+		return true
+	}
+	if !triggers.Name {
+		return false
+	}
+	if triggers.NameRegex {
+		if strings.TrimSpace(triggers.NamePattern) == "" {
+			return false
+		}
+		pattern, err := regexp.Compile(triggers.NamePattern)
+		return err == nil && pattern.MatchString(text)
+	}
+	name := strings.TrimSpace(assistantName)
+	return name != "" && strings.Contains(strings.ToLower(text), strings.ToLower(name))
 }
 
 type ModerationLevel uint8
@@ -88,6 +139,7 @@ type ConfigValues struct {
 	Prompt         string
 	PromptOverride *PromptOverride
 	Permission     PermissionConfig
+	Triggers       TriggerConfig
 }
 
 type ConfigSnapshot struct {
@@ -96,6 +148,7 @@ type ConfigSnapshot struct {
 	Prompt         string
 	PromptOverride *PromptOverride
 	Permission     PermissionConfig
+	Triggers       TriggerConfig
 }
 
 type ConfigStore interface {
@@ -111,6 +164,7 @@ const (
 	ConfigFieldPrompt
 	ConfigFieldPromptOverride
 	ConfigFieldPermission
+	ConfigFieldTriggers
 )
 
 type ConfigChanged struct {
@@ -237,6 +291,12 @@ func (config *Config) SetPermission(ctx context.Context, expected ConfigVersion,
 	})
 }
 
+func (config *Config) SetTriggers(ctx context.Context, expected ConfigVersion, value TriggerConfig) (ConfigSnapshot, error) {
+	return config.mutate(ctx, expected, []ConfigField{ConfigFieldTriggers}, func(values *ConfigValues) {
+		values.Triggers = value
+	})
+}
+
 func (config *Config) mutate(
 	ctx context.Context,
 	expected ConfigVersion,
@@ -303,6 +363,7 @@ func (snapshot ConfigSnapshot) Values() ConfigValues {
 		Prompt:         snapshot.Prompt,
 		PromptOverride: clonePromptOverride(snapshot.PromptOverride),
 		Permission:     clonePermissionConfig(snapshot.Permission),
+		Triggers:       snapshot.Triggers,
 	}
 }
 
@@ -336,6 +397,9 @@ func validateConfigValues(values ConfigValues) error {
 		}
 	}
 	if err := values.Permission.Validate(); err != nil {
+		return NewError(ErrorInvalidArgument, "validate config", err)
+	}
+	if err := values.Triggers.Validate(); err != nil {
 		return NewError(ErrorInvalidArgument, "validate config", err)
 	}
 	return nil
@@ -373,7 +437,7 @@ func clonePromptOverride(value *PromptOverride) *PromptOverride {
 func configSnapshotsEqual(left, right ConfigSnapshot) bool {
 	if left.Version != right.Version || left.Model != right.Model || left.Prompt != right.Prompt ||
 		left.Permission.PolicyID != right.Permission.PolicyID || left.Permission.Revision != right.Permission.Revision ||
-		left.Permission.ModerationLevel != right.Permission.ModerationLevel {
+		left.Permission.ModerationLevel != right.Permission.ModerationLevel || left.Triggers != right.Triggers {
 		return false
 	}
 	if left.PromptOverride == nil || right.PromptOverride == nil {

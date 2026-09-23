@@ -58,8 +58,9 @@ func (e *Error) Error() string {
 	}
 }
 
-func (e *Error) Unwrap() error   { return e.cause }
-func (e *Error) Code() ErrorCode { return e.code }
+func (e *Error) Unwrap() error     { return e.cause }
+func (e *Error) Code() ErrorCode   { return e.code }
+func (e *Error) Operation() string { return e.op }
 
 func CodeOf(err error) ErrorCode {
 	if err == nil {

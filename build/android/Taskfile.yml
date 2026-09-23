@@ -1,0 +1,33 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+vars:
+  APP_ID: io.github.chomosuke9.wazzapagent
+  MIN_SDK: '21'
+  TARGET_SDK: '35'
+
+tasks:
+  toolchain:check:
+    summary: Check the Wails Android prerequisites without installing anything
+    cmds:
+      - echo "Wails v3.0.0-beta.23 Android requires SDK API 35, build-tools, NDK 26.3.11579264, JDK, npm, and a generated build/android project."
+      - wails3 doctor
+
+  build:
+    summary: Build an Android APK when the generated native project and toolchain are present
+    preconditions:
+      - sh: test -f build/android/gradlew
+        msg: "Android native files are not generated yet; run the pinned Wails build-assets generation on a supported host first"
+    cmds:
+      - task: toolchain:check
+      - task: common:generate:bindings:android
+      - task: common:build:frontend
+      - echo "Android APK compilation is intentionally gated until the generated beta.23 native project is verified on macOS or Linux with NDK cgo support."
+      - exit 1
+
+  package:
+    summary: Android packaging is not enabled until the P0 native smoke test passes
+    cmds:
+      - task: build

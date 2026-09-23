@@ -23,6 +23,7 @@ func TestGeneratedRegistryContainsAllBuiltInCommands(t *testing.T) {
 		"/prompt":      "prompt",
 		"/permission":  "permission",
 		"/permissions": "permission",
+		"/trigger":     "trigger",
 	}
 	for text, name := range want {
 		request, descriptor, recognized := registry.Parse(text)
@@ -64,5 +65,49 @@ func TestCommandModulesOwnTheirArgumentGrammar(t *testing.T) {
 		if got := parsePermissionCommand(test.raw); got.Kind != test.kind {
 			t.Fatalf("permission %q kind = %v, want %v", test.raw, got.Kind, test.kind)
 		}
+	}
+	triggerTests := []struct {
+		raw  string
+		kind command.TriggerCommandKind
+	}{
+		{raw: "/trigger", kind: command.TriggerView},
+		{raw: "/trigger view", kind: command.TriggerView},
+		{raw: "/trigger mention on", kind: command.TriggerSetMention},
+		{raw: "/trigger name off", kind: command.TriggerSetName},
+		{raw: "/trigger reply on", kind: command.TriggerSetReply},
+		{raw: "/trigger regex off", kind: command.TriggerSetRegex},
+		{raw: "/trigger pattern (?i)\\bvivy\\b", kind: command.TriggerSetPattern},
+		{raw: "/trigger name maybe", kind: command.TriggerInvalid},
+		{raw: "/trigger pattern ", kind: command.TriggerInvalid},
+	}
+	for _, test := range triggerTests {
+		if got := parseTriggerCommand(test.raw); got.Kind != test.kind {
+			t.Fatalf("trigger %q kind = %v, want %v", test.raw, got.Kind, test.kind)
+		}
+	}
+}
+
+func TestTriggerPermissionAllowsOwnerOrGroupAdminButNeverBot(t *testing.T) {
+	tests := []struct {
+		name  string
+		facts command.PermissionFacts
+		want  bool
+	}{
+		{name: "owner in private chat", facts: command.PermissionFacts{IsOwner: true, IsPrivate: true}, want: false},
+		{name: "owner in group", facts: command.PermissionFacts{IsOwner: true, IsGroup: true}, want: true},
+		{name: "group admin", facts: command.PermissionFacts{IsGroup: true, IsAdmin: true}, want: true},
+		{name: "admin in private chat", facts: command.PermissionFacts{IsAdmin: true, IsPrivate: true}, want: false},
+		{name: "owner without group fact", facts: command.PermissionFacts{IsOwner: true}, want: false},
+		{name: "ordinary group member", facts: command.PermissionFacts{IsGroup: true}, want: false},
+		{name: "bot group admin", facts: command.PermissionFacts{IsGroup: true, IsAdmin: true, FromMe: true}, want: false},
+		{name: "bot owner", facts: command.PermissionFacts{IsOwner: true, FromMe: true}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := command.EvaluatePermission(TriggerCommand.Permission, test.facts)
+			if err != nil || got != test.want {
+				t.Fatalf("permission result = %v, err=%v; want %v", got, err, test.want)
+			}
+		})
 	}
 }

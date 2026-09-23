@@ -68,6 +68,8 @@ type CommandStore interface {
 	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
+	BeginTriggerMutation(context.Context, conversation.IncomingMessage, TriggerCommand, agent.ConfigVersion) (PromptMutation, error)
+	MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 }
 
 type Observer interface {

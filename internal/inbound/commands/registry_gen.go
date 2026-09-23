@@ -12,4 +12,5 @@ var Descriptors = []command.Descriptor{
 	PermissionCommand,
 	PromptCommand,
 	ResetCommand,
+	TriggerCommand,
 }

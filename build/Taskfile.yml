@@ -1,0 +1,78 @@
+version: '3'
+
+tasks:
+  wails:install:
+    summary: Install the pinned Wails v3 CLI
+    cmds:
+      - go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+
+  go:mod:tidy:
+    summary: Tidy the Go module explicitly
+    internal: true
+    cmds:
+      - go mod tidy
+
+  install:frontend:deps:
+    summary: Install the locked frontend dependencies
+    dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    preconditions:
+      - sh: '{{.NPM}} --version'
+        msg: "npm is required; set NPM to an npm-compatible command if it is not on PATH"
+    cmds:
+      - '{{.NPM}} ci'
+
+  generate:bindings:
+    summary: Generate TypeScript bindings from cmd/app
+    sources:
+      - cmd/app/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
+    cmds:
+      - wails3 generate bindings -f '-tags gui' -clean=true -ts -i ./cmd/app
+
+  generate:bindings:android:
+    summary: Generate Android TypeScript bindings without the NDK
+    sources:
+      - cmd/app/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
+    cmds:
+      - wails3 generate bindings -f '-tags gui,android' -clean=true -ts -i ./cmd/app
+    env:
+      GOOS: android
+      CGO_ENABLED: '0'
+
+  build:frontend:
+    summary: Build the frontend bundle
+    dir: frontend
+    sources:
+      - '**/*'
+      - exclude: node_modules/**/*
+    generates:
+      - dist/**/*
+    deps:
+      - task: install:frontend:deps
+    preconditions:
+      - sh: '{{.NPM}} --version'
+        msg: "npm is required; set NPM to an npm-compatible command if it is not on PATH"
+    cmds:
+      - '{{.NPM}} run build -q'
+
+  dev:frontend:
+    summary: Run the frontend development server
+    dir: frontend
+    deps:
+      - task: install:frontend:deps
+    cmds:
+      - '{{.NPM}} run dev -- --port {{.VITE_PORT}} --strictPort'

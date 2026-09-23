@@ -28,6 +28,8 @@ type Store interface {
 	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
 	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
+	BeginTriggerMutation(context.Context, conversation.IncomingMessage, TriggerCommand, agent.ConfigVersion) (PromptMutation, error)
+	MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	IsChatMuted(context.Context, agent.Key, identity.SenderRef, time.Time) (bool, error)
 	StageBatch(context.Context, conversation.IncomingMessage, time.Time) (BatchStage, error)
 	ClaimBatch(context.Context, conversation.IncomingMessage, time.Time, uint32) (BatchClaim, error)
@@ -103,7 +105,7 @@ type Registry interface {
 }
 
 type Policy interface {
-	AuthorizeInvocation(context.Context, conversation.IncomingMessage, agent.PermissionConfig) error
+	AuthorizeInvocation(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) error
 	AuthorizeCommand(context.Context, policy.Principal, policy.Capability, agent.PermissionConfig) error
 	ModelCapabilities(agent.PermissionConfig) (agent.CapabilitySet, error)
 }
@@ -180,7 +182,7 @@ func (handler *CommandHandler) resumeCommand(
 		if agent.IsCode(err, agent.ErrorPermissionDenied) {
 			reply := descriptor.DeniedReply
 			if reply == "" {
-				reply = "Perintah ini tidak dapat digunakan pada chat ini."
+				reply = "This command cannot be used in this chat."
 			}
 			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
 		}
@@ -193,7 +195,7 @@ func (handler *CommandHandler) resumeCommand(
 	if !allowed {
 		reply := descriptor.DeniedReply
 		if reply == "" {
-			reply = "Perintah ini tidak dapat digunakan pada chat ini."
+			reply = "This command cannot be used in this chat."
 		}
 		return handler.responses.Reply(ctx, message, snapshot.Version, reply)
 	}
@@ -201,7 +203,7 @@ func (handler *CommandHandler) resumeCommand(
 		if err := handler.policy.AuthorizeCommand(ctx, principal, descriptor.Capability, snapshot.Permission); err != nil {
 			reply := descriptor.DeniedReply
 			if reply == "" {
-				reply = "Perintah ini tidak dapat digunakan pada chat ini."
+				reply = "This command cannot be used in this chat."
 			}
 			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
 		}
@@ -296,7 +298,7 @@ func (handler *AIHandler) processBatch(
 		return err
 	}
 	for _, message := range messages {
-		if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot.Permission); err != nil {
+		if err := handler.policy.AuthorizeInvocation(ctx, message, snapshot); err != nil {
 			return err
 		}
 	}

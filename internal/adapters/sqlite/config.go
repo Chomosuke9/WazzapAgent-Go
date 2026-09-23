@@ -39,11 +39,14 @@ func (store *ConfigStore) LoadOrCreate(ctx context.Context, key agent.Key, defau
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_configs(
         tenant_id, account_id, chat_id, version, provider_id, model,
         max_output_tokens, prompt, prompt_override_mode, prompt_override_text,
-		policy_id, policy_revision, model_capabilities, moderation_level, updated_at_ms
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		policy_id, policy_revision, model_capabilities, moderation_level,
+		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern, updated_at_ms
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(agent.InitialConfigVersion),
 		defaults.Model.ProviderID.String(), defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
-		mode, text, defaults.Permission.PolicyID.String(), defaults.Permission.Revision, "[]", uint8(defaults.Permission.ModerationLevel), store.clock.Now().UnixMilli(),
+		mode, text, defaults.Permission.PolicyID.String(), defaults.Permission.Revision, "[]", uint8(defaults.Permission.ModerationLevel),
+		boolInt(defaults.Triggers.Mention), boolInt(defaults.Triggers.Name), boolInt(defaults.Triggers.Reply), boolInt(defaults.Triggers.NameRegex), defaults.Triggers.NamePattern,
+		store.clock.Now().UnixMilli(),
 	)
 	if err != nil {
 		return agent.ConfigSnapshot{}, storageError("create agent config", err)
@@ -93,10 +96,12 @@ func (store *ConfigStore) CompareAndSwap(
         version = version + 1,
         provider_id = ?, model = ?, max_output_tokens = ?, prompt = ?,
         prompt_override_mode = ?, prompt_override_text = ?,
-		policy_id = ?, policy_revision = ?, model_capabilities = '[]', moderation_level = ?, updated_at_ms = ?
+		policy_id = ?, policy_revision = ?, model_capabilities = '[]', moderation_level = ?,
+		trigger_mention = ?, trigger_name = ?, trigger_reply = ?, trigger_name_regex = ?, trigger_name_pattern = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND version = ?`,
 		values.Model.ProviderID.String(), values.Model.Model, values.Model.MaxOutputTokens, values.Prompt,
-		mode, text, values.Permission.PolicyID.String(), values.Permission.Revision, uint8(values.Permission.ModerationLevel), store.clock.Now().UnixMilli(),
+		mode, text, values.Permission.PolicyID.String(), values.Permission.Revision, uint8(values.Permission.ModerationLevel),
+		boolInt(values.Triggers.Mention), boolInt(values.Triggers.Name), boolInt(values.Triggers.Reply), boolInt(values.Triggers.NameRegex), values.Triggers.NamePattern, store.clock.Now().UnixMilli(),
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(expected),
 	)
 	if err != nil {
@@ -128,6 +133,72 @@ func (store *ConfigStore) CompareAndSwap(
 	return snapshot, nil
 }
 
+// ReconcileAccountDefaults updates the global model, token limit, prompt, and
+// policy projection for existing chats in one transaction. Per-chat prompt
+// overrides, moderation levels, and invocation triggers remain untouched. Rows
+// are versioned only when a projected value actually changes, so a repeated
+// Apply is idempotent.
+func (store *ConfigStore) ReconcileAccountDefaults(
+	ctx context.Context,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	defaults agent.ConfigValues,
+) (int64, error) {
+	if tenantID.IsZero() || accountID.IsZero() {
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reconcile account defaults", errors.New("tenant and account identity are required"))
+	}
+	if defaults.PromptOverride != nil || defaults.Permission.ModerationLevel != agent.ModerationNone {
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reconcile account defaults", errors.New("global defaults cannot include per-chat overrides or moderation"))
+	}
+	if err := agent.ValidateConfigValues(defaults); err != nil {
+		return 0, err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, storageError("begin account defaults reconciliation", err)
+	}
+	defer tx.Rollback()
+
+	providerID := defaults.Model.ProviderID.String()
+	policyID := defaults.Permission.PolicyID.String()
+	var exhausted int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_configs
+	  WHERE tenant_id = ? AND account_id = ? AND version >= ? AND (
+	    provider_id <> ? OR model <> ? OR max_output_tokens <> ? OR prompt <> ? OR policy_id <> ? OR policy_revision <> ?
+	  )`, tenantID.String(), accountID.String(), int64(math.MaxInt64),
+		providerID, defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
+		policyID, defaults.Permission.Revision,
+	).Scan(&exhausted); err != nil {
+		return 0, storageError("check account config versions", err)
+	}
+	if exhausted != 0 {
+		return 0, agent.NewError(agent.ErrorIntegrityFailure, "reconcile account defaults", errors.New("a chat config version is exhausted"))
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agent_configs SET
+	    version = version + 1, provider_id = ?, model = ?, max_output_tokens = ?, prompt = ?,
+	    policy_id = ?, policy_revision = ?, updated_at_ms = ?
+	  WHERE tenant_id = ? AND account_id = ? AND (
+	    provider_id <> ? OR model <> ? OR max_output_tokens <> ? OR prompt <> ? OR policy_id <> ? OR policy_revision <> ?
+	  )`,
+		providerID, defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
+		policyID, defaults.Permission.Revision, store.clock.Now().UnixMilli(),
+		tenantID.String(), accountID.String(),
+		providerID, defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
+		policyID, defaults.Permission.Revision,
+	)
+	if err != nil {
+		return 0, storageError("apply account defaults", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return 0, storageError("inspect account defaults reconciliation", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, storageError("commit account defaults reconciliation", err)
+	}
+	return changed, nil
+}
+
 type configQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -144,12 +215,19 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 		policyValue     string
 		policyRevision  uint64
 		moderationLevel uint8
+		triggerMention  int
+		triggerName     int
+		triggerReply    int
+		triggerRegex    int
+		triggerPattern  string
 	)
 	err := query.QueryRowContext(ctx, `SELECT version, provider_id, model, max_output_tokens,
-        prompt, prompt_override_mode, prompt_override_text, policy_id, policy_revision, moderation_level
+        prompt, prompt_override_mode, prompt_override_text, policy_id, policy_revision, moderation_level,
+		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern
       FROM agent_configs WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
-	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &moderationLevel)
+	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &moderationLevel,
+		&triggerMention, &triggerName, &triggerReply, &triggerRegex, &triggerPattern)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "load agent config", errors.New("config does not exist"))
 	}
@@ -184,6 +262,10 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 			PolicyID:        policyID,
 			Revision:        policyRevision,
 			ModerationLevel: agent.ModerationLevel(moderationLevel),
+		},
+		Triggers: agent.TriggerConfig{
+			Mention: triggerMention != 0, Name: triggerName != 0, Reply: triggerReply != 0,
+			NameRegex: triggerRegex != 0, NamePattern: triggerPattern,
 		},
 	}, nil
 }

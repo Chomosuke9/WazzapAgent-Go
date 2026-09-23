@@ -84,6 +84,36 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	}
 }
 
+func TestGenerateAppendsChatCompletionsToBaseEndpoint(t *testing.T) {
+	paths := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		paths <- request.URL.Path
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"reply"}}]}`))
+	}))
+	defer server.Close()
+
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	for _, endpoint := range []string{server.URL + "/v1", server.URL + "/v1/chat/completions"} {
+		client, err := New(Config{
+			Endpoint: endpoint, APIKey: "secret", ProviderID: providerID,
+			SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096,
+			Commands: inbound.CommandRegistry(),
+		})
+		if err != nil {
+			t.Fatalf("create client for %q: %v", endpoint, err)
+		}
+		if _, err := client.Generate(context.Background(), modelRequest(t, providerID)); err != nil {
+			t.Fatalf("generate for %q: %v", endpoint, err)
+		}
+	}
+	for range 2 {
+		if got := <-paths; got != "/v1/chat/completions" {
+			t.Fatalf("request path = %q, want /v1/chat/completions", got)
+		}
+	}
+}
+
 func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	requestChannel := make(chan completionRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

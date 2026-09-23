@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -11,13 +10,11 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed embedded.env
-var embeddedEnv string
-
 const (
 	defaultDotEnvPath = ".env"
 	dotEnvPathKey     = "WAZZAP_ENV_FILE"
-	maxDotEnvBytes    = 1 << 20
+	MaxDotEnvBytes    = 1 << 20
+	maxDotEnvBytes    = MaxDotEnvBytes
 )
 
 func lookupWithDotEnv(processLookup LookupEnv) (LookupEnv, error) {
@@ -35,7 +32,7 @@ func lookupWithDotEnv(processLookup LookupEnv) (LookupEnv, error) {
 		return nil, fmt.Errorf("%s: path must not contain a null byte", dotEnvPathKey)
 	}
 
-	fileValues, err := readDotEnv(path, explicitPath)
+	fileValues, err := ReadDotEnvFile(path, explicitPath)
 	if err != nil {
 		return nil, fmt.Errorf("load environment file %q: %w", path, err)
 	}
@@ -49,14 +46,15 @@ func lookupWithDotEnv(processLookup LookupEnv) (LookupEnv, error) {
 	}, nil
 }
 
-func readDotEnv(path string, required bool) (map[string]string, error) {
+// ReadDotEnvFile reads and parses a dotenv file with MaxDotEnvBytes and UTF-8
+// bounds. A missing file is allowed only when required is false.
+func ReadDotEnvFile(path string, required bool) (map[string]string, error) {
+	if strings.ContainsRune(path, '\x00') {
+		return nil, errors.New("path must not contain a null byte")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		if !required && errors.Is(err, os.ErrNotExist) {
-			// Fallback to embedded .env if file not found
-			if embeddedEnv != "" {
-				return parseDotEnv(embeddedEnv)
-			}
 			return map[string]string{}, nil
 		}
 		return nil, err
@@ -67,15 +65,28 @@ func readDotEnv(path string, required bool) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxDotEnvBytes {
-		return nil, fmt.Errorf("file exceeds %d bytes", maxDotEnvBytes)
+	if len(data) > MaxDotEnvBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", MaxDotEnvBytes)
 	}
 	if !utf8.Valid(data) {
 		return nil, errors.New("file must contain valid UTF-8")
 	}
 
 	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
-	return parseDotEnv(string(data))
+	return ParseDotEnv(string(data))
+}
+
+// ParseDotEnv parses dotenv content without executing shell syntax. Content is
+// bounded by MaxDotEnvBytes and must be valid UTF-8.
+func ParseDotEnv(contents string) (map[string]string, error) {
+	if len(contents) > MaxDotEnvBytes {
+		return nil, fmt.Errorf("content exceeds %d bytes", MaxDotEnvBytes)
+	}
+	if !utf8.ValidString(contents) {
+		return nil, errors.New("content must contain valid UTF-8")
+	}
+	contents = strings.TrimPrefix(contents, "\ufeff")
+	return parseDotEnv(contents)
 }
 
 func parseDotEnv(contents string) (map[string]string, error) {

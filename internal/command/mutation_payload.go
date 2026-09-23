@@ -24,6 +24,26 @@ type PermissionCommand struct {
 	Level agent.ModerationLevel
 }
 
+// TriggerCommand is a durable storage payload for /trigger. Command grammar
+// and behavior live in internal/inbound/commands/trigger.go.
+type TriggerCommandKind uint8
+
+const (
+	TriggerInvalid TriggerCommandKind = iota + 1
+	TriggerView
+	TriggerSetMention
+	TriggerSetName
+	TriggerSetReply
+	TriggerSetRegex
+	TriggerSetPattern
+)
+
+type TriggerCommand struct {
+	Kind    TriggerCommandKind
+	Enabled bool
+	Pattern string
+}
+
 // PromptCommand is a storage payload, not a command parser. The complete
 // /prompt handler lives in internal/inbound/commands/prompt.go.
 type PromptCommandKind uint8

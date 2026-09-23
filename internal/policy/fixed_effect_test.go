@@ -19,7 +19,7 @@ func TestFixedGateAlwaysAllowsReactionCapabilityAndReadsLiveAuthority(t *testing
 	}}}
 	chats := fixedChatAccess{}
 	authority := &fixedAuthority{value: policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: time.Now().UTC().UnixMilli()}}
-	gate, err := policy.NewFixedGate(policyID, 1, configs, chats, authority, true)
+	gate, err := policy.NewFixedGate(policyID, 1, configs, chats, authority, "", true)
 	if err != nil {
 		t.Fatalf("create fixed gate: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestGroupEffectRequiresInboundAdminRequester(t *testing.T) {
 		PolicyID: policyID, Revision: 1, ModerationLevel: agent.ModerationDeleteMuteKick,
 	}}}
 	authority := &fixedAuthority{value: policy.ChatAuthority{ChatKind: conversation.ChatGroup, BotIsAdmin: true, ObservedAt: time.Now().UTC().UnixMilli()}}
-	gate, err := policy.NewFixedGate(policyID, 1, configs, fixedChatAccess{}, authority, true)
+	gate, err := policy.NewFixedGate(policyID, 1, configs, fixedChatAccess{}, authority, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,52 @@ func TestGroupEffectRequiresInboundAdminRequester(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s permitted without a verified human requester", capability)
 		}
+	}
+}
+
+func TestFixedGateUsesPerChatInvocationTriggers(t *testing.T) {
+	key := fixedEffectKey(t)
+	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
+	gate, err := policy.NewFixedGate(policyID, 1, &fixedConfigReader{}, fixedChatAccess{}, &fixedAuthority{}, "Vivy", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission := agent.PermissionConfig{PolicyID: policyID, Revision: 1}
+	message := fixedInvocationMessage(t, key, conversation.ChatGroup, "hey VIVY please help")
+
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission}); err == nil {
+		t.Fatal("group message without an enabled trigger was accepted")
+	}
+	triggers := agent.TriggerConfig{Name: true}
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: triggers}); err != nil {
+		t.Fatalf("assistant-name trigger was denied: %v", err)
+	}
+	triggers = agent.TriggerConfig{Name: true, NameRegex: true, NamePattern: `(?i)help$`}
+	message.Text = "Vivy, HELP"
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: triggers}); err != nil {
+		t.Fatalf("custom regex trigger was denied: %v", err)
+	}
+	message.ChatKind = conversation.ChatDirect
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission}); err != nil {
+		t.Fatalf("direct chat was incorrectly gated by group triggers: %v", err)
+	}
+}
+
+func fixedInvocationMessage(t *testing.T, key agent.Key, kind conversation.ChatKind, text string) conversation.IncomingMessage {
+	t.Helper()
+	messageID, _ := identity.NewMessageID()
+	invocationID, _ := identity.NewInvocationID()
+	causationID, _ := identity.NewCausationID()
+	participantID, _ := identity.NewParticipantID()
+	senderRef, _ := identity.NewSenderRef()
+	lid, _ := identity.ParseLID("10000000009@lid")
+	now := time.Now().UTC()
+	return conversation.IncomingMessage{
+		ID: messageID, InvocationID: invocationID, CausationID: causationID,
+		TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
+		SenderID: participantID, SenderRef: senderRef, SenderLID: lid,
+		SenderName: "Tester", ChatKind: kind, Text: text, Allowlisted: true,
+		OccurredAt: now.Add(-time.Second), ReceivedAt: now,
 	}
 }
 

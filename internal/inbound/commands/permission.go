@@ -17,8 +17,8 @@ var PermissionCommand = command.Descriptor{
 	Aliases:     []string{"permissions"},
 	Capability:  policy.CapabilityPermissionWrite,
 	Permission:  "owner and !fromMe",
-	Description: "Mengatur permission moderasi level 0 sampai 3.",
-	DeniedReply: "Perintah /permission hanya dapat digunakan oleh owner yang dikonfigurasi.",
+	Description: "Sets the moderation permission level from 0 to 3.",
+	DeniedReply: "The /permission command can only be used by the configured owner.",
 	Handler:     handlePermission,
 }
 
@@ -43,9 +43,9 @@ func handlePermission(ctx context.Context, input command.Context, adapter comman
 		if err != nil {
 			return err
 		}
-		return send("Permission diperbarui. " + formatModerationLevel(parsed.Level))
+		return send("Permission updated. " + formatModerationLevel(parsed.Level))
 	case command.PermissionInvalid:
-		return send("Format: /permission 0, 1, 2, atau 3. Level 0: tanpa moderasi; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
+		return send("Usage: /permission 0, 1, 2, or 3. Level 0: no moderation; 1: delete; 2: delete+mute; 3: delete+mute+kick.")
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle permission command", fmt.Errorf("unknown command kind"))
 	}
@@ -65,13 +65,13 @@ func parsePermissionCommand(raw string) command.PermissionCommand {
 
 func formatModerationLevel(level agent.ModerationLevel) string {
 	labels := [...]string{
-		"Level 0: moderasi nonaktif.",
+		"Level 0: moderation disabled.",
 		"Level 1: delete.",
 		"Level 2: delete dan mute.",
 		"Level 3: delete, mute, dan kick.",
 	}
 	if !level.Valid() {
-		return "Permission tidak valid."
+		return "Invalid permission level."
 	}
 	return labels[level]
 }

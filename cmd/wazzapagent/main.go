@@ -2,22 +2,19 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/app"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/backup"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
 )
-
-//go:embed systemprompt.txt
-var embeddedSystemPrompt string
 
 func main() {
 	os.Exit(run())
@@ -31,13 +28,11 @@ func run() int {
 		}
 	}
 
-	cfg, err := config.LoadRuntime(os.LookupEnv)
+	cfg, err := config.LoadRuntimeBootstrap(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
 		return 2
 	}
-	app.SetSystemPolicy(renderSystemPrompt(embeddedSystemPrompt, cfg.AssistantName(), time.Now()))
-
 	logger, _, err := observability.NewLogger(os.Stdout, cfg.LogLevel(), cfg.LogFormat())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "initialize logger: %v\n", err)
@@ -46,21 +41,35 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	lease, err := platform.AcquireDataRootLease(ctx, cfg.DataDir())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "acquire data root: %v\n", err)
+		return 1
+	}
+	defer func() {
+		if closeErr := lease.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "release data root: %v\n", closeErr)
+		}
+	}()
+	cfg, err = cfg.ResolveRuntimeIdentity()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load runtime identity: %v\n", err)
+		return 2
+	}
 
-	if err := app.New(cfg, logger).Run(ctx); err != nil {
+	var pairing whatsapp.PairingSink
+	if cfg.PairingOutput() == "terminal" {
+		pairing = &whatsapp.TerminalPairingSink{Writer: os.Stdout}
+	}
+	application := app.New(cfg, logger, app.Options{
+		SystemPolicy: app.RenderSystemPolicy(cfg.AssistantName(), time.Now()),
+		Pairing:      pairing,
+	})
+	if err := application.RunCLI(ctx); err != nil {
 		logger.Error("application stopped with error", "error", err)
 		return 1
 	}
 	return 0
-}
-
-func renderSystemPrompt(source, assistantName string, now time.Time) string {
-	// The prompt is plain text, not Go template syntax. Replacing only known
-	// tokens also leaves any quoted braces in examples untouched.
-	return strings.NewReplacer(
-		"{{assistant_name}}", assistantName,
-		"{{current_date}}", now.Format("02 Jan 2006"),
-	).Replace(source)
 }
 
 func runOfflineCommand(arguments []string) int {
@@ -77,6 +86,12 @@ func runOfflineCommand(arguments []string) int {
 			fmt.Fprintf(os.Stderr, "invalid data directory configuration: %v\n", err)
 			return 2
 		}
+		lease, err := platform.AcquireDataRootLease(ctx, dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "acquire data root: %v\n", err)
+			return 1
+		}
+		defer lease.Close()
 		path, err := backup.Create(ctx, dataDir, arguments[1], time.Now().UTC())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "backup failed: %v\n", err)
@@ -101,6 +116,17 @@ func runOfflineCommand(arguments []string) int {
 			fmt.Fprintln(os.Stderr, "usage: wazzapagent restore-backup <backup-directory> <new-data-directory>")
 			return 2
 		}
+		dataDir, err := config.LoadDataDirRuntime(os.LookupEnv)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid data directory configuration: %v\n", err)
+			return 2
+		}
+		lease, err := platform.AcquireDataRootLease(ctx, dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "acquire data root: %v\n", err)
+			return 1
+		}
+		defer lease.Close()
 		if err := backup.Restore(ctx, arguments[1], arguments[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "restore failed: %v\n", err)
 			return 1

@@ -16,8 +16,8 @@ var PromptCommand = command.Descriptor{
 	Name:        "prompt",
 	Capability:  policy.CapabilityPromptWrite,
 	Permission:  "owner and !fromMe",
-	Description: "Melihat, mengubah, atau menghapus prompt custom chat.",
-	DeniedReply: "Perintah /prompt hanya dapat digunakan oleh owner yang dikonfigurasi.",
+	Description: "Views, updates, or deletes the custom chat prompt.",
+	DeniedReply: "The /prompt command can only be used by the configured owner.",
 	Handler:     handlePrompt,
 }
 
@@ -39,24 +39,24 @@ func handlePrompt(ctx context.Context, input command.Context, adapter command.Ad
 	switch parsed.Kind {
 	case command.PromptView:
 		if snapshot.PromptOverride == nil {
-			response = "Prompt override belum diatur."
+			response = "No prompt override is configured."
 		} else {
-			response = "Prompt override saat ini:\n" + snapshot.PromptOverride.Text
+			response = "Current prompt override:\n" + snapshot.PromptOverride.Text
 		}
 	case command.PromptSet:
 		_, err := applyPromptMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		response = "Prompt override berhasil diperbarui."
+		response = "Prompt override updated."
 	case command.PromptClear:
 		_, err := applyPromptMutation(ctx, input, parsed)
 		if err != nil {
 			return err
 		}
-		response = "Prompt override berhasil dihapus."
+		response = "Prompt override deleted."
 	case command.PromptInvalid:
-		response = fmt.Sprintf("Format: /prompt view, /prompt set <teks>, atau /prompt clear. Panjang prompt maksimal %d byte.", agent.MaxPromptBytes)
+		response = fmt.Sprintf("Usage: /prompt view, /prompt set <text>, or /prompt clear. The prompt can be up to %d bytes long.", agent.MaxPromptBytes)
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("unknown command kind"))
 	}

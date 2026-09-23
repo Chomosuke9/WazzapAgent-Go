@@ -43,6 +43,20 @@ const (
 
 type PermissionCommand = command.PermissionCommand
 
+type TriggerCommandKind = command.TriggerCommandKind
+
+const (
+	TriggerInvalid    = command.TriggerInvalid
+	TriggerView       = command.TriggerView
+	TriggerSetMention = command.TriggerSetMention
+	TriggerSetName    = command.TriggerSetName
+	TriggerSetReply   = command.TriggerSetReply
+	TriggerSetRegex   = command.TriggerSetRegex
+	TriggerSetPattern = command.TriggerSetPattern
+)
+
+type TriggerCommand = command.TriggerCommand
+
 type PromptCommandKind = command.PromptCommandKind
 
 const (

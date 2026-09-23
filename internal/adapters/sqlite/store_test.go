@@ -35,8 +35,8 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrations != 11 {
-		t.Fatalf("migration count = %d, want 11", migrations)
+	if migrations != 14 {
+		t.Fatalf("migration count = %d, want 14", migrations)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -92,8 +92,8 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("count upgraded migrations: %v", err)
 	}
-	if migrations != 11 {
-		t.Fatalf("upgraded migration count = %d, want 11", migrations)
+	if migrations != 14 {
+		t.Fatalf("upgraded migration count = %d, want 14", migrations)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
@@ -1333,6 +1333,7 @@ func testDefaults(t *testing.T) agent.ConfigValues {
 		Model:      agent.ModelConfig{ProviderID: providerID, Model: "test-model", MaxOutputTokens: 256},
 		Prompt:     "base prompt",
 		Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
+		Triggers:   agent.DefaultTriggerConfig(),
 	}
 }
 

@@ -23,19 +23,20 @@ type ChatAccess interface {
 // FixedGate is the deliberately narrow text-conversation policy. It never
 // delegates authority to senderRef, prompt content, or model output.
 type FixedGate struct {
-	policyID  identity.PolicyID
-	revision  uint64
-	configs   ConfigReader
-	chats     ChatAccess
-	authority ChatAuthorityReader
-	enabled   atomic.Bool
+	policyID      identity.PolicyID
+	revision      uint64
+	configs       ConfigReader
+	chats         ChatAccess
+	authority     ChatAuthorityReader
+	assistantName string
+	enabled       atomic.Bool
 }
 
-func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, authority ChatAuthorityReader, enabled bool) (*FixedGate, error) {
+func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, authority ChatAuthorityReader, assistantName string, enabled bool) (*FixedGate, error) {
 	if policyID.IsZero() || revision == 0 || configs == nil || chats == nil || authority == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create fixed policy", errors.New("policy reference and stores are required"))
 	}
-	gate := &FixedGate{policyID: policyID, revision: revision, configs: configs, chats: chats, authority: authority}
+	gate := &FixedGate{policyID: policyID, revision: revision, configs: configs, chats: chats, authority: authority, assistantName: assistantName}
 	gate.enabled.Store(enabled)
 	return gate, nil
 }
@@ -43,16 +44,16 @@ func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigRea
 func (gate *FixedGate) SetEnabled(enabled bool) { gate.enabled.Store(enabled) }
 func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
-func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) error {
+func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) error {
 	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
-		(message.ChatKind == conversation.ChatGroup && !message.MentionsBot && !message.RepliedToBot) {
+		(message.ChatKind == conversation.ChatGroup && !snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, message.Text, gate.assistantName)) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", errors.New("message is not eligible"))
 	}
 	principal, err := HumanPrincipal(message)
 	if err != nil {
 		return err
 	}
-	return gate.authorizeHuman(ctx, principal, permission, false)
+	return gate.authorizeHuman(ctx, principal, snapshot.Permission, false)
 }
 
 // AuthorizeCommand is intentionally separate from Agent. The principal was
@@ -174,8 +175,14 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if !gate.enabled.Load() || request.Principal.Kind != PrincipalModel {
+	if !gate.enabled.Load() {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("model effect is not eligible"))
+	}
+	if request.Principal.Kind == PrincipalSystem {
+		return gate.authorizeDesktopEffect(ctx, request)
+	}
+	if request.Principal.Kind != PrincipalModel {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("effect principal is not eligible"))
 	}
 	allowed, err := gate.chats.IsChatAllowlisted(ctx, request.Key)
 	if err != nil {
@@ -230,6 +237,31 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 		if !actorAuthority.ActorIsAdmin || !actorAuthority.BotIsAdmin {
 			return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("requester and bot must still be group admins"))
 		}
+	}
+	return nil
+}
+
+// authorizeDesktopEffect is reserved for explicit local UI actions. It does
+// not grant model tools: the desktop verifies the transcript target, while the
+// provider adapter rechecks group-admin authority before revoking another
+// participant's message.
+func (gate *FixedGate) authorizeDesktopEffect(ctx context.Context, request EffectAuthorization) error {
+	if request.Capability != CapabilityMessageDelete {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize desktop effect", errors.New("desktop effect capability is not supported"))
+	}
+	allowed, err := gate.chats.IsChatAllowlisted(ctx, request.Key)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return agent.NewError(agent.ErrorPermissionDenied, "authorize desktop effect", errors.New("chat is not allowlisted"))
+	}
+	snapshot, err := gate.configs.Load(ctx, request.Key)
+	if err != nil {
+		return err
+	}
+	if err := gate.requirePolicy(snapshot.Permission); err != nil {
+		return err
 	}
 	return nil
 }

@@ -1,0 +1,34 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Build WazzapAgent for macOS on a macOS host
+    cmds:
+      - task: common:generate:bindings
+      - task: common:build:frontend
+      - go build {{.BUILD_FLAGS}} -o {{.BIN_DIR}}/{{.APP_NAME}} ./cmd/app
+    vars:
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags gui,production -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags gui -buildvcs=false -gcflags=all="-l"{{end}}'
+    env:
+      GOOS: darwin
+      GOARCH: '{{.ARCH | default ARCH}}'
+      CGO_ENABLED: '1'
+      CGO_CFLAGS: '-mmacosx-version-min=12.0'
+      CGO_LDFLAGS: '-mmacosx-version-min=12.0'
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      PRODUCTION: '{{.PRODUCTION | default "false"}}'
+
+  package:
+    summary: Build a production macOS executable
+    cmds:
+      - task: build
+        vars:
+          PRODUCTION: 'true'
+
+  run:
+    summary: Run the built macOS executable
+    cmds:
+      - '{{.BIN_DIR}}/{{.APP_NAME}}'

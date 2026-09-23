@@ -584,6 +584,11 @@ func validateEndpoint(value string) (string, error) {
 	if parsed.User != nil || parsed.Fragment != "" {
 		return "", fmt.Errorf("LLM endpoint must not contain credentials or a fragment")
 	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if !strings.HasSuffix(path, "/chat/completions") {
+		parsed.Path = path + "/chat/completions"
+		parsed.RawPath = ""
+	}
 	return parsed.String(), nil
 }
 

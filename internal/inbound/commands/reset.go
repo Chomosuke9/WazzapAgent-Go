@@ -16,8 +16,8 @@ var ResetCommand = command.Descriptor{
 	Name:        "reset",
 	Capability:  policy.CapabilityHistoryReset,
 	Permission:  "owner and !fromMe",
-	Description: "Menghapus history percakapan chat ini.",
-	DeniedReply: "Perintah /reset hanya dapat digunakan oleh owner yang dikonfigurasi.",
+	Description: "Clears the conversation history for this chat.",
+	DeniedReply: "The /reset command can only be used by the configured owner.",
 	Handler:     handleReset,
 }
 
@@ -35,11 +35,11 @@ func handleReset(ctx context.Context, input command.Context, adapter command.Ada
 	}
 	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
 	if argumentsPresent {
-		return send(fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
+		return send(fmt.Sprintf("The /%s command does not accept arguments.", token))
 	}
 	if err := input.Agent.History().Reset(ctx, input.Snapshot.Version); err != nil {
 		return err
 	}
 	input.Observer.ObserveHistoryReset()
-	return send("History percakapan berhasil direset.")
+	return send("Conversation history was reset.")
 }

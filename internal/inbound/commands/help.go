@@ -17,7 +17,7 @@ var HelpCommand = command.Descriptor{
 	Aliases:     []string{"menu"},
 	Capability:  policy.CapabilityCommandHelp,
 	Permission:  "public",
-	Description: "Menampilkan daftar command yang tersedia.",
+	Description: "Shows the list of available commands.",
 	Handler:     handleHelp,
 }
 
@@ -35,13 +35,13 @@ func handleHelp(ctx context.Context, input command.Context, adapter command.Adap
 	}
 	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
 	if argumentsPresent {
-		return send(fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
+		return send(fmt.Sprintf("The /%s command does not accept arguments.", token))
 	}
 	if input.Registry == nil {
 		return agent.NewError(agent.ErrorIntegrityFailure, "handle help command", fmt.Errorf("command registry is required"))
 	}
 	descriptors := input.Registry.Descriptors()
-	lines := []string{"Perintah yang tersedia:"}
+	lines := []string{"Available commands:"}
 	for _, descriptor := range descriptors {
 		aliases := ""
 		if len(descriptor.Aliases) > 0 {

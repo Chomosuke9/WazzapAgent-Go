@@ -22,8 +22,8 @@ var GroupCommand = command.Descriptor{
 	Name:        "group",
 	Capability:  policy.CapabilityCommandGroup,
 	Permission:  "admin and group and !fromMe",
-	Description: "Mengelola status, deskripsi, pesan, mute, dan anggota grup.",
-	DeniedReply: "Perintah /group hanya dapat digunakan oleh admin grup.",
+	Description: "Manages group status, description, messages, mutes, and members.",
+	DeniedReply: "The /group command can only be used by a group admin.",
 	Handler:     handleGroup,
 }
 
@@ -65,11 +65,11 @@ func handleGroup(ctx context.Context, input command.Context, rawAdapter command.
 	if parsed.Kind == groupcmd.Delete || parsed.Kind == groupcmd.Kick {
 		return markHandled()
 	}
-	return send(fmt.Sprintf("Perintah /group %s berhasil dijalankan.", parsed.Kind))
+	return send(fmt.Sprintf("The /group %s command completed successfully.", parsed.Kind))
 }
 
 func groupCommandUsage() string {
-	return "Format: /group close, /group open, /group description <teks>, /group delete sebagai balasan pesan, /group mute @Nama (senderRef) <menit>, atau /group kick @Nama (senderRef)."
+	return "Usage: /group close, /group open, /group description <text>, /group delete as a reply to a message, /group mute @Name (senderRef) <minutes>, or /group kick @Name (senderRef)."
 }
 
 type WhatsAppCommandAdapter interface {

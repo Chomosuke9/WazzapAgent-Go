@@ -1,0 +1,31 @@
+{
+  "name": "wazzapagent-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": ">=24.19.0",
+    "npm": ">=11.6.2"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@wailsio/runtime": "3.0.0-beta.23",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "@vitejs/plugin-react": "6.0.1",
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2",
+    "vite": "8.2.0",
+    "vitest": "4.1.11"
+  }
+}

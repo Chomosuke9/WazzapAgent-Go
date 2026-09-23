@@ -52,6 +52,10 @@ type TargetStore interface {
 	SetChatMute(context.Context, agent.Key, identity.SenderRef, uint32, time.Time) error
 }
 
+type GroupNameStore interface {
+	SaveGroupName(context.Context, identity.TenantID, identity.AccountID, string, string) error
+}
+
 type PairingSink interface {
 	ShowPairingCode(string, time.Duration) error
 }
@@ -68,34 +72,42 @@ type Config struct {
 	SendTimeout     time.Duration
 	Pairing         PairingSink
 	Targets         TargetStore
+	GroupNames      GroupNameStore
 	Logger          *slog.Logger
 }
 
 type Adapter struct {
-	tenantID       identity.TenantID
-	accountID      identity.AccountID
-	owner          string
-	allowlist      map[string]struct{}
-	connectTimeout time.Duration
-	sendTimeout    time.Duration
-	pairing        PairingSink
-	targets        TargetStore
-	handler        CandidateHandler
-	logger         *slog.Logger
-	container      *sqlstore.Container
-	client         *whatsmeow.Client
-	queue          chan conversation.IncomingCandidate
-	workers        uint32
-	ready          atomic.Bool
-	started        atomic.Bool
-	closed         atomic.Bool
-	events         chan account.ConnectionEvent
-	fatal          chan error
-	rootCtx        context.Context
-	cancel         context.CancelFunc
-	eventHandlerID uint32
-	wait           sync.WaitGroup
-	stripes        [sendStripeCount]sync.Mutex
+	tenantID        identity.TenantID
+	accountID       identity.AccountID
+	owner           string
+	allowlist       map[string]struct{}
+	connectTimeout  time.Duration
+	sendTimeout     time.Duration
+	pairing         PairingSink
+	targets         TargetStore
+	groupNames      GroupNameStore
+	handler         CandidateHandler
+	logger          *slog.Logger
+	container       *sqlstore.Container
+	client          *whatsmeow.Client
+	queue           chan conversation.IncomingCandidate
+	groupSync       chan struct{}
+	workers         uint32
+	memberHandlesMu sync.Mutex
+	memberHandles   map[string]memberHandleSet
+	ready           atomic.Bool
+	started         atomic.Bool
+	closed          atomic.Bool
+	events          chan account.ConnectionEvent
+	fatal           chan error
+	rootCtx         context.Context
+	cancel          context.CancelFunc
+	eventHandlerID  uint32
+	wait            sync.WaitGroup
+	stopOnce        sync.Once
+	stopDone        chan struct{}
+	stopErr         error
+	stripes         [sendStripeCount]sync.Mutex
 }
 
 func Open(ctx context.Context, config Config) (*Adapter, error) {
@@ -150,11 +162,14 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		sendTimeout:    config.SendTimeout,
 		pairing:        config.Pairing,
 		targets:        config.Targets,
+		groupNames:     config.GroupNames,
 		logger:         logger,
 		container:      container,
 		client:         client,
 		queue:          make(chan conversation.IncomingCandidate, config.QueueCapacity),
+		groupSync:      make(chan struct{}, 1),
 		workers:        config.Workers,
+		memberHandles:  make(map[string]memberHandleSet),
 		events:         make(chan account.ConnectionEvent, 8),
 		fatal:          make(chan error, 1),
 	}
@@ -191,6 +206,10 @@ func (adapter *Adapter) Start(ctx context.Context) error {
 	for index := uint32(0); index < adapter.workers; index++ {
 		adapter.wait.Add(1)
 		go adapter.worker()
+	}
+	if adapter.groupNames != nil {
+		adapter.wait.Add(1)
+		go adapter.groupNameSyncWorker()
 	}
 	adapter.eventHandlerID = adapter.client.AddEventHandler(adapter.handleEvent)
 
@@ -282,39 +301,48 @@ func waitForInitialConnection(
 }
 
 func (adapter *Adapter) Stop(ctx context.Context) error {
-	if adapter.started.Swap(false) {
+	// One shutdown owns the workers and device store even if a caller times out.
+	// Account runtime calls Stop only after Start has returned.
+	adapter.stopOnce.Do(func() {
+		adapter.stopDone = make(chan struct{})
+		adapter.closed.Store(true)
 		adapter.ready.Store(false)
-		if adapter.cancel != nil {
-			adapter.cancel()
-		}
-		adapter.client.RemoveEventHandler(adapter.eventHandlerID)
-		adapter.client.Disconnect()
-		done := make(chan struct{})
+		adapter.clearMemberHandles()
 		go func() {
+			defer close(adapter.stopDone)
+			if adapter.started.Swap(false) {
+				if adapter.cancel != nil {
+					adapter.cancel()
+				}
+				adapter.client.RemoveEventHandler(adapter.eventHandlerID)
+				adapter.client.Disconnect()
+			}
 			adapter.wait.Wait()
-			close(done)
+			if err := adapter.container.Close(); err != nil {
+				adapter.stopErr = agent.NewError(agent.ErrorStorageFailure, "close WhatsApp device store", err)
+			}
 		}()
-		select {
-		case <-ctx.Done():
-			return agent.NewError(agent.ErrorTimeout, "stop WhatsApp adapter", ctx.Err())
-		case <-done:
-		}
+	})
+	select {
+	case <-adapter.stopDone:
+		return adapter.stopErr
+	default:
 	}
-	if adapter.closed.CompareAndSwap(false, true) {
-		if err := adapter.container.Close(); err != nil {
-			return agent.NewError(agent.ErrorStorageFailure, "close WhatsApp device store", err)
-		}
+	select {
+	case <-adapter.stopDone:
+		return adapter.stopErr
+	case <-ctx.Done():
+		return agent.NewError(agent.ErrorTimeout, "stop WhatsApp adapter", ctx.Err())
 	}
-	return nil
 }
 
-func (adapter *Adapter) Ready() bool                            { return adapter.ready.Load() }
+func (adapter *Adapter) Ready() bool                            { return !adapter.closed.Load() && adapter.ready.Load() }
 func (adapter *Adapter) Events() <-chan account.ConnectionEvent { return adapter.events }
 func (adapter *Adapter) Fatal() <-chan error                    { return adapter.fatal }
 func (adapter *Adapter) QueueUsage() (int, int)                 { return len(adapter.queue), cap(adapter.queue) }
 
 func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, "send WhatsApp text", errors.New("account is not connected"))
 	}
 	address, err := adapter.targets.ResolveChatAddress(ctx, request.Key)
@@ -448,7 +476,7 @@ func (adapter *Adapter) renderOutboundMentions(ctx context.Context, key agent.Ke
 // an LLM tool and failures remain best-effort so provider UX cannot fail a
 // durable conversation turn.
 func (adapter *Adapter) MarkRead(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return agent.NewError(agent.ErrorNotReady, "mark WhatsApp message read", errors.New("account is not connected"))
 	}
 	chat, providerMessageID, sender, occurredAt, err := adapter.resolveEffectTarget(ctx, key, messageID)
@@ -465,7 +493,7 @@ func (adapter *Adapter) MarkRead(ctx context.Context, key agent.Key, messageID i
 
 // SetComposing automatically brackets model generation with composing/paused.
 func (adapter *Adapter) SetComposing(ctx context.Context, key agent.Key, composing bool) error {
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return agent.NewError(agent.ErrorNotReady, "set WhatsApp composing state", errors.New("account is not connected"))
 	}
 	target, err := adapter.resolveChatTarget(ctx, key)
@@ -485,7 +513,7 @@ func (adapter *Adapter) SetComposing(ctx context.Context, key agent.Key, composi
 }
 
 func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messageID identity.MessageID) error {
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return agent.NewError(agent.ErrorNotReady, "delete WhatsApp message", errors.New("account is not connected"))
 	}
 	chat, providerMessageID, sender, _, err := adapter.resolveEffectTarget(ctx, key, messageID)
@@ -494,6 +522,12 @@ func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messag
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
+	stripe := adapter.sendStripe(key.ChatID.String())
+	stripe.Lock()
+	defer stripe.Unlock()
+	if err := adapter.authorizeMessageDeletion(requestCtx, chat, sender); err != nil {
+		return err
+	}
 	_, err = adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, providerMessageID))
 	if err != nil {
 		return nativeEffectError(requestCtx, "delete muted WhatsApp message", err)
@@ -505,7 +539,7 @@ func (adapter *Adapter) DeleteMessage(ctx context.Context, key agent.Key, messag
 // carries only internal IDs; provider message IDs and JIDs are resolved here,
 // after the dispatcher has completed its policy recheck.
 func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored) (string, error) {
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return "", agent.NewError(agent.ErrorNotReady, "execute WhatsApp effect", errors.New("account is not connected"))
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
@@ -540,6 +574,9 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 			}
 			return string(response.ID), nil
 		case effect.DeleteMessage:
+			if err := adapter.authorizeMessageDeletion(requestCtx, chat, sender); err != nil {
+				return "", err
+			}
 			response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
 			if sendErr != nil {
 				return "", nativeEffectError(requestCtx, "send WhatsApp revoke", sendErr)
@@ -565,7 +602,7 @@ func (adapter *Adapter) ReadChatContext(ctx context.Context, key agent.Key) (age
 	if err := key.Validate(); err != nil {
 		return agent.ChatContext{}, err
 	}
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return agent.ChatContext{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat context", errors.New("account is not connected"))
 	}
 	chat, err := adapter.resolveChatTarget(ctx, key)
@@ -581,6 +618,7 @@ func (adapter *Adapter) ReadChatContext(ctx context.Context, key agent.Key) (age
 	if err != nil {
 		return agent.ChatContext{}, nativeEffectError(readCtx, "read WhatsApp chat context", err)
 	}
+	adapter.cacheGroupName(ctx, chat, info.Name)
 	botLID := adapter.client.Store.GetLID().ToNonAD()
 	botPhone := adapter.client.Store.GetJID().ToNonAD()
 	result := agent.ChatContext{Kind: "group", Name: info.Name, Description: info.Topic}
@@ -603,7 +641,7 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 	if err := principal.Validate(); err != nil {
 		return policy.ChatAuthority{}, err
 	}
-	if !adapter.ready.Load() {
+	if !adapter.Ready() {
 		return policy.ChatAuthority{}, agent.NewError(agent.ErrorNotReady, "read WhatsApp chat authority", errors.New("account is not connected"))
 	}
 	chat, err := adapter.resolveChatTarget(ctx, principal.Key())
@@ -620,6 +658,7 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 	if err != nil {
 		return policy.ChatAuthority{}, nativeEffectError(readCtx, "read WhatsApp group authority", err)
 	}
+	adapter.cacheGroupName(ctx, chat, info.Name)
 	actorLID := types.EmptyJID
 	if principal.Kind == policy.PrincipalHuman {
 		actorLID, err = types.ParseJID(principal.LID.String())
@@ -721,6 +760,7 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.ready.Store(true)
 		adapter.logger.Info("WhatsApp account connected")
 		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
+		adapter.requestGroupNameSync()
 	case *events.Disconnected:
 		adapter.ready.Store(false)
 		adapter.logger.Warn("WhatsApp account disconnected; reconnecting")
@@ -734,6 +774,12 @@ func (adapter *Adapter) handleEvent(event any) {
 	case events.PermanentDisconnect:
 		adapter.ready.Store(false)
 		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", errors.New(typed.PermanentDisconnectDescription())))
+	case *events.JoinedGroup:
+		adapter.cacheGroupName(adapter.rootCtx, typed.JID, typed.Name)
+	case *events.GroupInfo:
+		if typed.Name != nil {
+			adapter.cacheGroupName(adapter.rootCtx, typed.JID, typed.Name.Name)
+		}
 	case *events.Message:
 		candidate, ok := adapter.normalizeMessage(adapter.rootCtx, typed)
 		if !ok {

@@ -2,7 +2,7 @@
 
 Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 3 menyediakan conversation core durable: transcript canonical penuh untuk chat yang allowlisted, kebijakan eksternal, satu `Agent` per chat, bounded model context, LLM OpenAI-compatible, lalu pengiriman balasan dan typed effect melalui outbox terpisah.
 
-Status saat ini: Part 0 selesai; implementasi lokal Part 1–3 selesai. Exit gate real-device/production canary belum dibuktikan, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
+Status saat ini: shell Wails P0, lifecycle shared core P1, settings persistence GUI P2, pengelolaan sesi P3, serta Start/Stop/Apply Agent dari UI P4 sudah terhubung secara lokal. Native Android dan exit gate real-device/production canary belum selesai, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
 
 ## Bentuk OOP
 
@@ -41,6 +41,7 @@ Termasuk:
 - recovery turn lama tetap diproses lebih dahulu; pesan baru tidak menyalip turn yang masih generating, retryable, atau menunggu delivery;
 - `/help`, `/info`, owner-only `/dump` untuk menampilkan input context Agent yang benar-benar dibangun, serta owner-only `/reset`;
 - owner-only `/permission [view|0|1|2|3]`: level 0 tanpa moderasi, level 1 delete, level 2 delete+mute, dan level 3 delete+mute+kick;
+- `/trigger` dapat digunakan owner atau admin, hanya di grup dan selalu menolak pesan bot: atur pemicu per chat dengan `/trigger mention on|off`, `/trigger name on|off`, `/trigger reply on|off`, dan `/trigger regex on|off`. Nama Agent dicocokkan tanpa membedakan kapital; `/trigger pattern <regex>` otomatis mengaktifkan pemicu nama dengan regex Go khusus. Pengaturan yang sama tersedia di panel Pengaturan chat;
 - model selalu memperoleh `reply_message` dan `react_to_message`; delete/mute/kick tetap command keluarga `/group *` yang dibawa secara silent oleh `reply_message`, bukan tool terpisah;
 - mark-read dan composing presence otomatis pada AI lane, tanpa permission atau model tool;
 - typed effect recovery untuk reaction dan model-generated `/group *`; operasi durable ambigu menjadi `unknown_outcome`, sedangkan read/presence yang ephemeral tidak direplay;
@@ -87,6 +88,8 @@ Saat startup, binary otomatis membaca `.env` dari working directory. Environment
 
 ## Dokumentasi
 
+- [Panduan aplikasi multiplatform](docs/multiplatform/README.md) (P0-P4 tersedia secara lokal; native Android, migrasi data lama, dan canary perangkat nyata masih tersisa)
+- [Runbook testing manual](docs/multiplatform/TESTING.md)
 - [Master plan](PLAN.md)
 - [Target architecture](docs/rewrite/02-TARGET-ARCHITECTURE.md)
 - [Roadmap](docs/rewrite/03-ROADMAP.md)

@@ -16,7 +16,7 @@ var InfoCommand = command.Descriptor{
 	Name:        "info",
 	Capability:  policy.CapabilityCommandInfo,
 	Permission:  "public",
-	Description: "Menampilkan status agent, model, config, dan history.",
+	Description: "Shows the Agent, model, configuration, and history status.",
 	Handler:     handleInfo,
 }
 
@@ -34,16 +34,16 @@ func handleInfo(ctx context.Context, input command.Context, adapter command.Adap
 	}
 	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
 	if argumentsPresent {
-		return send(fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
+		return send(fmt.Sprintf("The /%s command does not accept arguments.", token))
 	}
 	page, err := input.Agent.History().List(ctx, input.Snapshot.Version, agent.HistoryQuery{Limit: 1})
 	if err != nil {
 		return err
 	}
-	historyState := "kosong"
+	historyState := "empty"
 	if len(page.Entries) > 0 {
-		historyState = "aktif"
+		historyState = "active"
 	}
-	response := fmt.Sprintf("Agent aktif. Model: %s. Config version: %d. History: %s.", input.Snapshot.Model.Model, input.Snapshot.Version, historyState)
+	response := fmt.Sprintf("Agent is active. Model: %s. Config version: %d. History: %s.", input.Snapshot.Model.Model, input.Snapshot.Version, historyState)
 	return send(response)
 }

@@ -102,14 +102,27 @@ type Snapshot struct {
 // dotenv file. Values explicitly present in the process environment take
 // precedence over values from the file.
 func LoadRuntime(lookup LookupEnv) (Snapshot, error) {
+	snapshot, err := LoadRuntimeBootstrap(lookup)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return snapshot.ResolveRuntimeIdentity()
+}
+
+// LoadRuntimeBootstrap parses the CLI environment and dotenv sources without
+// touching the data root. Callers must acquire the platform data-root lease
+// before resolving the durable runtime identity or opening any store.
+func LoadRuntimeBootstrap(lookup LookupEnv) (Snapshot, error) {
 	mergedLookup, err := lookupWithDotEnv(lookup)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snapshot, err := load(mergedLookup, false)
-	if err != nil {
-		return Snapshot{}, err
-	}
+	return load(mergedLookup, false)
+}
+
+// ResolveRuntimeIdentity loads or creates the durable identity after the
+// caller has acquired ownership of the data root.
+func (snapshot Snapshot) ResolveRuntimeIdentity() (Snapshot, error) {
 	if !snapshot.whatsAppEnabled {
 		return snapshot, nil
 	}

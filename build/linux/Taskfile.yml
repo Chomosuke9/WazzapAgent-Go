@@ -1,0 +1,31 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Build WazzapAgent for Linux on a Linux host
+    cmds:
+      - task: common:generate:bindings
+      - task: common:build:frontend
+      - go build {{.BUILD_FLAGS}} -o {{.BIN_DIR}}/{{.APP_NAME}} ./cmd/app
+    vars:
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags gui,production -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags gui -buildvcs=false -gcflags=all="-l"{{end}}'
+    env:
+      GOOS: linux
+      GOARCH: '{{.ARCH | default "amd64"}}'
+      CGO_ENABLED: '1'
+      PRODUCTION: '{{.PRODUCTION | default "false"}}'
+
+  package:
+    summary: Build a production Linux executable
+    cmds:
+      - task: build
+        vars:
+          PRODUCTION: 'true'
+
+  run:
+    summary: Run the built Linux executable
+    cmds:
+      - '{{.BIN_DIR}}/{{.APP_NAME}}'

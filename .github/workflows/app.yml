@@ -1,0 +1,58 @@
+name: app
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-scaffold:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@11.6.2
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Check frontend types
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Test frontend behavior
+        working-directory: frontend
+        run: npm test -- --run
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+      - name: Regenerate Wails bindings
+        run: wails3 generate bindings -f '-tags gui' -ts -i -clean=true ./cmd/app
+      - name: Verify generated bindings
+        run: git diff --exit-code -- frontend/bindings
+      - name: Check generated binding types
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build frontend with regenerated bindings
+        working-directory: frontend
+        run: npm run build
+      - name: Test GUI Go packages
+        run: go test -tags gui ./cmd/app ./internal/adapters/wails ./frontend
+      - name: Build Windows application
+        run: go build -tags gui,production -trimpath -ldflags='-s -w -H windowsgui' -o bin/WazzapAgent.exe ./cmd/app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WazzapAgent-windows-scaffold
+          path: bin/WazzapAgent.exe
+          if-no-files-found: error

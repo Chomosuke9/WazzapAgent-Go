@@ -130,3 +130,9 @@ func (modelCommandStore) BeginPermissionMutation(_ context.Context, _ conversati
 func (modelCommandStore) MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
 	return nil
 }
+func (modelCommandStore) BeginTriggerMutation(_ context.Context, _ conversation.IncomingMessage, _ command.TriggerCommand, version agent.ConfigVersion) (command.PromptMutation, error) {
+	return command.PromptMutation{ExpectedVersion: version}, nil
+}
+func (modelCommandStore) MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
+	return nil
+}

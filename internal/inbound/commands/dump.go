@@ -16,8 +16,8 @@ var DumpCommand = command.Descriptor{
 	Name:        "dump",
 	Capability:  policy.CapabilityChatContextRead,
 	Permission:  "owner and !fromMe",
-	Description: "Menampilkan context model yang benar-benar dibangun agent.",
-	DeniedReply: "Perintah /dump hanya dapat digunakan oleh owner yang dikonfigurasi.",
+	Description: "Shows the model context actually built by the Agent.",
+	DeniedReply: "The /dump command can only be used by the configured owner.",
 	Handler:     handleDump,
 }
 
@@ -35,7 +35,7 @@ func handleDump(ctx context.Context, input command.Context, adapter command.Adap
 	}
 	token, _, argumentsPresent := strings.Cut(strings.TrimPrefix(input.Message.Text, "/"), " ")
 	if argumentsPresent {
-		return send(fmt.Sprintf("Format perintah /%s tidak menerima argumen.", token))
+		return send(fmt.Sprintf("The /%s command does not accept arguments.", token))
 	}
 	modelInput, err := input.Agent.BuildInput(ctx, input.Snapshot.Version, input.Message.InvocationID)
 	if err != nil {

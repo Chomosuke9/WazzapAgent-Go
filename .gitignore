@@ -15,3 +15,18 @@
 /.idea/discord.xml
 /testing-only
 .idea
+
+# Multiplatform application build output and local frontend configuration.
+/.task/
+/bin/
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+/frontend/*.tsbuildinfo
+/frontend/.env
+/frontend/.env.*
+!/frontend/.env.example
+/build/android/.gradle/
+/build/android/build/
+/build/android/app/build/
+/build/android/local.properties

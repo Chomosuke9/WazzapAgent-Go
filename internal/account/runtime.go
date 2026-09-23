@@ -107,33 +107,79 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			runtime.setState(StateDraining, "")
 			stopErr := runtime.stopConnector()
+			if stopErr != nil {
+				runtime.setState(StateFailed, runtime.stopErrorCode(stopErr))
+				return errors.Join(err, stopErr)
+			}
 			runtime.setState(StateStopped, "")
-			return stopErr
+			return nil
 		}
 		runtime.setState(StateFailed, agent.CodeOf(err))
-		runtime.stopConnector()
+		stopErr := runtime.stopConnector()
+		if stopErr != nil {
+			runtime.setState(StateFailed, runtime.stopErrorCode(stopErr))
+			return errors.Join(err, stopErr)
+		}
 		return err
 	}
-	runtime.setState(StateOpen, "")
-	for {
+	if runtime.connector.Ready() {
+		runtime.setState(StateOpen, "")
+	}
+
+	events := runtime.connector.Events()
+	fatal := runtime.connector.Fatal()
+	for events != nil || fatal != nil {
 		select {
 		case <-ctx.Done():
 			runtime.setState(StateDraining, "")
 			err := runtime.stopConnector()
+			if err != nil {
+				runtime.setState(StateFailed, runtime.stopErrorCode(err))
+				return err
+			}
 			runtime.setState(StateStopped, "")
-			return err
-		case err := <-runtime.connector.Fatal():
+			return nil
+		case err, open := <-fatal:
+			if !open {
+				fatal = nil
+				continue
+			}
+			if err == nil {
+				continue
+			}
 			runtime.setState(StateFailed, agent.CodeOf(err))
-			_ = runtime.stopConnector()
+			stopErr := runtime.stopConnector()
+			if stopErr != nil {
+				runtime.setState(StateFailed, runtime.stopErrorCode(stopErr))
+				return errors.Join(err, stopErr)
+			}
 			return err
-		case event := <-runtime.connector.Events():
-			if event.Connected {
+		case event, open := <-events:
+			if !open {
+				events = nil
+				continue
+			}
+			if event.Connected && runtime.connector.Ready() {
 				runtime.setState(StateOpen, "")
+			} else if event.Connected {
+				runtime.setState(StateConnecting, "")
 			} else {
 				runtime.setState(StateReconnecting, "")
 			}
 		}
 	}
+
+	// A connector may close both notification channels while it remains usable.
+	// Keep waiting for cancellation instead of repeatedly selecting closed cases.
+	<-ctx.Done()
+	runtime.setState(StateDraining, "")
+	err := runtime.stopConnector()
+	if err != nil {
+		runtime.setState(StateFailed, runtime.stopErrorCode(err))
+		return err
+	}
+	runtime.setState(StateStopped, "")
+	return nil
 }
 
 func (runtime *Runtime) Ready() bool {
@@ -179,4 +225,12 @@ func (runtime *Runtime) stopConnector() error {
 	ctx, cancel := context.WithTimeout(context.Background(), runtime.stopTimeout)
 	defer cancel()
 	return runtime.connector.Stop(ctx)
+}
+
+func (runtime *Runtime) stopErrorCode(err error) agent.ErrorCode {
+	code := agent.CodeOf(err)
+	if code == agent.ErrorInternal && errors.Is(err, context.DeadlineExceeded) {
+		return agent.ErrorTimeout
+	}
+	return code
 }

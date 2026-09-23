@@ -19,11 +19,34 @@ func (store *HistoryStore) ListIfConfigVersion(
 	version agent.ConfigVersion,
 	query agent.HistoryQuery,
 ) (agent.HistoryPage, error) {
+	return store.list(ctx, key, version, query, true)
+}
+
+// listForTranscript reads the durable transcript without requiring an
+// agent_configs row. Passive allowlisted group messages are recorded before
+// the bot is invoked, so some chats have history before their first Agent
+// configuration exists. Transcript display is read-only and does not need to
+// create that configuration as a side effect.
+func (store *HistoryStore) listForTranscript(
+	ctx context.Context,
+	key agent.Key,
+	query agent.HistoryQuery,
+) (agent.HistoryPage, error) {
+	return store.list(ctx, key, 0, query, false)
+}
+
+func (store *HistoryStore) list(
+	ctx context.Context,
+	key agent.Key,
+	version agent.ConfigVersion,
+	query agent.HistoryQuery,
+	guardConfig bool,
+) (agent.HistoryPage, error) {
 	if err := key.Validate(); err != nil {
 		return agent.HistoryPage{}, err
 	}
-	if version == 0 || query.Limit == 0 || query.Limit > agent.MaxHistoryPageSize {
-		return agent.HistoryPage{}, agent.NewError(agent.ErrorInvalidArgument, "list history", errors.New("valid config version and page limit are required"))
+	if (guardConfig && version == 0) || (!guardConfig && version != 0) || query.Limit == 0 || query.Limit > agent.MaxHistoryPageSize {
+		return agent.HistoryPage{}, agent.NewError(agent.ErrorInvalidArgument, "list history", errors.New("valid history query and config guard are required"))
 	}
 	before, err := decodeHistoryCursor(query.Before)
 	if err != nil {
@@ -34,8 +57,10 @@ func (store *HistoryStore) ListIfConfigVersion(
 		return agent.HistoryPage{}, storageError("begin history list", err)
 	}
 	defer tx.Rollback()
-	if err := requireConfigVersion(ctx, tx, key, version); err != nil {
-		return agent.HistoryPage{}, err
+	if guardConfig {
+		if err := requireConfigVersion(ctx, tx, key, version); err != nil {
+			return agent.HistoryPage{}, err
+		}
 	}
 	var resetCutoff int64
 	err = tx.QueryRowContext(ctx, `SELECT cutoff_sequence FROM history_resets

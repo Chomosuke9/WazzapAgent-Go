@@ -1,0 +1,31 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Build WazzapAgent.exe for Windows
+    cmds:
+      - task: common:generate:bindings
+      - task: common:build:frontend
+      - go build {{.BUILD_FLAGS}} -o {{.BIN_DIR}}/{{.APP_NAME}}.exe ./cmd/app
+    vars:
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags gui,production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"{{else}}-tags gui -buildvcs=false -gcflags=all="-l"{{end}}'
+    env:
+      GOOS: windows
+      GOARCH: '{{.ARCH | default "amd64"}}'
+      CGO_ENABLED: '0'
+      PRODUCTION: '{{.PRODUCTION | default "false"}}'
+
+  package:
+    summary: Build a production Windows executable
+    cmds:
+      - task: build
+        vars:
+          PRODUCTION: 'true'
+
+  run:
+    summary: Run the built Windows executable
+    cmds:
+      - '{{.BIN_DIR}}/{{.APP_NAME}}.exe'

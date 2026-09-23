@@ -47,6 +47,12 @@ func (*recordingCommandStore) BeginPermissionMutation(context.Context, conversat
 func (*recordingCommandStore) MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
 	return nil
 }
+func (*recordingCommandStore) BeginTriggerMutation(context.Context, conversation.IncomingMessage, command.TriggerCommand, agent.ConfigVersion) (command.PromptMutation, error) {
+	return command.PromptMutation{}, nil
+}
+func (*recordingCommandStore) MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error {
+	return nil
+}
 
 type recordingCommandClient struct {
 	operation   string
