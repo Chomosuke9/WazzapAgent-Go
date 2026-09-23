@@ -59,6 +59,11 @@ export function SettingsPage() {
     setSaved(false);
   }
 
+  function updateChatDefault<K extends keyof SettingsValuesDTO["chatDefaults"]>(key: K, value: SettingsValuesDTO["chatDefaults"][K]) {
+    setDraft((current) => current ? { ...current, chatDefaults: { ...current.chatDefaults, [key]: value } } : current);
+    setSaved(false);
+  }
+
   async function submit() {
     if (!draft || !snapshot) return;
     setBusy(true);
@@ -130,6 +135,23 @@ export function SettingsPage() {
         <label className="wide"><span>Base prompt</span><textarea rows={4} value={draft.basePrompt} onChange={(event) => update("basePrompt", event.target.value)} /></label>
         <label><span>WhatsApp mode</span><select value={draft.whatsAppEnabled ? "enabled" : "disabled"} onChange={(event) => update("whatsAppEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Agent mode</span><select value={draft.agentEnabled ? "enabled" : "disabled"} onChange={(event) => update("agentEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+      </div>
+
+      <p className="eyebrow settings-section-title">DEFAULT CHAT SETTINGS</p>
+      <p className="muted small">Used when a chat gets its settings for the first time. Existing chat settings keep their saved values. Save and Apply to use these defaults in the running Agent.</p>
+      <div className="settings-form-grid">
+        <label><span>Moderation level</span><select value={draft.chatDefaults.moderationLevel} onChange={(event) => updateChatDefault("moderationLevel", Number(event.target.value))}>
+          <option value={0}>Disabled — no moderation</option><option value={1}>Level 1 — delete messages</option><option value={2}>Level 2 — delete and mute</option><option value={3}>Level 3 — delete, mute, and kick</option>
+        </select></label>
+        <div className="wide"><span>Agent triggers</span><div className="trigger-options">
+          <label><input type="checkbox" checked={draft.chatDefaults.triggerMention} onChange={(event) => updateChatDefault("triggerMention", event.target.checked)} /> Mention the bot account</label>
+          <label><input type="checkbox" checked={draft.chatDefaults.triggerName} onChange={(event) => updateChatDefault("triggerName", event.target.checked)} /> Agent name</label>
+          <label><input type="checkbox" checked={draft.chatDefaults.triggerReply} onChange={(event) => updateChatDefault("triggerReply", event.target.checked)} /> Reply to a bot message</label>
+        </div></div>
+        {draft.chatDefaults.triggerName && <label className="wide"><input type="checkbox" checked={draft.chatDefaults.triggerNameRegex} onChange={(event) => updateChatDefault("triggerNameRegex", event.target.checked)} /> Use a custom regex for the name trigger</label>}
+        {draft.chatDefaults.triggerName && draft.chatDefaults.triggerNameRegex && <label className="wide"><span>Regex pattern</span><input value={draft.chatDefaults.triggerNamePattern} maxLength={512} onChange={(event) => updateChatDefault("triggerNamePattern", event.target.value)} /></label>}
+        <label><span>Custom instructions mode</span><select value={draft.chatDefaults.promptMode} onChange={(event) => updateChatDefault("promptMode", event.target.value)}><option value="append">Append to main instructions</option><option value="replace">Replace main instructions</option></select></label>
+        <label className="wide"><span>Default custom instructions</span><textarea rows={4} maxLength={16000} value={draft.chatDefaults.promptText} onChange={(event) => updateChatDefault("promptText", event.target.value)} placeholder="Leave blank to use only the main instructions" /></label>
       </div>
 
       <p className="eyebrow settings-section-title">PROVIDER AND SECRETS</p>

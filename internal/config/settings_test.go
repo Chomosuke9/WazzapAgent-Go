@@ -1,12 +1,57 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
+
+func TestChatDefaultsPersistAndReachRuntime(t *testing.T) {
+	settings := DefaultSettings()
+	settings.WhatsAppEnabled = false
+	settings.AgentEnabled = false
+	settings.ChatDefaults = ChatDefaults{ModerationLevel: 2, PromptMode: "replace", PromptText: "Use short replies", TriggerName: true, TriggerNameRegex: true, TriggerNamePattern: `(?i)vivy`}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := DefaultSettings()
+	if err := json.Unmarshal(encoded, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := SnapshotFromSettings(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ChatDefaults() != settings.ChatDefaults {
+		t.Fatalf("chat defaults changed: %#v", snapshot.ChatDefaults())
+	}
+	legacy := DefaultSettings()
+	if err := json.Unmarshal([]byte(`{"BasePrompt":"legacy"}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.ChatDefaults.TriggerMention || !legacy.ChatDefaults.TriggerReply {
+		t.Fatalf("legacy defaults changed: %#v", legacy.ChatDefaults)
+	}
+}
+
+func TestChatDefaultsRejectInvalidValues(t *testing.T) {
+	settings := DefaultSettings()
+	settings.ChatDefaults.TriggerName = true
+	settings.ChatDefaults.TriggerNameRegex = true
+	settings.ChatDefaults.TriggerNamePattern = "["
+	if err := ValidateDraft(settings); err == nil {
+		t.Fatal("invalid default regex accepted")
+	}
+	settings.ChatDefaults = DefaultChatDefaults()
+	settings.ChatDefaults.ModerationLevel = 4
+	if err := ValidateDraft(settings); err == nil {
+		t.Fatal("invalid default moderation accepted")
+	}
+}
 
 func TestDefaultSettingsCanBeSavedBeforeAgentSetup(t *testing.T) {
 	settings := DefaultSettings()

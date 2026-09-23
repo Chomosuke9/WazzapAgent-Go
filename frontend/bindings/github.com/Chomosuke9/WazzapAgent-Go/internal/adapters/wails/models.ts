@@ -115,6 +115,16 @@ export interface SettingsPatchDTO {
 export interface SettingsValuesDTO {
     "assistantName": string;
     "basePrompt": string;
+    "chatDefaults": {
+        "moderationLevel": number;
+        "promptMode": string;
+        "promptText": string;
+        "triggerMention": boolean;
+        "triggerName": boolean;
+        "triggerReply": boolean;
+        "triggerNameRegex": boolean;
+        "triggerNamePattern": string;
+    };
     "whatsAppEnabled": boolean;
     "agentEnabled": boolean;
     "ownerJID": string;

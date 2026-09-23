@@ -71,6 +71,43 @@ func TestReconcileAccountDefaultsPreservesChatOverridesAndIsIdempotent(t *testin
 	}
 }
 
+func TestChangedChatDefaultsOnlyInitializeNewChats(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	key := testKey(t)
+	old := testDefaults(t)
+	first, err := store.Configs().LoadOrCreate(ctx, key, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDefaults := old
+	newDefaults.Permission.ModerationLevel = agent.ModerationDeleteMute
+	newDefaults.Triggers = agent.TriggerConfig{Name: true}
+	newDefaults.PromptOverride = &agent.PromptOverride{Mode: agent.PromptReplace, Text: "new default"}
+	global := newDefaults
+	global.Permission.ModerationLevel = agent.ModerationNone
+	global.PromptOverride = nil
+	if _, err := store.Configs().ReconcileAccountDefaults(ctx, key.TenantID, key.AccountID, global); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := store.Configs().LoadOrCreate(ctx, key, newDefaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Version != first.Version || kept.Triggers != old.Triggers || kept.PromptOverride != nil || kept.Permission.ModerationLevel != old.Permission.ModerationLevel {
+		t.Fatalf("existing chat changed: %#v", kept)
+	}
+	other := testKey(t)
+	other.TenantID, other.AccountID = key.TenantID, key.AccountID
+	created, err := store.Configs().LoadOrCreate(ctx, other, newDefaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Triggers != newDefaults.Triggers || created.Permission.ModerationLevel != newDefaults.Permission.ModerationLevel || created.PromptOverride == nil || *created.PromptOverride != *newDefaults.PromptOverride {
+		t.Fatalf("new chat missed defaults: %#v", created)
+	}
+}
+
 func TestChatTriggerSettingsPersistAcrossStoreRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "trigger-settings.db")

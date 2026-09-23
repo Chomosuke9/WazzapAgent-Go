@@ -6,8 +6,52 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
+
+type ChatDefaults struct {
+	ModerationLevel    uint8  `json:"moderationLevel"`
+	PromptMode         string `json:"promptMode"`
+	PromptText         string `json:"promptText"`
+	TriggerMention     bool   `json:"triggerMention"`
+	TriggerName        bool   `json:"triggerName"`
+	TriggerReply       bool   `json:"triggerReply"`
+	TriggerNameRegex   bool   `json:"triggerNameRegex"`
+	TriggerNamePattern string `json:"triggerNamePattern"`
+}
+
+func DefaultChatDefaults() ChatDefaults {
+	return ChatDefaults{TriggerMention: true, TriggerReply: true, PromptMode: "append"}
+}
+
+func (defaults ChatDefaults) Triggers() agent.TriggerConfig {
+	return agent.TriggerConfig{Mention: defaults.TriggerMention, Name: defaults.TriggerName, Reply: defaults.TriggerReply, NameRegex: defaults.TriggerNameRegex, NamePattern: defaults.TriggerNamePattern}
+}
+
+func (defaults ChatDefaults) PromptOverride() *agent.PromptOverride {
+	if strings.TrimSpace(defaults.PromptText) == "" {
+		return nil
+	}
+	mode := agent.PromptAppend
+	if defaults.PromptMode == "replace" {
+		mode = agent.PromptReplace
+	}
+	return &agent.PromptOverride{Mode: mode, Text: defaults.PromptText}
+}
+
+func (defaults ChatDefaults) Validate() error {
+	if !agent.ModerationLevel(defaults.ModerationLevel).Valid() {
+		return fmt.Errorf("moderation level must be 0-3")
+	}
+	if defaults.PromptMode != "append" && defaults.PromptMode != "replace" {
+		return fmt.Errorf("prompt mode must be append or replace")
+	}
+	if len(defaults.PromptText) > agent.MaxPromptBytes {
+		return fmt.Errorf("prompt text is too long")
+	}
+	return defaults.Triggers().Validate()
+}
 
 // Settings is the typed, persisted application configuration. It deliberately
 // has no dependency on environment variables, SQL, or Wails. Secret fields are
@@ -17,6 +61,7 @@ import (
 type Settings struct {
 	AssistantName string
 	BasePrompt    string
+	ChatDefaults  ChatDefaults
 
 	WhatsAppEnabled bool
 	AgentEnabled    bool
@@ -123,6 +168,7 @@ func DefaultSettings() Settings {
 		ConnectTimeout:           defaultConnectTimeout, SendTimeout: defaultSendTimeout,
 		PairingOutput: defaultPairingOutput,
 		StartOnLaunch: false,
+		ChatDefaults:  DefaultChatDefaults(),
 	}
 }
 
@@ -277,6 +323,7 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		llmProviderID: providerID, llmTimeout: settings.LLMTimeout, llmConcurrency: settings.LLMConcurrency,
 		maxOutputTokens: settings.MaxOutputTokens, maxResponseBytes: settings.MaxResponseBytes,
 		basePrompt: settings.BasePrompt, policyID: policyID, policyRevision: settings.PolicyRevision,
+		chatDefaults: settings.ChatDefaults,
 		inboundQueue: settings.InboundQueue, inboundWorkers: settings.InboundWorkers,
 		commandQueue: settings.CommandQueue, commandWorkers: settings.CommandWorkers,
 		aiQueue: settings.AIQueue, aiWorkers: settings.AIWorkers,
@@ -394,6 +441,9 @@ func (settings Settings) withDefaults() Settings {
 	}
 	if settings.PolicyRevision == 0 {
 		settings.PolicyRevision = defaults.PolicyRevision
+	}
+	if settings.ChatDefaults.PromptMode == "" {
+		settings.ChatDefaults.PromptMode = "append"
 	}
 	if settings.ShutdownTimeout == 0 {
 		settings.ShutdownTimeout = defaults.ShutdownTimeout
@@ -517,6 +567,9 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	}
 	if settings.PolicyRevision == 0 {
 		add("WAZZAP_POLICY_REVISION", "range", "must be greater than zero")
+	}
+	if err := settings.ChatDefaults.Validate(); err != nil {
+		add("chatDefaults", "invalid", err.Error())
 	}
 	checkDuration := func(field string, value, maximum time.Duration) {
 		if value <= 0 || value > maximum {

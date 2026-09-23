@@ -76,10 +76,16 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Model:      agent.ModelConfig{ProviderID: application.config.LLMProviderID(), Model: application.config.LLMModel(), MaxOutputTokens: application.config.MaxOutputTokens()},
 		Prompt:     application.config.BasePrompt(),
 		Permission: agent.PermissionConfig{PolicyID: application.config.PolicyID(), Revision: application.config.PolicyRevision()},
-		Triggers:   agent.DefaultTriggerConfig(),
+		Triggers:   application.config.ChatDefaults().Triggers(),
 	}
+	chatDefaults := application.config.ChatDefaults()
+	defaults.Permission.ModerationLevel = agent.ModerationLevel(chatDefaults.ModerationLevel)
+	defaults.PromptOverride = chatDefaults.PromptOverride()
 	if application.config.AgentEnabled() {
-		if _, err := store.Configs().ReconcileAccountDefaults(ctx, application.config.TenantID(), application.config.AccountID(), defaults); err != nil {
+		globalDefaults := defaults
+		globalDefaults.Permission.ModerationLevel = agent.ModerationNone
+		globalDefaults.PromptOverride = nil
+		if _, err := store.Configs().ReconcileAccountDefaults(ctx, application.config.TenantID(), application.config.AccountID(), globalDefaults); err != nil {
 			return nil, err
 		}
 		if err := store.Inbound().ReconcileAccountPolicy(ctx, application.config.TenantID(), application.config.AccountID(), application.config.OwnerAddress(), application.config.Allowlist()); err != nil {

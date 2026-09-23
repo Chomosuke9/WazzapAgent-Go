@@ -47,6 +47,7 @@ function actionErrorMessage(error: unknown, fallback: string): string {
 
 export function ChatPage() {
   const [conversations, setConversations] = useState<WhatsAppConversationDTO[]>([]);
+  const [chatQuery, setChatQuery] = useState("");
   const [selectedChatID, setSelectedChatID] = useState("");
   const [messages, setMessages] = useState<WhatsAppMessageDTO[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
@@ -83,6 +84,7 @@ export function ChatPage() {
   const forceLatestOnLoad = useRef(true);
   const membersChatID = useRef("");
   const selectedConversation = conversations.find((item) => item.id === selectedChatID) ?? null;
+  const visibleConversations = conversations.filter((item) => item.name.toLocaleLowerCase().includes(chatQuery.trim().toLocaleLowerCase()));
 
   useEffect(() => {
     let mounted = true;
@@ -318,7 +320,12 @@ export function ChatPage() {
           <p>{conversationError ? "The app will retry automatically." : "Messages processed by the Agent will appear here. This history only shows messages saved by the app."}</p>
         </div> : <>
           <nav className="bot-chat-list" aria-label="Conversation list">
-            {conversations.map((conversation) => <button
+            <div className="chat-list-toolbar">
+              <div><strong>Conversations</strong><span>{conversations.length}</span></div>
+              <label className="chat-list-search"><span className="visually-hidden">Search conversations</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></svg><input value={chatQuery} onChange={(event) => setChatQuery(event.target.value)} placeholder="Search conversations" /></label>
+            </div>
+            {visibleConversations.length === 0 && <p className="chat-list-no-results">No matching conversations.</p>}
+            {visibleConversations.map((conversation) => <button
               key={conversation.id}
               className={conversation.id === selectedChatID ? "bot-chat-item selected" : "bot-chat-item"}
               onClick={() => setSelectedChatID(conversation.id)}

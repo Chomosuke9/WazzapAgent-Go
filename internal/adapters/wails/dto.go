@@ -19,8 +19,9 @@ import (
 // not contain any secret value; configured is represented by the three
 // boolean status fields below.
 type SettingsValuesDTO struct {
-	AssistantName string `json:"assistantName"`
-	BasePrompt    string `json:"basePrompt"`
+	AssistantName string              `json:"assistantName"`
+	BasePrompt    string              `json:"basePrompt"`
+	ChatDefaults  config.ChatDefaults `json:"chatDefaults"`
 
 	WhatsAppEnabled bool     `json:"whatsAppEnabled"`
 	AgentEnabled    bool     `json:"agentEnabled"`
@@ -263,6 +264,7 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 	settings := values.Settings
 	return SettingsValuesDTO{
 		AssistantName: settings.AssistantName, BasePrompt: settings.BasePrompt,
+		ChatDefaults:    settings.ChatDefaults,
 		WhatsAppEnabled: settings.WhatsAppEnabled, AgentEnabled: settings.AgentEnabled,
 		OwnerJID: settings.OwnerJID, ChatAllowlist: append([]string(nil), settings.ChatAllowlist...),
 		LLMEndpoint: settings.LLMEndpoint, LLMModel: settings.LLMModel, LLMProviderID: settings.LLMProviderID,
@@ -362,6 +364,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 		}
 	}
 	settings.AssistantName, settings.BasePrompt = values.AssistantName, values.BasePrompt
+	settings.ChatDefaults = values.ChatDefaults
 	settings.WhatsAppEnabled, settings.AgentEnabled = values.WhatsAppEnabled, values.AgentEnabled
 	settings.OwnerJID, settings.ChatAllowlist = values.OwnerJID, append([]string(nil), values.ChatAllowlist...)
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID

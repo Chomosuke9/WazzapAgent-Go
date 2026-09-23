@@ -96,6 +96,7 @@ type Snapshot struct {
 	sendTimeout         time.Duration
 	pairingOutput       string
 	assistantName       string
+	chatDefaults        ChatDefaults
 }
 
 // LoadRuntime loads configuration from the process environment and an optional
@@ -334,6 +335,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		ownerAddress:        value(lookup, "WAZZAP_OWNER_JID"),
 		allowlist:           splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
 		assistantName:       value(lookup, "ASSISTANT_NAME"),
+		chatDefaults:        DefaultChatDefaults(),
 	}
 	if whatsAppEnabled {
 		if err := snapshot.validateEnabled(); err != nil {
@@ -454,6 +456,7 @@ func (snapshot Snapshot) ConnectTimeout() time.Duration      { return snapshot.c
 func (snapshot Snapshot) SendTimeout() time.Duration         { return snapshot.sendTimeout }
 func (snapshot Snapshot) PairingOutput() string              { return snapshot.pairingOutput }
 func (snapshot Snapshot) AssistantName() string              { return snapshot.assistantName }
+func (snapshot Snapshot) ChatDefaults() ChatDefaults         { return snapshot.chatDefaults }
 
 func (snapshot Snapshot) Allowlist() []string {
 	return append([]string(nil), snapshot.allowlist...)
