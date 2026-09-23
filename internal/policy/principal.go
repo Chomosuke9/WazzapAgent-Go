@@ -178,9 +178,9 @@ type HumanAccessReader interface {
 	ReadHumanAccess(context.Context, Principal) (HumanAccess, error)
 }
 
-// ChatAuthority is a current provider observation. It is not persisted as a
-// standing role grant and must be refreshed immediately before a privileged
-// native effect.
+// ChatAuthority describes the latest group snapshot available to policy.
+// ObservedAt records when the snapshot or its last event was received. Policy
+// rereads the snapshot before an effect, but delivery events can be delayed.
 type ChatAuthority struct {
 	ChatKind     conversation.ChatKind
 	ActorIsAdmin bool

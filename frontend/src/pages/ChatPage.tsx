@@ -88,7 +88,7 @@ export function ChatPage() {
     let mounted = true;
     let requestInFlight = false;
     const refresh = async () => {
-      if (requestInFlight) return;
+      if (requestInFlight || document.hidden) return;
       requestInFlight = true;
       try {
         const result = await getWhatsAppConversations();
@@ -107,7 +107,9 @@ export function ChatPage() {
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    const onVisibilityChange = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => { mounted = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibilityChange); };
   }, []);
 
   useEffect(() => {
@@ -127,7 +129,7 @@ export function ChatPage() {
     forceLatestOnLoad.current = true;
     let requestInFlight = false;
     const refresh = async () => {
-      if (requestInFlight) return;
+      if (requestInFlight || document.hidden) return;
       requestInFlight = true;
       try {
         const result = await getWhatsAppMessages(selectedChatID);
@@ -144,7 +146,9 @@ export function ChatPage() {
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    const onVisibilityChange = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => { mounted = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibilityChange); };
   }, [selectedChatID]);
 
   useEffect(() => {

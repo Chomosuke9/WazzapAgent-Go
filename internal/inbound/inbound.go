@@ -342,11 +342,13 @@ func (handler *AIHandler) processBatch(
 		}
 	}
 	chatName := anchorMessage.SenderName
+	var observedChat *agent.ChatContext
 	if anchorMessage.ChatKind == conversation.ChatGroup {
 		chatName = ""
 		if handler.batch.ChatContext != nil {
 			if chat, readErr := handler.batch.ChatContext.ReadChatContext(ctx, key); readErr == nil {
 				chatName = chat.Name
+				observedChat = &chat
 			}
 		}
 	}
@@ -379,7 +381,12 @@ func (handler *AIHandler) processBatch(
 		return err
 	}
 	started := time.Now()
-	result, err := currentAgent.Invoke(ctx, anchor)
+	var result agent.InvokeResult
+	if observedChat != nil {
+		result, err = currentAgent.InvokeWithChatContext(ctx, anchor, *observedChat)
+	} else {
+		result, err = currentAgent.Invoke(ctx, anchor)
+	}
 	if err == nil && result.Delivery == agent.DeliverySucceeded {
 		handler.batch.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
 	}

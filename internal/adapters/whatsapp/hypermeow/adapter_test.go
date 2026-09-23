@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
+	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -684,15 +686,22 @@ func (staticTargets) SetChatMute(context.Context, agent.Key, identity.SenderRef,
 
 func normalizationAdapter(t *testing.T) (*Adapter, types.JID) {
 	t.Helper()
+	appStore, err := appsqlite.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = appStore.Close() })
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	ownJID := types.NewJID("15550000099", types.DefaultUserServer)
 	device := &store.Device{ID: &ownJID}
 	return &Adapter{
-		tenantID:  tenantID,
-		accountID: accountID,
-		allowlist: make(map[string]struct{}),
-		client:    whatsmeow.NewClient(device, waLog.Noop),
+		tenantID:      tenantID,
+		accountID:     accountID,
+		allowlist:     make(map[string]struct{}),
+		client:        whatsmeow.NewClient(device, waLog.Noop),
+		groupMetadata: appStore.Inbound(),
+		rootCtx:       context.Background(),
 	}, ownJID
 }
 

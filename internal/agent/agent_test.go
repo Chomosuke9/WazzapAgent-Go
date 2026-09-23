@@ -49,6 +49,25 @@ func TestAgentInvokePersistsPlanAndSkipsModelOnReplay(t *testing.T) {
 	}
 }
 
+func TestInvokeWithChatContextReusesObservedMetadata(t *testing.T) {
+	store := openStore(t)
+	key := newKey(t)
+	reader := &countingChatContextReader{}
+	deps := dependencies(store, &fakeModel{text: "reply"}, &fakeDispatcher{}, &eventRecorder{})
+	deps.ChatContext = reader
+	current, err := agent.New(context.Background(), key, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := newInvocation(t, agent.InitialConfigVersion, "hello")
+	if _, err := current.InvokeWithChatContext(context.Background(), invocation, agent.ChatContext{Kind: "group", Name: "Group"}); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 0 {
+		t.Fatalf("chat context reads = %d, want 0", reader.calls)
+	}
+}
+
 func TestAgentAtomicallyPlansAndDispatchesGrantedTypedEffect(t *testing.T) {
 	store := openStore(t)
 	model := &currentReactionModel{}
@@ -459,6 +478,13 @@ func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher a
 }
 
 type staticChatContextReader struct{}
+
+type countingChatContextReader struct{ calls int }
+
+func (reader *countingChatContextReader) ReadChatContext(context.Context, agent.Key) (agent.ChatContext, error) {
+	reader.calls++
+	return agent.ChatContext{Kind: "private"}, nil
+}
 
 func (staticChatContextReader) ReadChatContext(context.Context, agent.Key) (agent.ChatContext, error) {
 	return agent.ChatContext{Kind: "private"}, nil

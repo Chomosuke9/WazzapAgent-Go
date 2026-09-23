@@ -151,6 +151,19 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 }
 
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
+	return agent.invoke(ctx, invocation, nil)
+}
+
+// InvokeWithChatContext reuses a provider observation already read for this
+// message batch. Effect authorization still rereads current policy and group state.
+func (agent *Agent) InvokeWithChatContext(ctx context.Context, invocation Invocation, chat ChatContext) (InvokeResult, error) {
+	if err := chat.Validate(); err != nil {
+		return InvokeResult{}, NewError(ErrorInvalidArgument, "invoke agent with chat context", err)
+	}
+	return agent.invoke(ctx, invocation, &chat)
+}
+
+func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedChat *ChatContext) (InvokeResult, error) {
 	if err := agent.gate.acquire(ctx); err != nil {
 		return InvokeResult{}, err
 	}
@@ -229,10 +242,15 @@ func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeRe
 		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
-	chat, err := agent.chatContext.ReadChatContext(ctx, agent.key)
-	if err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
-		return InvokeResult{}, err
+	var chat ChatContext
+	if observedChat != nil {
+		chat = *observedChat
+	} else {
+		chat, err = agent.chatContext.ReadChatContext(ctx, agent.key)
+		if err != nil {
+			agent.failGeneration(invocation.ID, claim.Lease, err)
+			return InvokeResult{}, err
+		}
 	}
 	messages, err := agent.context.Build(ContextBuildRequest{
 		Config: snapshot, Chat: chat, History: page.Entries, CurrentInvocationID: invocation.ID,

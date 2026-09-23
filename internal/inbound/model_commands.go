@@ -34,13 +34,9 @@ func NewModelCommandExecutor(factory agent.Factory, gate ModelCommandPolicy, ada
 	return &ModelCommandExecutor{factory: factory, policy: gate, adapter: adapter, observer: observer, clock: clock}, nil
 }
 
-func (executor *ModelCommandExecutor) authorize(ctx context.Context, stored effect.Stored, value effect.RunCommand) (command.Request, command.Descriptor, policy.PermissionFacts, error) {
+func (executor *ModelCommandExecutor) authorize(ctx context.Context, current *agent.Agent, stored effect.Stored, value effect.RunCommand) (command.Request, command.Descriptor, policy.PermissionFacts, error) {
 	if stored.Request.Principal.Kind != policy.PrincipalModel {
 		return command.Request{}, command.Descriptor{}, policy.PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "authorize model command", errors.New("model principal is required"))
-	}
-	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
-	if err != nil {
-		return command.Request{}, command.Descriptor{}, policy.PermissionFacts{}, err
 	}
 	snapshot, err := current.Config().Refresh(ctx)
 	if err != nil {
@@ -65,16 +61,20 @@ func (executor *ModelCommandExecutor) authorize(ctx context.Context, stored effe
 }
 
 func (executor *ModelCommandExecutor) AuthorizeCommandEffect(ctx context.Context, stored effect.Stored, value effect.RunCommand) error {
-	_, _, _, err := executor.authorize(ctx, stored, value)
+	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = executor.authorize(ctx, current, stored, value)
 	return err
 }
 
 func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, stored effect.Stored, value effect.RunCommand) (string, error) {
-	request, _, facts, err := executor.authorize(ctx, stored, value)
+	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
 	if err != nil {
 		return "", err
 	}
-	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
+	request, _, facts, err := executor.authorize(ctx, current, stored, value)
 	if err != nil {
 		return "", err
 	}

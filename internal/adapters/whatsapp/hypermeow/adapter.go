@@ -56,6 +56,14 @@ type GroupNameStore interface {
 	SaveGroupName(context.Context, identity.TenantID, identity.AccountID, string, string) error
 }
 
+type GroupMetadataStore interface {
+	InvalidateGroupMetadata(context.Context, identity.TenantID, identity.AccountID) error
+	ReplaceGroupMetadata(context.Context, identity.TenantID, identity.AccountID, map[string][]byte, int64) error
+	LoadGroupMetadata(context.Context, identity.TenantID, identity.AccountID, string) ([]byte, int64, error)
+	UpsertGroupMetadata(context.Context, identity.TenantID, identity.AccountID, string, []byte, int64) error
+	DeleteGroupMetadata(context.Context, identity.TenantID, identity.AccountID, string) error
+}
+
 type PairingSink interface {
 	ShowPairingCode(string, time.Duration) error
 }
@@ -73,6 +81,7 @@ type Config struct {
 	Pairing         PairingSink
 	Targets         TargetStore
 	GroupNames      GroupNameStore
+	GroupMetadata   GroupMetadataStore
 	Logger          *slog.Logger
 }
 
@@ -86,12 +95,17 @@ type Adapter struct {
 	pairing         PairingSink
 	targets         TargetStore
 	groupNames      GroupNameStore
+	groupMetadata   GroupMetadataStore
 	handler         CandidateHandler
 	logger          *slog.Logger
 	container       *sqlstore.Container
 	client          *whatsmeow.Client
 	queue           chan conversation.IncomingCandidate
 	groupSync       chan struct{}
+	groupMu         sync.RWMutex
+	groups          map[types.JID]cachedGroup
+	groupRevision   uint64
+	groupsReady     bool
 	workers         uint32
 	memberHandlesMu sync.Mutex
 	memberHandles   map[string]memberHandleSet
@@ -111,8 +125,8 @@ type Adapter struct {
 }
 
 func Open(ctx context.Context, config Config) (*Adapter, error) {
-	if config.TenantID.IsZero() || config.AccountID.IsZero() || config.Targets == nil {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("identity and target resolver are required"))
+	if config.TenantID.IsZero() || config.AccountID.IsZero() || config.Targets == nil || config.GroupMetadata == nil {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("identity, target resolver, and group metadata store are required"))
 	}
 	if config.QueueCapacity == 0 || config.Workers == 0 || config.ConnectTimeout <= 0 || config.SendTimeout <= 0 {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp adapter", errors.New("positive queue, worker, and timeout values are required"))
@@ -163,11 +177,13 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		pairing:        config.Pairing,
 		targets:        config.Targets,
 		groupNames:     config.GroupNames,
+		groupMetadata:  config.GroupMetadata,
 		logger:         logger,
 		container:      container,
 		client:         client,
 		queue:          make(chan conversation.IncomingCandidate, config.QueueCapacity),
 		groupSync:      make(chan struct{}, 1),
+		groups:         make(map[types.JID]cachedGroup),
 		workers:        config.Workers,
 		memberHandles:  make(map[string]memberHandleSet),
 		events:         make(chan account.ConnectionEvent, 8),
@@ -207,10 +223,8 @@ func (adapter *Adapter) Start(ctx context.Context) error {
 		adapter.wait.Add(1)
 		go adapter.worker()
 	}
-	if adapter.groupNames != nil {
-		adapter.wait.Add(1)
-		go adapter.groupNameSyncWorker()
-	}
+	adapter.wait.Add(1)
+	go adapter.groupNameSyncWorker()
 	adapter.eventHandlerID = adapter.client.AddEventHandler(adapter.handleEvent)
 
 	var qrChannel <-chan whatsmeow.QRChannelItem
@@ -612,13 +626,10 @@ func (adapter *Adapter) ReadChatContext(ctx context.Context, key agent.Key) (age
 	if chat.Server != types.GroupServer {
 		return agent.ChatContext{Kind: "private"}, nil
 	}
-	readCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
-	defer cancel()
-	info, err := adapter.client.GetGroupInfo(readCtx, chat)
+	info, err := adapter.readGroupInfo(ctx, chat)
 	if err != nil {
-		return agent.ChatContext{}, nativeEffectError(readCtx, "read WhatsApp chat context", err)
+		return agent.ChatContext{}, err
 	}
-	adapter.cacheGroupName(ctx, chat, info.Name)
 	botLID := adapter.client.Store.GetLID().ToNonAD()
 	botPhone := adapter.client.Store.GetJID().ToNonAD()
 	result := agent.ChatContext{Kind: "group", Name: info.Name, Description: info.Topic}
@@ -634,9 +645,9 @@ func (adapter *Adapter) ReadChatContext(ctx context.Context, key agent.Key) (age
 	return result, nil
 }
 
-// ReadChatAuthority obtains a fresh provider observation for policy. It does
-// not expose WhatsApp group DTOs across the adapter boundary and does not turn
-// a model principal into a group participant.
+// ReadChatAuthority reads the latest synchronized group snapshot. It does not
+// expose WhatsApp group DTOs across the adapter boundary or turn a model
+// principal into a group participant.
 func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.Principal) (policy.ChatAuthority, error) {
 	if err := principal.Validate(); err != nil {
 		return policy.ChatAuthority{}, err
@@ -652,13 +663,11 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 	if chat.Server != types.GroupServer {
 		return policy.ChatAuthority{ChatKind: conversation.ChatDirect, ObservedAt: observedAt}, nil
 	}
-	readCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
-	defer cancel()
-	info, err := adapter.client.GetGroupInfo(readCtx, chat)
+	info, cachedAt, err := adapter.readGroupSnapshot(ctx, chat)
 	if err != nil {
-		return policy.ChatAuthority{}, nativeEffectError(readCtx, "read WhatsApp group authority", err)
+		return policy.ChatAuthority{}, err
 	}
-	adapter.cacheGroupName(ctx, chat, info.Name)
+	observedAt = cachedAt
 	actorLID := types.EmptyJID
 	if principal.Kind == policy.PrincipalHuman {
 		actorLID, err = types.ParseJID(principal.LID.String())
@@ -758,11 +767,13 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.logger.Error("WhatsApp passkey pairing failed", "error", typed.Error, "continuation", typed.Continuation)
 	case *events.Connected:
 		adapter.ready.Store(true)
+		adapter.clearGroupCache()
 		adapter.logger.Info("WhatsApp account connected")
 		adapter.emitConnection(account.ConnectionEvent{Connected: true, Code: "open"})
 		adapter.requestGroupNameSync()
 	case *events.Disconnected:
 		adapter.ready.Store(false)
+		adapter.clearGroupCache()
 		adapter.logger.Warn("WhatsApp account disconnected; reconnecting")
 		adapter.emitConnection(account.ConnectionEvent{Connected: false, Code: "reconnecting"})
 	case *events.StreamError:
@@ -773,10 +784,15 @@ func (adapter *Adapter) handleEvent(event any) {
 		adapter.logger.Warn("WhatsApp keepalive timeout", "consecutive_failures", typed.ErrorCount)
 	case events.PermanentDisconnect:
 		adapter.ready.Store(false)
+		adapter.clearGroupCache()
 		adapter.emitFatal(agent.NewError(agent.ErrorUnavailable, "WhatsApp permanent disconnect", errors.New(typed.PermanentDisconnectDescription())))
 	case *events.JoinedGroup:
+		adapter.cacheJoinedGroup(typed.GroupInfo)
 		adapter.cacheGroupName(adapter.rootCtx, typed.JID, typed.Name)
 	case *events.GroupInfo:
+		if adapter.applyGroupChange(typed) {
+			adapter.requestGroupNameSync()
+		}
 		if typed.Name != nil {
 			adapter.cacheGroupName(adapter.rootCtx, typed.JID, typed.Name.Name)
 		}

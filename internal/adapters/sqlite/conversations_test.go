@@ -10,8 +10,41 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
+
+func TestDeletedMessageIDsOnlyReadsVisiblePage(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE typed_effects (
+		tenant_id TEXT, account_id TEXT, chat_id TEXT, effect_kind INTEGER,
+		state INTEGER, target_message_id TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	tenantID, _ := identity.NewTenantID()
+	accountID, _ := identity.NewAccountID()
+	chatID, _ := identity.NewChatID()
+	visibleID, _ := identity.NewMessageID()
+	hiddenID, _ := identity.NewMessageID()
+	if _, err := db.ExecContext(ctx, `INSERT INTO typed_effects VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+		tenantID.String(), accountID.String(), chatID.String(), uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded), visibleID.String(),
+		tenantID.String(), accountID.String(), chatID.String(), uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded), hiddenID.String()); err != nil {
+		t.Fatal(err)
+	}
+	scope := control.SessionScope{TenantID: tenantID, AccountID: accountID}
+	deleted, err := deletedMessageIDs(ctx, db, scope, chatID, []control.BotMessage{{ID: visibleID}})
+	if err != nil || len(deleted) != 1 {
+		t.Fatalf("visible deleted messages = %v, err = %v", deleted, err)
+	}
+	if _, ok := deleted[visibleID.String()]; !ok {
+		t.Fatal("visible deleted message was omitted")
+	}
+}
 
 func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *testing.T) {
 	ctx := context.Background()

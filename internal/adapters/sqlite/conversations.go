@@ -186,7 +186,7 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 		}
 		result = append(result, message)
 	}
-	deletedIDs, err := deletedMessageIDs(ctx, db, scope, chatID)
+	deletedIDs, err := deletedMessageIDs(ctx, db, scope, chatID, result)
 	if err != nil {
 		return nil, err
 	}
@@ -199,18 +199,24 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 	return result, nil
 }
 
-func deletedMessageIDs(ctx context.Context, db *sql.DB, scope control.SessionScope, chatID identity.ChatID) (map[string]struct{}, error) {
+func deletedMessageIDs(ctx context.Context, db *sql.DB, scope control.SessionScope, chatID identity.ChatID, messages []control.BotMessage) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(messages) == 0 {
+		return result, nil
+	}
+	args := []any{scope.TenantID.String(), scope.AccountID.String(), chatID.String(), uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded)}
+	placeholders := make([]string, 0, len(messages))
+	for _, message := range messages {
+		placeholders = append(placeholders, "?")
+		args = append(args, message.ID.String())
+	}
 	rows, err := db.QueryContext(ctx, `SELECT target_message_id FROM typed_effects
 	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_kind = ? AND state = ?
-	      AND target_message_id IS NOT NULL`,
-		scope.TenantID.String(), scope.AccountID.String(), chatID.String(),
-		uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded),
-	)
+	      AND target_message_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, transcriptStorageError("query deleted message markers", err)
 	}
 	defer rows.Close()
-	result := make(map[string]struct{})
 	for rows.Next() {
 		var messageID string
 		if err := rows.Scan(&messageID); err != nil {

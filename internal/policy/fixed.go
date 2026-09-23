@@ -74,7 +74,7 @@ func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal
 
 // CommandPermissionFacts resolves the facts consumed by a command's
 // declarative permission expression. Human facts come from the current
-// durable participant/chat record plus a fresh provider authority read. A
+// durable participant/chat record plus the latest synchronized group snapshot. A
 // model/bot invocation is represented by PrincipalModel and receives
 // fromMe=true and the bot's current group-admin fact; it never receives the
 // owner fact.
@@ -123,11 +123,12 @@ func (gate *FixedGate) CommandPermissionFacts(
 			return PermissionFacts{}, err
 		}
 		return PermissionFacts{
-			IsOwner:   access.ConfiguredOwner,
-			IsAdmin:   authority.ActorIsAdmin,
-			IsGroup:   authority.ChatKind == conversation.ChatGroup,
-			IsPrivate: authority.ChatKind == conversation.ChatDirect,
-			FromMe:    false,
+			IsOwner:    access.ConfiguredOwner,
+			IsAdmin:    authority.ActorIsAdmin,
+			BotIsAdmin: authority.BotIsAdmin,
+			IsGroup:    authority.ChatKind == conversation.ChatGroup,
+			IsPrivate:  authority.ChatKind == conversation.ChatDirect,
+			FromMe:     false,
 		}, nil
 
 	case PrincipalModel:
@@ -156,11 +157,12 @@ func (gate *FixedGate) CommandPermissionFacts(
 			return PermissionFacts{}, err
 		}
 		return PermissionFacts{
-			IsOwner:   false,
-			IsAdmin:   authority.BotIsAdmin,
-			IsGroup:   authority.ChatKind == conversation.ChatGroup,
-			IsPrivate: authority.ChatKind == conversation.ChatDirect,
-			FromMe:    true,
+			IsOwner:    false,
+			IsAdmin:    authority.BotIsAdmin,
+			BotIsAdmin: authority.BotIsAdmin,
+			IsGroup:    authority.ChatKind == conversation.ChatGroup,
+			IsPrivate:  authority.ChatKind == conversation.ChatDirect,
+			FromMe:     true,
 		}, nil
 	default:
 		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("only human or model principals may dispatch commands"))
@@ -168,7 +170,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 }
 
 // AuthorizeEffect is deliberately outside Agent. It reevaluates the durable
-// policy and reads live provider authority just before the native dispatcher
+// policy and reads the synchronized group snapshot just before the native dispatcher
 // crosses its boundary. Only a principal minted for this model invocation can
 // use an opt-in model capability.
 func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthorization) error {
@@ -317,14 +319,7 @@ func (gate *FixedGate) ModelCapabilitiesForMessage(ctx context.Context, message 
 	if !facts.IsAdmin || !facts.IsGroup {
 		return agent.NewCapabilitySet("message.react")
 	}
-	authority, err := gate.authority.ReadChatAuthority(ctx, principal)
-	if err != nil {
-		return agent.CapabilitySet{}, err
-	}
-	if err := authority.Validate(); err != nil {
-		return agent.CapabilitySet{}, err
-	}
-	if !authority.BotIsAdmin {
+	if !facts.BotIsAdmin {
 		return agent.NewCapabilitySet("message.react")
 	}
 	return base, nil

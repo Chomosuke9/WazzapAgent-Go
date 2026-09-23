@@ -28,14 +28,12 @@ func (store *recordingGroupNameStore) SaveGroupName(_ context.Context, tenantID 
 }
 
 func TestGroupEventsKeepActualNameCurrent(t *testing.T) {
-	tenantID, _ := identity.NewTenantID()
-	accountID, _ := identity.NewAccountID()
+	adapter, _ := normalizationAdapter(t)
+	tenantID, accountID := adapter.tenantID, adapter.accountID
 	store := &recordingGroupNameStore{}
 	group := types.NewJID("120363000000000001", types.GroupServer)
-	adapter := &Adapter{
-		tenantID: tenantID, accountID: accountID, groupNames: store,
-		rootCtx: context.Background(), logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
+	adapter.groupNames = store
+	adapter.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	adapter.handleEvent(&events.JoinedGroup{GroupInfo: types.GroupInfo{JID: group, GroupName: types.GroupName{Name: "Tim Proyek"}}})
 	adapter.handleEvent(&events.GroupInfo{JID: group, Name: &types.GroupName{Name: "Tim Baru"}})
 	if len(store.entries) != 2 {

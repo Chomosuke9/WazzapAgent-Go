@@ -11,11 +11,12 @@ import (
 // declarative permission expression. The policy boundary is responsible for
 // producing these facts; command text must never be used to produce them.
 type PermissionFacts struct {
-	IsOwner   bool
-	IsAdmin   bool
-	IsGroup   bool
-	IsPrivate bool
-	FromMe    bool
+	IsOwner    bool
+	IsAdmin    bool
+	BotIsAdmin bool
+	IsGroup    bool
+	IsPrivate  bool
+	FromMe     bool
 }
 
 type permissionTokenKind uint8

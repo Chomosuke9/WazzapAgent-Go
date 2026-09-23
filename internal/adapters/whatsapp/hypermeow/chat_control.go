@@ -50,13 +50,10 @@ func (adapter *Adapter) ListGroupMembers(ctx context.Context, key agent.Key) (Gr
 	if chat.Server != types.GroupServer {
 		return GroupMembers{}, agent.NewError(agent.ErrorInvalidArgument, "list WhatsApp group members", errors.New("selected conversation is not a group"))
 	}
-	readCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
-	defer cancel()
-	info, err := adapter.client.GetGroupInfo(readCtx, chat)
+	info, err := adapter.readGroupInfo(ctx, chat)
 	if err != nil {
-		return GroupMembers{}, nativeEffectError(readCtx, "list WhatsApp group members", err)
+		return GroupMembers{}, err
 	}
-	adapter.cacheGroupName(ctx, chat, info.Name)
 
 	botLID := adapter.client.Store.GetLID().ToNonAD()
 	botPhone := adapter.client.Store.GetJID().ToNonAD()
@@ -81,7 +78,7 @@ func (adapter *Adapter) ListGroupMembers(ctx context.Context, key agent.Key) (Gr
 		isBot := participantMatches(participant, botLID) || participantMatches(participant, botPhone)
 		isAdmin := participant.IsAdmin || participant.IsSuperAdmin
 		members = append(members, GroupMember{
-			ID: handle.String(), Name: adapter.groupMemberName(readCtx, participant, index+1),
+			ID: handle.String(), Name: adapter.groupMemberName(ctx, participant, index+1),
 			IsAdmin: participant.IsAdmin, IsSuperAdmin: participant.IsSuperAdmin,
 			CanKick: botIsAdmin && !isBot && !isAdmin,
 		})
@@ -130,11 +127,10 @@ func (adapter *Adapter) KickGroupMember(ctx context.Context, key agent.Key, memb
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
-	info, err := adapter.client.GetGroupInfo(requestCtx, chat)
+	info, err := adapter.readGroupInfo(ctx, chat)
 	if err != nil {
-		return nativeEffectError(requestCtx, "verify WhatsApp group member", err)
+		return err
 	}
-	adapter.cacheGroupName(ctx, chat, info.Name)
 	botLID := adapter.client.Store.GetLID().ToNonAD()
 	botPhone := adapter.client.Store.GetJID().ToNonAD()
 	botIsAdmin := false
@@ -190,11 +186,10 @@ func (adapter *Adapter) authorizeMessageDeletion(ctx context.Context, chat, send
 	if chat.Server != types.GroupServer {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize WhatsApp message deletion", errors.New("messages from other people can only be removed by an admin in a group"))
 	}
-	info, err := adapter.client.GetGroupInfo(ctx, chat)
+	info, err := adapter.readGroupInfo(ctx, chat)
 	if err != nil {
-		return nativeEffectError(ctx, "verify group admin before deleting WhatsApp message", err)
+		return err
 	}
-	adapter.cacheGroupName(ctx, chat, info.Name)
 	for _, participant := range info.Participants {
 		if (participantMatches(participant, botLID) || participantMatches(participant, botPhone)) && (participant.IsAdmin || participant.IsSuperAdmin) {
 			return nil
