@@ -26,7 +26,13 @@ jobs:
         run: git diff --exit-code -- internal/inbound/commands/registry_gen.go
       - name: Verify formatting
         shell: bash
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Go files need formatting:"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
       - name: Verify modules
         run: go mod verify
       - name: Vet
