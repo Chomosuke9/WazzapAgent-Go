@@ -3,12 +3,14 @@ name: app
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  windows-scaffold:
+  windows-build:
+    name: Windows desktop (amd64)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,31 +30,103 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Check frontend types
+      - name: Check frontend and tests
         working-directory: frontend
-        run: npm run typecheck
-      - name: Test frontend behavior
-        working-directory: frontend
-        run: npm test -- --run
-      - name: Build frontend assets
-        working-directory: frontend
-        run: npm run build
-      - name: Regenerate Wails bindings
+        run: |
+          npm run typecheck
+          npm test -- --run
+      - name: Generate Wails bindings
         run: wails3 generate bindings -f '-tags gui' -ts -i -clean=true ./cmd/app
       - name: Verify generated bindings
         run: git diff --exit-code -- frontend/bindings
-      - name: Check generated binding types
-        working-directory: frontend
-        run: npm run typecheck
-      - name: Build frontend with regenerated bindings
+      - name: Build frontend
         working-directory: frontend
         run: npm run build
-      - name: Test GUI Go packages
-        run: go test -tags gui ./cmd/app ./internal/adapters/wails ./frontend
       - name: Build Windows application
-        run: go build -tags gui,production -trimpath -ldflags='-s -w -H windowsgui' -o bin/WazzapAgent.exe ./cmd/app
+        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w -H windowsgui' -o bin/WazzapAgent.exe ./cmd/app
       - uses: actions/upload-artifact@v4
         with:
-          name: WazzapAgent-windows-scaffold
+          name: WazzapAgent-windows-amd64
           path: bin/WazzapAgent.exe
+          if-no-files-found: error
+
+  linux-build:
+    name: Linux desktop (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@11.6.2
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Generate Wails bindings
+        run: wails3 generate bindings -f '-tags gui' -ts -i -clean=true ./cmd/app
+      - name: Verify generated bindings
+        run: git diff --exit-code -- frontend/bindings
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Build Linux application
+        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w' -o bin/WazzapAgent ./cmd/app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WazzapAgent-linux-amd64
+          path: bin/WazzapAgent
+          if-no-files-found: error
+
+  android-build:
+    name: Android APK (arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK and NDK
+        run: sdkmanager --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;26.3.11579264'
+      - name: Use pinned npm
+        run: npm install --global npm@11.6.2
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Check frontend and tests
+        working-directory: frontend
+        run: |
+          npm run typecheck
+          npm test -- --run
+      - name: Build Android debug APK
+        run: wails3 task android:build ARCH=arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WazzapAgent-android-arm64-debug
+          path: build/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
