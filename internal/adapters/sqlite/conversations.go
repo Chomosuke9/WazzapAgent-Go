@@ -78,7 +78,7 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 	           WHERE e.tenant_id = c.tenant_id AND e.account_id = c.account_id AND e.chat_id = c.id
 	             AND e.target_message_id = last_entry.message_id AND e.effect_kind = ? AND e.state = ?
 	       ) THEN 'Message deleted on WhatsApp' ELSE last_entry.content_text END,
-	       last_entry.role, last_entry.created_at_ms, l.message_count
+	       last_entry.message_id, last_entry.role, last_entry.created_at_ms, l.message_count
 	FROM latest l
 	JOIN visible_history last_entry ON last_entry.chat_id = l.chat_id AND last_entry.sequence = l.last_sequence
 	JOIN chats c ON c.tenant_id = ? AND c.account_id = ? AND c.id = l.chat_id
@@ -93,17 +93,20 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 	defer rows.Close()
 
 	result := make([]control.BotConversation, 0, limit)
+	lastMessageIDs := make([]identity.MessageID, 0, limit)
 	for rows.Next() {
 		var chatValue string
+		var messageValue string
 		var kind uint8
 		var address, groupName, senderName, lastMessage string
 		var role uint8
 		var createdAtMS, count int64
-		if err := rows.Scan(&chatValue, &kind, &address, &groupName, &senderName, &lastMessage, &role, &createdAtMS, &count); err != nil {
+		if err := rows.Scan(&chatValue, &kind, &address, &groupName, &senderName, &lastMessage, &messageValue, &role, &createdAtMS, &count); err != nil {
 			return nil, transcriptStorageError("scan conversation", err)
 		}
 		chatID, err := identity.ParseChatID(chatValue)
-		if err != nil || count < 0 {
+		messageID, messageErr := identity.ParseMessageID(messageValue)
+		if err != nil || messageErr != nil || count < 0 {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode conversation", errors.New("stored conversation metadata is invalid"))
 		}
 		result = append(result, control.BotConversation{
@@ -111,9 +114,24 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 			LastMessage: transcriptPreview(lastMessage), LastMessageAt: time.UnixMilli(createdAtMS).UTC().Format(time.RFC3339Nano),
 			LastFromBot: agent.HistoryRole(role) == agent.HistoryAssistant, MessageCount: uint64(count),
 		})
+		lastMessageIDs = append(lastMessageIDs, messageID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, transcriptStorageError("iterate conversations", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, transcriptStorageError("close conversation rows", err)
+	}
+	for index := range result {
+		if !strings.Contains(result[index].LastMessage, "@") {
+			continue
+		}
+		key := agent.Key{TenantID: scope.TenantID, AccountID: scope.AccountID, ChatID: result[index].ID}
+		bindings, err := loadMessageMentionContexts(ctx, db, key, []identity.MessageID{lastMessageIDs[index]})
+		if err != nil {
+			return nil, transcriptStorageError("load conversation mention bindings", err)
+		}
+		result[index].LastMessageMentions = transcriptMentions(bindings[lastMessageIDs[index].String()])
 	}
 	return result, nil
 }
@@ -159,6 +177,12 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 		return nil, transcriptStorageError("read conversation history", err)
 	}
 	result := make([]control.BotMessage, 0, len(page.Entries))
+	senderNames := make(map[identity.SenderRef]string, len(page.Entries))
+	for _, entry := range page.Entries {
+		if entry.Sender != nil && !entry.Sender.Ref.IsZero() && strings.TrimSpace(entry.Sender.DisplayName) != "" {
+			senderNames[entry.Sender.Ref] = entry.Sender.DisplayName
+		}
+	}
 	for _, entry := range page.Entries {
 		if len(entry.Content) != 1 {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode conversation message", errors.New("stored message content is invalid"))
@@ -168,16 +192,22 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode conversation message", errors.New("stored message format is unsupported"))
 		}
 		message := control.BotMessage{
-			ID: entry.MessageID, Content: text.Text,
+			ID: entry.MessageID, Content: text.Text, Mentions: transcriptMentions(entry.Mentions),
 			CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339Nano),
 			Delivery:  transcriptDelivery(entry.Delivery),
+		}
+		if entry.Quote != nil {
+			message.Quote = transcriptQuote(entry.Quote, senderNames)
 		}
 		switch entry.Role {
 		case agent.HistoryUser:
 			message.Role = "user"
 			message.Sender = "Contact"
-			if entry.Sender != nil && strings.TrimSpace(entry.Sender.DisplayName) != "" {
-				message.Sender = entry.Sender.DisplayName
+			if entry.Sender != nil {
+				message.SenderRef = entry.Sender.Ref
+				if strings.TrimSpace(entry.Sender.DisplayName) != "" {
+					message.Sender = entry.Sender.DisplayName
+				}
 			}
 		case agent.HistoryAssistant:
 			message.Role, message.Sender = "assistant", "Bot"
@@ -197,6 +227,36 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 		}
 	}
 	return result, nil
+}
+
+func transcriptMentions(bindings []agent.MentionContext) []control.BotMention {
+	if len(bindings) == 0 {
+		return nil
+	}
+	result := make([]control.BotMention, len(bindings))
+	for index, binding := range bindings {
+		result[index] = control.BotMention{
+			Token: binding.Token, SenderRef: binding.SenderRef,
+			DisplayName: binding.DisplayName, Bot: binding.Bot,
+		}
+	}
+	return result
+}
+
+func transcriptQuote(quote *agent.QuoteContext, senderNames map[identity.SenderRef]string) *control.BotQuote {
+	if quote == nil {
+		return nil
+	}
+	result := &control.BotQuote{
+		MessageID: quote.MessageID, Role: "user", Sender: "Contact", Content: quote.Text,
+		Mentions: transcriptMentions(quote.Mentions),
+	}
+	if quote.Role == agent.HistoryAssistant {
+		result.Role, result.Sender = "assistant", "You"
+	} else if name := strings.TrimSpace(senderNames[quote.SenderRef]); name != "" {
+		result.Sender = name
+	}
+	return result
 }
 
 func deletedMessageIDs(ctx context.Context, db *sql.DB, scope control.SessionScope, chatID identity.ChatID, messages []control.BotMessage) (map[string]struct{}, error) {

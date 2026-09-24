@@ -41,23 +41,42 @@ type LogEntryDTO struct {
 }
 
 type WhatsAppConversationDTO struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	LastMessage   string `json:"lastMessage"`
-	LastMessageAt string `json:"lastMessageAt"`
-	LastFromBot   bool   `json:"lastFromBot"`
-	MessageCount  uint64 `json:"messageCount"`
+	ID                  string               `json:"id"`
+	Kind                string               `json:"kind"`
+	Name                string               `json:"name"`
+	LastMessage         string               `json:"lastMessage"`
+	LastMessageAt       string               `json:"lastMessageAt"`
+	LastFromBot         bool                 `json:"lastFromBot"`
+	MessageCount        uint64               `json:"messageCount"`
+	LastMessageMentions []WhatsAppMentionDTO `json:"lastMessageMentions"`
+}
+
+type WhatsAppMentionDTO struct {
+	Token       string `json:"token"`
+	SenderRef   string `json:"senderRef"`
+	DisplayName string `json:"displayName"`
+	Bot         bool   `json:"bot"`
+}
+
+type WhatsAppQuoteDTO struct {
+	MessageID string               `json:"messageID"`
+	Role      string               `json:"role"`
+	Sender    string               `json:"sender"`
+	Content   string               `json:"content"`
+	Mentions  []WhatsAppMentionDTO `json:"mentions"`
 }
 
 type WhatsAppMessageDTO struct {
-	ID        string `json:"id"`
-	Role      string `json:"role"`
-	Sender    string `json:"sender"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"createdAt"`
-	Delivery  string `json:"delivery"`
-	Deleted   bool   `json:"deleted"`
+	ID        string               `json:"id"`
+	Role      string               `json:"role"`
+	Sender    string               `json:"sender"`
+	SenderRef string               `json:"senderRef"`
+	Content   string               `json:"content"`
+	CreatedAt string               `json:"createdAt"`
+	Delivery  string               `json:"delivery"`
+	Deleted   bool                 `json:"deleted"`
+	Mentions  []WhatsAppMentionDTO `json:"mentions"`
+	Quote     *WhatsAppQuoteDTO    `json:"quote"`
 }
 
 type WhatsAppGroupMemberDTO struct {
@@ -188,6 +207,7 @@ func (s *AppService) GetWhatsAppConversations() ([]WhatsAppConversationDTO, erro
 		result[index] = WhatsAppConversationDTO{
 			ID: item.ID.String(), Kind: item.Kind, Name: item.Name, LastMessage: item.LastMessage,
 			LastMessageAt: item.LastMessageAt, LastFromBot: item.LastFromBot, MessageCount: item.MessageCount,
+			LastMessageMentions: whatsAppMentions(item.LastMessageMentions),
 		}
 	}
 	return result, nil
@@ -203,12 +223,44 @@ func (s *AppService) GetWhatsAppMessages(chatID string) ([]WhatsAppMessageDTO, e
 	}
 	result := make([]WhatsAppMessageDTO, len(messages))
 	for index, item := range messages {
-		result[index] = WhatsAppMessageDTO{
-			ID: item.ID.String(), Role: item.Role, Sender: item.Sender, Content: item.Content,
-			CreatedAt: item.CreatedAt, Delivery: item.Delivery, Deleted: item.Deleted,
-		}
+		result[index] = whatsAppMessage(item)
 	}
 	return result, nil
+}
+
+func whatsAppMessage(item control.BotMessage) WhatsAppMessageDTO {
+	result := WhatsAppMessageDTO{
+		ID: item.ID.String(), Role: item.Role, Sender: item.Sender, Content: item.Content,
+		CreatedAt: item.CreatedAt, Delivery: item.Delivery, Deleted: item.Deleted,
+		Mentions: whatsAppMentions(item.Mentions),
+	}
+	if !item.SenderRef.IsZero() {
+		result.SenderRef = item.SenderRef.String()
+	}
+	if item.Quote != nil {
+		result.Quote = &WhatsAppQuoteDTO{
+			MessageID: item.Quote.MessageID.String(), Role: item.Quote.Role,
+			Sender: item.Quote.Sender, Content: item.Quote.Content,
+			Mentions: whatsAppMentions(item.Quote.Mentions),
+		}
+	}
+	return result
+}
+
+func whatsAppMentions(mentions []control.BotMention) []WhatsAppMentionDTO {
+	if len(mentions) == 0 {
+		return nil
+	}
+	result := make([]WhatsAppMentionDTO, len(mentions))
+	for index, mention := range mentions {
+		result[index] = WhatsAppMentionDTO{
+			Token: mention.Token, DisplayName: mention.DisplayName, Bot: mention.Bot,
+		}
+		if !mention.SenderRef.IsZero() {
+			result[index].SenderRef = mention.SenderRef.String()
+		}
+	}
+	return result
 }
 
 func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMembersDTO, error) {
@@ -293,21 +345,26 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 	}
 }
 
-func (s *AppService) SendWhatsAppMessage(chatID, text string) (WhatsAppMessageDTO, error) {
+func (s *AppService) SendWhatsAppMessage(chatID, text, replyToMessageID string) (WhatsAppMessageDTO, error) {
 	var message control.BotMessage
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
-		message, actionErr = runtime.SendChatMessage(ctx, chatID, text)
+		if strings.TrimSpace(replyToMessageID) == "" {
+			message, actionErr = runtime.SendChatMessage(ctx, chatID, text)
+			return actionErr
+		}
+		replyRuntime, ok := runtime.(control.ManagedAgentChatReplyActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support chat replies")
+		}
+		message, actionErr = replyRuntime.SendChatReply(ctx, chatID, text, replyToMessageID)
 		return actionErr
 	})
 	if err != nil {
 		return WhatsAppMessageDTO{}, err
 	}
 	s.recordChatAction("INFO", "WhatsApp message sent from Chat", nil)
-	return WhatsAppMessageDTO{
-		ID: message.ID.String(), Role: message.Role, Sender: message.Sender,
-		Content: message.Content, CreatedAt: message.CreatedAt, Delivery: message.Delivery,
-	}, nil
+	return whatsAppMessage(message), nil
 }
 
 func (s *AppService) DeleteWhatsAppMessage(chatID, messageID string) error {

@@ -197,8 +197,8 @@ func validateHistoryEntry(entry HistoryEntry) error {
 	if err := validateQuoteContext(entry.Quote); err != nil {
 		return NewError(ErrorInvalidArgument, "validate history entry", err)
 	}
-	if entry.Role != HistoryUser && entry.Quote != nil {
-		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("only user history may carry quote context"))
+	if entry.Role == HistorySystem && entry.Quote != nil {
+		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("system history must not carry quote context"))
 	}
 	if entry.Role != HistoryUser && len(entry.Mentions) != 0 {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("only user history may carry raw mention bindings"))

@@ -16,6 +16,21 @@ import (
 )
 
 func (application *Application) SendChatMessage(ctx context.Context, chatID, text string) (control.BotMessage, error) {
+	return application.sendChatMessage(ctx, chatID, text, identity.MessageID{})
+}
+
+func (application *Application) SendChatReply(ctx context.Context, chatID, text, replyToMessageID string) (control.BotMessage, error) {
+	if strings.TrimSpace(replyToMessageID) == "" {
+		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to WhatsApp chat message", errors.New("a reply target is required"))
+	}
+	replyTo, err := identity.ParseMessageID(replyToMessageID)
+	if err != nil {
+		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to WhatsApp chat message", errors.New("reply target is invalid"))
+	}
+	return application.sendChatMessage(ctx, chatID, text, replyTo)
+}
+
+func (application *Application) sendChatMessage(ctx context.Context, chatID, text string, replyTo identity.MessageID) (control.BotMessage, error) {
 	runtime, key, err := application.chatActionScope(chatID)
 	if err != nil {
 		return control.BotMessage{}, err
@@ -25,6 +40,14 @@ func (application *Application) SendChatMessage(ctx context.Context, chatID, tex
 	}
 	if err := runtime.gate.AuthorizeSend(ctx, key); err != nil {
 		return control.BotMessage{}, err
+	}
+	var quote *agent.QuoteContext
+	var quoteDTO *control.BotQuote
+	if !replyTo.IsZero() {
+		quote, quoteDTO, err = manualReplyContext(ctx, runtime, key, replyTo)
+		if err != nil {
+			return control.BotMessage{}, err
+		}
 	}
 	messageID, err := identity.NewMessageID()
 	if err != nil {
@@ -42,7 +65,9 @@ func (application *Application) SendChatMessage(ctx context.Context, chatID, tex
 	if err != nil {
 		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create WhatsApp request ID", errors.New("could not allocate a request identifier"))
 	}
-	sent, err := runtime.adapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text})
+	sent, err := runtime.adapter.SendText(ctx, action.SendTextRequest{
+		Key: key, ActionID: actionID, Text: text, QuotedMessageID: replyTo,
+	})
 	if err != nil {
 		return control.BotMessage{}, err
 	}
@@ -53,7 +78,8 @@ func (application *Application) SendChatMessage(ctx context.Context, chatID, tex
 	entry := agent.HistoryEntry{
 		MessageID: messageID, InvocationID: invocationID,
 		Causation: agent.CausationRef{Kind: agent.CausationRequest, ID: causationID},
-		Role:      agent.HistoryAssistant, Content: []agent.ContentPart{agent.TextPart{Text: text}},
+		Role:      agent.HistoryAssistant, Quote: quote,
+		Content:  []agent.ContentPart{agent.TextPart{Text: text}},
 		Delivery: agent.DeliverySucceeded, CreatedAt: createdAt,
 	}
 	if err := runtime.store.RecordManualAssistantMessage(ctx, key, entry, sent.ProviderReceipt); err != nil {
@@ -61,8 +87,88 @@ func (application *Application) SendChatMessage(ctx context.Context, chatID, tex
 	}
 	return control.BotMessage{
 		ID: messageID, Role: "assistant", Sender: "Bot", Content: text,
-		CreatedAt: createdAt.Format(time.RFC3339Nano), Delivery: "sent",
+		CreatedAt: createdAt.Format(time.RFC3339Nano), Delivery: "sent", Quote: quoteDTO,
 	}, nil
+}
+
+func manualReplyContext(
+	ctx context.Context,
+	runtime *conversationRuntime,
+	key agent.Key,
+	replyTo identity.MessageID,
+) (*agent.QuoteContext, *control.BotQuote, error) {
+	settings, err := runtime.store.Configs().LoadOrCreate(ctx, key, runtime.configDefaults)
+	if err != nil {
+		return nil, nil, err
+	}
+	history, err := runtime.store.History().ListIfConfigVersion(ctx, key, settings.Version, agent.HistoryQuery{Limit: agent.MaxHistoryPageSize})
+	if err != nil {
+		return nil, nil, err
+	}
+	var target *agent.HistoryEntry
+	for index := range history.Entries {
+		if history.Entries[index].MessageID == replyTo {
+			target = &history.Entries[index]
+			break
+		}
+	}
+	if target == nil {
+		return nil, nil, agent.NewError(agent.ErrorNotFound, "reply to WhatsApp chat message", errors.New("reply target is not available in the saved history"))
+	}
+	if target.Role != agent.HistoryUser && (target.Role != agent.HistoryAssistant || target.Delivery != agent.DeliverySucceeded) {
+		return nil, nil, agent.NewError(agent.ErrorPermissionDenied, "reply to WhatsApp chat message", errors.New("reply target is not a sent chat message"))
+	}
+	if len(target.Content) != 1 {
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target content is invalid"))
+	}
+	text, ok := target.Content[0].(agent.TextPart)
+	if !ok {
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target content is unsupported"))
+	}
+	quote := &agent.QuoteContext{
+		Sequence: target.Sequence, MessageID: target.MessageID, Role: target.Role, Text: text.Text,
+	}
+	quoteDTO := &control.BotQuote{MessageID: target.MessageID, Content: text.Text}
+	if target.Role == agent.HistoryUser {
+		if target.Sender == nil || target.Sender.Ref.IsZero() {
+			return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target sender is missing"))
+		}
+		quote.SenderRef = target.Sender.Ref
+		quote.Mentions = append([]agent.MentionContext(nil), target.Mentions...)
+		quoteDTO.Role = "user"
+		quoteDTO.Sender = target.Sender.DisplayName
+		if strings.TrimSpace(quoteDTO.Sender) == "" {
+			quoteDTO.Sender = "Contact"
+		}
+		quoteDTO.Mentions = controlMentionsFromAgent(target.Mentions)
+	} else {
+		quoteDTO.Role, quoteDTO.Sender = "assistant", "You"
+	}
+	deleted, err := runtime.store.IsMessageDeleted(ctx, key, replyTo)
+	if err != nil {
+		return nil, nil, err
+	}
+	if deleted {
+		quote.Text = "This message was deleted on WhatsApp."
+		quote.Mentions = nil
+		quoteDTO.Content = quote.Text
+		quoteDTO.Mentions = nil
+	}
+	return quote, quoteDTO, nil
+}
+
+func controlMentionsFromAgent(mentions []agent.MentionContext) []control.BotMention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	result := make([]control.BotMention, len(mentions))
+	for index, mention := range mentions {
+		result[index] = control.BotMention{
+			Token: mention.Token, SenderRef: mention.SenderRef,
+			DisplayName: mention.DisplayName, Bot: mention.Bot,
+		}
+	}
+	return result
 }
 
 func (application *Application) DeleteChatMessage(ctx context.Context, chatID, messageID string) error {

@@ -28,8 +28,10 @@ export type {
     WhatsAppConversationDTO,
     WhatsAppGroupMemberDTO,
     WhatsAppGroupMembersDTO,
+    WhatsAppMentionDTO,
     WhatsAppMessageDTO,
     WhatsAppPairingDTO,
+    WhatsAppQuoteDTO,
     WhatsAppSessionEventDTO,
     WhatsAppSessionOperationDTO,
     WhatsAppSessionStatusDTO

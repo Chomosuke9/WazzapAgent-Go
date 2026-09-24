@@ -49,6 +49,12 @@ type ManagedAgentChatActions interface {
 	SaveChatSettings(context.Context, string, AgentChatSettingsUpdate) (AgentChatSettings, error)
 }
 
+// ManagedAgentChatReplyActions is implemented by runtimes that can send a
+// manually composed message as a native reply to a saved chat message.
+type ManagedAgentChatReplyActions interface {
+	SendChatReply(context.Context, string, string, string) (BotMessage, error)
+}
+
 // WithChatActions holds the lifecycle operation lock while a bounded UI action
 // uses the active runtime. This prevents Stop or settings apply from closing
 // the WhatsApp client or SQLite store underneath the action.

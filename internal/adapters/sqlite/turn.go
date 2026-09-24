@@ -271,10 +271,18 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response causation", err)
 	}
+	var replyQuote *agent.QuoteContext
+	if !request.ReplyToMessageID.IsZero() {
+		replyQuote, err = resolveHistoryQuote(ctx, tx, request.Key, request.ReplyToMessageID)
+		if err != nil {
+			return agent.StoredPlan{}, err
+		}
+	}
 	historyEntry := agent.HistoryEntry{
 		MessageID: responseID, InvocationID: request.InvocationID,
 		Causation: agent.CausationRef{Kind: agent.CausationKind(row.causationKind), ID: causationID},
-		Role:      agent.HistoryAssistant, Content: []agent.ContentPart{agent.TextPart{Text: request.ResponseText}},
+		Role:      agent.HistoryAssistant, Quote: replyQuote,
+		Content:  []agent.ContentPart{agent.TextPart{Text: request.ResponseText}},
 		Delivery: agent.DeliveryPending, CreatedAt: createdAt,
 	}
 	historyDigest, err := agent.DigestHistoryEntry(historyEntry)
@@ -301,14 +309,28 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, storageError("insert action receipt", err)
 	}
+	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
+	if historyEntry.Quote != nil {
+		quotedMessageID = historyEntry.Quote.MessageID.String()
+		if historyEntry.Quote.Sequence > 0 {
+			quotedSequence = historyEntry.Quote.Sequence
+		}
+		quotedRole = uint8(historyEntry.Quote.Role)
+		quotedText = historyEntry.Quote.Text
+		if !historyEntry.Quote.SenderRef.IsZero() {
+			quotedSenderRef = historyEntry.Quote.SenderRef.String()
+		}
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO history_entries(
-        tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
-        causation_id, role, sender_name, content_text, content_digest,
-        delivery_status, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
+	        tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
+	        causation_id, role, sender_name, quoted_message_id, quoted_sequence,
+	        quoted_role, quoted_sender_ref, quoted_text, content_text, content_digest,
+	        delivery_status, created_at_ms, updated_at_ms
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
 		responseID.String(), request.InvocationID.String(), uint8(row.causationKind), row.causationID,
-		uint8(agent.HistoryAssistant), request.ResponseText, historyDigest[:], uint8(agent.DeliveryPending),
+		uint8(agent.HistoryAssistant), quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText,
+		request.ResponseText, historyDigest[:], uint8(agent.DeliveryPending),
 		createdAt.UnixMilli(), nowMS,
 	)
 	if err != nil {
@@ -348,6 +370,52 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		Dispatch:         agent.DispatchRef{Key: request.Key, ActionID: actionID},
 		Effects:          effectRefs,
 	}, nil
+}
+
+func resolveHistoryQuote(ctx context.Context, query actionQuerier, key agent.Key, messageID identity.MessageID) (*agent.QuoteContext, error) {
+	var sequence int64
+	var role, delivery uint8
+	var senderRefValue sql.NullString
+	var text string
+	err := query.QueryRowContext(ctx, `SELECT h.sequence, h.role, h.sender_ref, h.content_text, h.delivery_status
+	    FROM history_entries h
+	    WHERE h.tenant_id = ? AND h.account_id = ? AND h.chat_id = ? AND h.message_id = ?
+	      AND h.sequence > COALESCE((SELECT r.cutoff_sequence FROM history_resets r
+	        WHERE r.tenant_id = h.tenant_id AND r.account_id = h.account_id AND r.chat_id = h.chat_id), 0)`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), messageID.String(),
+	).Scan(&sequence, &role, &senderRefValue, &text, &delivery)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, agent.NewError(agent.ErrorNotFound, "resolve reply target", errors.New("reply target is not available in the saved history"))
+	}
+	if err != nil {
+		return nil, storageError("resolve reply target", err)
+	}
+	quote := &agent.QuoteContext{
+		MessageID: messageID, Sequence: uint64(sequence), Role: agent.HistoryRole(role), Text: text,
+	}
+	switch quote.Role {
+	case agent.HistoryUser:
+		if !senderRefValue.Valid {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve reply target", errors.New("quoted user sender is missing"))
+		}
+		ref, err := identity.ParseSenderRef(senderRefValue.String)
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve reply target", err)
+		}
+		quote.SenderRef = ref
+		bindings, err := loadMessageMentionContexts(ctx, query, key, []identity.MessageID{messageID})
+		if err != nil {
+			return nil, err
+		}
+		quote.Mentions = bindings[messageID.String()]
+	case agent.HistoryAssistant:
+		if senderRefValue.Valid || agent.DeliveryStatus(delivery) != agent.DeliverySucceeded {
+			return nil, agent.NewError(agent.ErrorNotFound, "resolve reply target", errors.New("quoted Agent message has not been sent"))
+		}
+	default:
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "resolve reply target", errors.New("reply target is not a chat message"))
+	}
+	return quote, nil
 }
 
 func validateModelEffects(effects []agent.ModelEffect, capabilities agent.CapabilitySet) error {

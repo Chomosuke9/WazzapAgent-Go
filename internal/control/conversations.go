@@ -14,23 +14,42 @@ const (
 )
 
 type BotConversation struct {
-	ID            identity.ChatID
-	Kind          string
-	Name          string
-	LastMessage   string
-	LastMessageAt string
-	LastFromBot   bool
-	MessageCount  uint64
+	ID                  identity.ChatID
+	Kind                string
+	Name                string
+	LastMessage         string
+	LastMessageAt       string
+	LastFromBot         bool
+	MessageCount        uint64
+	LastMessageMentions []BotMention
+}
+
+type BotMention struct {
+	Token       string
+	SenderRef   identity.SenderRef
+	DisplayName string
+	Bot         bool
+}
+
+type BotQuote struct {
+	MessageID identity.MessageID
+	Role      string
+	Sender    string
+	Content   string
+	Mentions  []BotMention
 }
 
 type BotMessage struct {
 	ID        identity.MessageID
 	Role      string
 	Sender    string
+	SenderRef identity.SenderRef
 	Content   string
 	CreatedAt string
 	Delivery  string
 	Deleted   bool
+	Mentions  []BotMention
+	Quote     *BotQuote
 }
 
 type ConversationRepository interface {

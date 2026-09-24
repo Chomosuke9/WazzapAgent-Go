@@ -116,8 +116,8 @@ export function SaveWhatsAppChatSettings(request: $models.SaveWhatsAppChatSettin
     return $Call.ByID(3459881951, request);
 }
 
-export function SendWhatsAppMessage(chatID: string, text: string): $CancellablePromise<$models.WhatsAppMessageDTO> {
-    return $Call.ByID(1692344886, chatID, text);
+export function SendWhatsAppMessage(chatID: string, text: string, replyToMessageID: string): $CancellablePromise<$models.WhatsAppMessageDTO> {
+    return $Call.ByID(1692344886, chatID, text, replyToMessageID);
 }
 
 export function StartAgent(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {

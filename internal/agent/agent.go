@@ -356,9 +356,48 @@ func (agent *Agent) ensureInvocationHistory(
 		// independently retained history/receipt tombstones remain valid.
 		return nil
 	}
+	var quote *QuoteContext
+	if !plan.ReplyToMessageID.IsZero() {
+		page, err := agent.history.List(ctx, plan.ConfigVersion, HistoryQuery{
+			Limit: agent.historyWindow, ThroughInvocationID: invocation.ID,
+		})
+		if err != nil {
+			return NewError(ErrorStorageFailure, "restore invocation history", err)
+		}
+		for _, entry := range page.Entries {
+			if entry.MessageID != plan.ReplyToMessageID {
+				continue
+			}
+			if entry.Role != HistoryUser && (entry.Role != HistoryAssistant || entry.Delivery != DeliverySucceeded) {
+				return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target is not a sent chat message"))
+			}
+			if len(entry.Content) != 1 {
+				return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target content is invalid"))
+			}
+			text, ok := entry.Content[0].(TextPart)
+			if !ok {
+				return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target content is unsupported"))
+			}
+			quote = &QuoteContext{
+				Sequence: entry.Sequence, MessageID: entry.MessageID,
+				Role: entry.Role, Text: text.Text,
+			}
+			if entry.Role == HistoryUser {
+				if entry.Sender == nil || entry.Sender.Ref.IsZero() {
+					return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target sender is missing"))
+				}
+				quote.SenderRef = entry.Sender.Ref
+				quote.Mentions = cloneMentions(entry.Mentions)
+			}
+			break
+		}
+		if quote == nil {
+			return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target is no longer in the supplied history"))
+		}
+	}
 	err := agent.history.appendWithinGate(ctx, HistoryEntry{
 		MessageID: plan.ResponseID, InvocationID: invocation.ID, Causation: invocation.Causation,
-		Role: HistoryAssistant, Content: []ContentPart{TextPart{Text: plan.Text}},
+		Role: HistoryAssistant, Quote: quote, Content: []ContentPart{TextPart{Text: plan.Text}},
 		Delivery: delivery, CreatedAt: plan.CreatedAt,
 	})
 	if err != nil {

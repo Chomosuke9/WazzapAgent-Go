@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   deleteWhatsAppMessage,
   getWhatsAppChatSettings,
@@ -12,7 +12,9 @@ import {
   type WhatsAppChatSettingsDTO,
   type WhatsAppConversationDTO,
   type WhatsAppGroupMemberDTO,
+  type WhatsAppMentionDTO,
   type WhatsAppMessageDTO,
+  type WhatsAppQuoteDTO,
 } from "../services/backend";
 
 function conversationKind(kind: string): string {
@@ -45,6 +47,98 @@ function actionErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+type MentionCandidate = {
+  start: number;
+  end: number;
+  name: string;
+  senderRef: string;
+  bot: boolean;
+};
+
+function displayMentionName(value: string, fallback: string): string {
+  return value.replace(/[\r\n@]/g, " ").replace(/\s+/g, " ").trim() || fallback;
+}
+
+function mentionInsertionText(name: string, senderRef: string): string {
+  const safeName = displayMentionName(name, "Contact").replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  return `@${safeName || "Contact"} (${senderRef})`;
+}
+
+function renderMessageText(
+  text: string,
+  mentions: WhatsAppMentionDTO[] = [],
+  onMentionClick?: (name: string, senderRef: string) => void,
+): ReactNode[] {
+  if (!text) return [];
+  const candidates: MentionCandidate[] = [];
+  const addCandidate = (candidate: MentionCandidate) => {
+    if (candidate.start < 0 || candidate.end > text.length || candidate.start >= candidate.end) return;
+    candidates.push(candidate);
+  };
+
+  for (const mention of mentions) {
+    if (!mention.token) continue;
+    let fromIndex = 0;
+    while (fromIndex < text.length) {
+      const start = text.indexOf(mention.token, fromIndex);
+      if (start < 0) break;
+      const end = start + mention.token.length;
+      const before = start > 0 ? text[start - 1] : "";
+      const after = end < text.length ? text[end] : "";
+      if (!/[\p{L}\p{N}_]/u.test(before) && !/[\p{L}\p{N}_]/u.test(after)) {
+        addCandidate({
+          start, end,
+          name: displayMentionName(mention.displayName, mention.bot ? "Bot" : mention.token.slice(1)),
+          senderRef: mention.senderRef,
+          bot: mention.bot,
+        });
+      }
+      fromIndex = end;
+    }
+  }
+
+  const canonicalMention = /@([^@()\r\n]+?)\s*\(([0-9a-z]{6})\)/g;
+  for (const match of text.matchAll(canonicalMention)) {
+    const name = displayMentionName(match[1] ?? "", "Contact");
+    const senderRef = match[2] ?? "";
+    const start = match.index ?? -1;
+    addCandidate({ start, end: start + match[0].length, name, senderRef, bot: false });
+  }
+
+  candidates.sort((left, right) => left.start - right.start || right.end - left.end);
+  const selected: MentionCandidate[] = [];
+  let end = 0;
+  for (const candidate of candidates) {
+    if (candidate.start < end) continue;
+    selected.push(candidate);
+    end = candidate.end;
+  }
+  if (selected.length === 0) return [text];
+
+  const result: ReactNode[] = [];
+  let cursor = 0;
+  selected.forEach((candidate, index) => {
+    if (candidate.start > cursor) result.push(text.slice(cursor, candidate.start));
+    const label = `@${candidate.name}`;
+    result.push(candidate.senderRef && onMentionClick && !candidate.bot
+      ? <button
+          type="button"
+          className="message-mention"
+          key={`mention-${candidate.start}-${index}`}
+          onClick={() => onMentionClick(candidate.name, candidate.senderRef)}
+          title={`Add ${label} as a mention`}
+        >{label}</button>
+      : <span className="message-mention" key={`mention-${candidate.start}-${index}`}>{label}</span>);
+    cursor = candidate.end;
+  });
+  if (cursor < text.length) result.push(text.slice(cursor));
+  return result;
+}
+
+function replyRoleLabel(quote: WhatsAppQuoteDTO): string {
+  return quote.role === "assistant" ? "You" : quote.sender || "Contact";
+}
+
 export function ChatPage() {
   const [conversations, setConversations] = useState<WhatsAppConversationDTO[]>([]);
   const [chatQuery, setChatQuery] = useState("");
@@ -56,6 +150,7 @@ export function ChatPage() {
   const [messagesError, setMessagesError] = useState("");
   const [actionError, setActionError] = useState("");
   const [draft, setDraft] = useState("");
+  const [replyTarget, setReplyTarget] = useState<WhatsAppMessageDTO | null>(null);
   const [sending, setSending] = useState(false);
   const [members, setMembers] = useState<WhatsAppGroupMemberDTO[]>([]);
   const [botIsGroupAdmin, setBotIsGroupAdmin] = useState(false);
@@ -83,8 +178,19 @@ export function ChatPage() {
   const stickToLatest = useRef(true);
   const forceLatestOnLoad = useRef(true);
   const membersChatID = useRef("");
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingCaretPosition = useRef<number | null>(null);
   const selectedConversation = conversations.find((item) => item.id === selectedChatID) ?? null;
   const visibleConversations = conversations.filter((item) => item.name.toLocaleLowerCase().includes(chatQuery.trim().toLocaleLowerCase()));
+
+  useEffect(() => {
+    const caret = pendingCaretPosition.current;
+    if (caret === null) return;
+    pendingCaretPosition.current = null;
+    const input = messageInputRef.current;
+    input?.focus();
+    input?.setSelectionRange(caret, caret);
+  }, [draft]);
 
   useEffect(() => {
     let mounted = true;
@@ -126,6 +232,7 @@ export function ChatPage() {
     setLoadingMessages(true);
     setMessagesError("");
     setDraft("");
+    setReplyTarget(null);
     setActionError("");
     stickToLatest.current = true;
     forceLatestOnLoad.current = true;
@@ -235,18 +342,32 @@ export function ChatPage() {
     setSending(true);
     setActionError("");
     try {
-      const message = await sendWhatsAppMessage(selectedChatID, draft);
+      const message = await sendWhatsAppMessage(selectedChatID, draft, replyTarget?.id ?? "");
       stickToLatest.current = true;
       forceLatestOnLoad.current = true;
       setMessages((current) => current.some((item) => item.id === message.id)
         ? current
         : [...current, message].slice(-100));
       setDraft("");
+      setReplyTarget(null);
     } catch (error) {
       setActionError(actionErrorMessage(error, "Could not send the message. Check the Agent and WhatsApp status."));
     } finally {
       setSending(false);
     }
+  }
+
+  function insertMention(name: string, senderRef: string) {
+    if (!senderRef) return;
+    const input = messageInputRef.current;
+    const start = input?.selectionStart ?? draft.length;
+    const end = input?.selectionEnd ?? draft.length;
+    const prefix = start > 0 && !/\s/.test(draft[start - 1] ?? "") ? " " : "";
+    const suffix = end < draft.length && /\s/.test(draft[end] ?? "") ? "" : " ";
+    const token = mentionInsertionText(name, senderRef);
+    const insertion = `${prefix}${token}${suffix}`;
+    setDraft(`${draft.slice(0, start)}${insertion}${draft.slice(end)}`);
+    pendingCaretPosition.current = start + insertion.length;
   }
 
   async function deleteMessage(message: WhatsAppMessageDTO) {
@@ -334,7 +455,7 @@ export function ChatPage() {
               <span className="bot-chat-avatar" aria-hidden="true">{conversation.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
               <span className="bot-chat-summary">
                 <span className="bot-chat-title"><strong>{conversation.name}</strong><time>{messageTime(conversation.lastMessageAt, true)}</time></span>
-              <span className="bot-chat-preview"><span>{conversation.lastFromBot ? "Bot: " : ""}{conversation.lastMessage}</span><small>{conversationKind(conversation.kind)}</small></span>
+              <span className="bot-chat-preview"><span>{conversation.lastFromBot ? "Bot: " : ""}{renderMessageText(conversation.lastMessage, conversation.lastMessageMentions ?? [])}</span><small>{conversationKind(conversation.kind)}</small></span>
               </span>
             </button>)}
           </nav>
@@ -354,9 +475,21 @@ export function ChatPage() {
               {loadingMessages && messages.length === 0 ? <div className="inbox-empty">Loading messages…</div>
                 : messagesError && messages.length === 0 ? <div className="inbox-empty">Could not load messages. The app will retry automatically.</div>
                   : messages.length === 0 ? <div className="inbox-empty">There are no messages in the Agent history for this conversation.</div>
-                    : messages.map((message) => <article key={message.id} className={message.role === "assistant" ? "bot-message from-bot" : "bot-message from-contact"}>
-                      <strong className="message-sender">{message.sender}</strong>
-                      <p>{message.content}</p>
+                    : messages.map((message) => <article id={`chat-message-${message.id}`} key={message.id} className={message.role === "assistant" ? "bot-message from-bot" : "bot-message from-contact"}>
+                      {message.role !== "assistant" && (message.senderRef
+                        ? <button type="button" className="message-sender message-sender-action"
+                            onClick={() => insertMention(message.sender, message.senderRef)}
+                            title={`Add @${message.sender} as a mention`}>{message.sender}</button>
+                        : <strong className="message-sender">{message.sender}</strong>)}
+                      <div className="message-body" title="Double-click to reply" onDoubleClick={() => {
+                        if (!message.deleted && (message.role !== "assistant" || message.delivery === "sent")) setReplyTarget(message);
+                      }}>
+                        {message.quote && <div className="message-quote" aria-label={`Reply to ${replyRoleLabel(message.quote)}`}>
+                          <strong>{replyRoleLabel(message.quote)}</strong>
+                          <span>{renderMessageText(message.quote.content, message.quote.mentions ?? [])}</span>
+                        </div>}
+                        <p className="message-content">{renderMessageText(message.content, message.mentions ?? [], insertMention)}</p>
+                      </div>
                       <footer>
                         <time>{messageTime(message.createdAt)}</time>
                         {message.role === "assistant" && message.delivery && <span>{deliveryLabel(message.delivery)}</span>}
@@ -451,7 +584,12 @@ export function ChatPage() {
             </>}
 
             {canSend && <form className="chat-composer" onSubmit={(event) => void sendMessage(event)}>
-              <textarea aria-label="Write a WhatsApp message" value={draft} onChange={(event) => setDraft(event.target.value)}
+              {replyTarget && <div className="chat-reply-context">
+                <span><strong>Replying to {replyTarget.role === "assistant" ? "You" : replyTarget.sender}</strong>
+                  <small>{renderMessageText(replyTarget.content, replyTarget.mentions ?? [])}</small></span>
+                <button type="button" className="reply-clear" aria-label="Cancel reply" onClick={() => setReplyTarget(null)}>×</button>
+              </div>}
+              <textarea ref={messageInputRef} aria-label="Write a WhatsApp message" value={draft} onChange={(event) => setDraft(event.target.value)}
                 placeholder="Write a message as the Agent…" rows={2} maxLength={12000} disabled={sending} />
               <button type="submit" disabled={sending || !draft.trim()}>{sending ? "Sending…" : "Send"}</button>
             </form>}

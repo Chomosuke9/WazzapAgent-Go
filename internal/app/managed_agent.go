@@ -50,6 +50,10 @@ func (runtime *managedAgentRuntime) SendChatMessage(ctx context.Context, chatID,
 	return runtime.application.SendChatMessage(ctx, chatID, text)
 }
 
+func (runtime *managedAgentRuntime) SendChatReply(ctx context.Context, chatID, text, replyToMessageID string) (control.BotMessage, error) {
+	return runtime.application.SendChatReply(ctx, chatID, text, replyToMessageID)
+}
+
 func (runtime *managedAgentRuntime) DeleteChatMessage(ctx context.Context, chatID, messageID string) error {
 	return runtime.application.DeleteChatMessage(ctx, chatID, messageID)
 }
