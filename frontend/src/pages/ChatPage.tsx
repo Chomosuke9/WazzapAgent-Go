@@ -143,6 +143,7 @@ export function ChatPage() {
   const [conversations, setConversations] = useState<WhatsAppConversationDTO[]>([]);
   const [chatQuery, setChatQuery] = useState("");
   const [selectedChatID, setSelectedChatID] = useState("");
+  const [mobileConversationOpen, setMobileConversationOpen] = useState(false);
   const [messages, setMessages] = useState<WhatsAppMessageDTO[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -429,7 +430,7 @@ export function ChatPage() {
 
   const canSend = selectedConversation?.kind === "group" || selectedConversation?.kind === "direct";
 
-  return <div className="page chat-page">
+  return <div className={`page chat-page${mobileConversationOpen ? " mobile-chat-open" : ""}`}>
 
     {(conversationError || messagesError || actionError) && <p className="error-text inbox-error" role="status">{actionError || conversationError || messagesError}</p>}
 
@@ -449,7 +450,7 @@ export function ChatPage() {
             {visibleConversations.map((conversation) => <button
               key={conversation.id}
               className={conversation.id === selectedChatID ? "bot-chat-item selected" : "bot-chat-item"}
-              onClick={() => setSelectedChatID(conversation.id)}
+              onClick={() => { setSelectedChatID(conversation.id); setMobileConversationOpen(true); }}
               aria-current={conversation.id === selectedChatID ? "true" : undefined}
             >
               <span className="bot-chat-avatar" aria-hidden="true">{conversation.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
@@ -462,6 +463,10 @@ export function ChatPage() {
 
           <section className="bot-transcript" aria-label={selectedConversation ? `Messages with ${selectedConversation.name}` : "Conversation messages"}>
             {selectedConversation ? <header className="transcript-header">
+              <button type="button" className="mobile-chat-back" aria-label="Back to conversations"
+                onClick={() => { setSettingsOpen(false); setMobileConversationOpen(false); }} title="Back to conversations">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
               <span className="bot-chat-avatar" aria-hidden="true">{selectedConversation.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
               <span className="transcript-title"><strong>{selectedConversation.name}</strong><small>{conversationKind(selectedConversation.kind)} · {selectedConversation.messageCount} saved messages</small></span>
               <button type="button" className="chat-settings-trigger" aria-label="Open chat settings" aria-expanded={settingsOpen}

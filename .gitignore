@@ -21,6 +21,7 @@
 /bin/
 /frontend/node_modules/
 /frontend/dist/
+/frontend/web-dist/
 /frontend/.vite/
 /frontend/*.tsbuildinfo
 /frontend/.env
@@ -30,3 +31,6 @@
 /build/android/build/
 /build/android/app/build/
 /build/android/local.properties
+/build/android/overlay.json
+/build/android/gen/
+/build/android/app/src/main/jniLibs/

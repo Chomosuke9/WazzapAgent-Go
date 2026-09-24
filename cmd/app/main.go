@@ -28,7 +28,7 @@ var version = "dev"
 
 func main() {
 	ctx := context.Background()
-	paths, err := platform.ResolvePaths()
+	paths, err := resolveAppPaths()
 	if err != nil {
 		log.Fatal(err)
 	}

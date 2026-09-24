@@ -33,3 +33,16 @@ tasks:
     summary: Run Wails development mode
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  web:build:
+    summary: Build the shared UI and headless browser server
+    cmds:
+      - task: common:install:frontend:deps
+      - cmd: '{{.NPM}} run build:web'
+        dir: frontend
+      - go build -tags web -o {{.BIN_DIR}}/WazzapAgent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/server
+
+  web:run:
+    summary: Run the browser server on a loopback address
+    cmds:
+      - '{{.BIN_DIR}}/WazzapAgent-web{{if eq OS "windows"}}.exe{{end}}'

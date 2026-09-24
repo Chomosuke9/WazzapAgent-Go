@@ -20,16 +20,20 @@ For P0, `package` produces a production executable only: it does not yet create
 an installer, macOS `.app` bundle, signed package, or auto-update distribution.
 Linux and macOS tasks are scaffolding and have not been run on those hosts.
 
-The Android task is an explicit gate. Beta.23 requires a generated
-`build/android` Gradle project, SDK API 35, build-tools, NDK
-`26.3.11579264`, JDK, npm, and cgo. `wails3 task android:toolchain:check`
-runs `wails3 doctor` without installing anything. `wails3 task android:build`
-refuses to claim an APK until that native project has been generated and
-verified on a supported macOS or Linux host. It deliberately has no adb
-install/uninstall
-step, because uninstalling would erase application persistence.
+The Android native Gradle project is generated from beta.23 and the app's
+private-storage path is wired in. `wails3 task android:build` produces a debug
+APK on a Linux or macOS host with Android SDK/NDK and JDK installed;
+`android:package` produces a release APK for local testing. These tasks do not
+install or uninstall the app. See [Android build](android/README.md) for
+prerequisites and remaining device-validation work.
 
 The common tasks keep binding generation separate from the frontend build:
 `common:generate:bindings` or `common:generate:bindings:android` is followed
 by `common:build:frontend`. `NPM` can override the npm command, for example
 `wails3 task NPM=path/to/npm build`; no machine-specific path is committed.
+
+GitHub Actions builds the Windows amd64 executable, Linux amd64 executable,
+and Android arm64 debug APK on every push and pull request. It can also be
+started manually with **Run workflow**. Each run uploads the three outputs as
+separate downloadable artifacts; the Android artifact is a debug-signed APK
+for testing, not a Play Store release.

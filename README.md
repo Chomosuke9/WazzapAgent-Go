@@ -2,7 +2,9 @@
 
 Greenfield rewrite WazzapAgent sebagai satu modular monolith Go. Part 3 menyediakan conversation core durable: transcript canonical penuh untuk chat yang allowlisted, kebijakan eksternal, satu `Agent` per chat, bounded model context, LLM OpenAI-compatible, lalu pengiriman balasan dan typed effect melalui outbox terpisah.
 
-Status saat ini: shell Wails P0, lifecycle shared core P1, settings persistence GUI P2, pengelolaan sesi P3, serta Start/Stop/Apply Agent dari UI P4 sudah terhubung secara lokal. Native Android dan exit gate real-device/production canary belum selesai, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
+Status saat ini: shell Wails P0, lifecycle shared core P1, settings persistence GUI P2, pengelolaan sesi P3, serta Start/Stop/Apply Agent dari UI P4 sudah terhubung secara lokal. Proyek native Android telah menghasilkan APK debug arm64 pada host Linux, tetapi perilaku pada perangkat belum diuji. Exit gate real-device/production canary belum selesai, sehingga statusnya belum stable release. Canary wajib memakai account, data directory, port, dan allowlist khusus; project lama tidak disentuh.
+
+UI React yang sama juga tersedia di browser melalui `cmd/server`. Jalankan `wails3 task web:build`, lalu `wails3 task web:run`, dan buka `http://127.0.0.1:8080`. Server hanya menerima koneksi loopback; lihat [panduan mode web](cmd/server/README.md) untuk akses dari perangkat lain. Android memakai shell WebView native dan data privat perangkat; lihat [panduan build Android](build/android/README.md). Build dan uji native Linux tetap memiliki gate tersendiri.
 
 ## Bentuk OOP
 

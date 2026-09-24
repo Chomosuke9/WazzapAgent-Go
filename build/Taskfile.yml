@@ -39,7 +39,7 @@ tasks:
       - wails3 generate bindings -f '-tags gui' -clean=true -ts -i ./cmd/app
 
   generate:bindings:android:
-    summary: Generate Android TypeScript bindings without the NDK
+    summary: Generate shared Wails bindings without the Android NDK
     sources:
       - cmd/app/**/*.go
       - internal/**/*.go
@@ -48,9 +48,9 @@ tasks:
     generates:
       - frontend/bindings/**/*
     cmds:
-      - wails3 generate bindings -f '-tags gui,android' -clean=true -ts -i ./cmd/app
+      - wails3 generate bindings -f '-tags gui' -clean=true -ts -i ./cmd/app
     env:
-      GOOS: android
+      GOOS: windows
       CGO_ENABLED: '0'
 
   build:frontend:
