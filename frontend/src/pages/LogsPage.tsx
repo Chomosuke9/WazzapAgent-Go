@@ -42,10 +42,10 @@ export function LogsPage() {
   const errorCount = entries.filter((entry) => entry.level === "ERROR").length;
 
   return <div className="page">
-    <header className="page-header"><div><p className="eyebrow">APP ACTIVITY</p><h1>App logs.</h1><p className="lede">Monitor the Agent, WhatsApp connection, and settings changes while the app is running.</p></div><StatusBadge tone={errorCount ? "warn" : "good"}>{errorCount ? `${errorCount} errors` : `${entries.length} events`}</StatusBadge></header>
+    <header className="page-header"><div><p className="eyebrow">APP ACTIVITY</p><h1>Activity</h1><p className="lede">Monitor the Agent, WhatsApp connection, and settings changes while the app is running.</p></div><StatusBadge tone={errorCount ? "warn" : "good"}>{errorCount ? `${errorCount} errors` : `${entries.length} events`}</StatusBadge></header>
     <section className="card logs-card">
       <div className="logs-toolbar">
-        <div><h3>Recent activity</h3><p className="muted small">Showing up to 500 recent events. The list refreshes automatically and resets when the app closes.</p></div>
+        <div><h3>Recent activity</h3><p className="muted small">The latest 500 events from this app session. Updates automatically.</p></div>
         <button className="button secondary" onClick={() => void refresh()}>Refresh</button>
       </div>
       <div className="logs-filters">

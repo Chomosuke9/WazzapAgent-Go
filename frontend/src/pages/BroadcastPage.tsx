@@ -207,8 +207,8 @@ export function BroadcastPage() {
     <header className="page-header">
       <div>
         <p className="eyebrow">WHATSAPP</p>
-        <h1>Send messages to groups.</h1>
-        <p className="lede">Choose groups, then send plain text or a WhatsApp message payload in JSON format.</p>
+        <h1>Broadcasts</h1>
+        <p className="lede">Reach multiple groups with one message, now or at a time you choose.</p>
       </div>
       <span className="broadcast-selected-count">{selectedIDs.length} selected</span>
     </header>
@@ -240,7 +240,7 @@ export function BroadcastPage() {
         <header className="broadcast-card-header"><div><h2>Message</h2><p className="muted">The selected format is used for every group.</p></div></header>
         <div className="broadcast-format" role="group" aria-label="Message format">
           <button type="button" className={format === "text" ? "method-choice selected" : "method-choice"} onClick={() => { setFormat("text"); setResults([]); setPayloadNormalizationMessage(""); }} disabled={busy}>Plain text</button>
-          <button type="button" className={format === "payload" ? "method-choice selected" : "method-choice"} onClick={() => { setFormat("payload"); setResults([]); setPayloadNormalizationMessage(""); }} disabled={busy}>JSON payload</button>
+          <button type="button" className={format === "payload" ? "method-choice selected" : "method-choice"} onClick={() => { setFormat("payload"); setResults([]); setPayloadNormalizationMessage(""); }} disabled={busy}>Advanced JSON</button>
         </div>
         {format === "text" ? <label className="broadcast-editor">Message text
           <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Write a broadcast message…" maxLength={32768} rows={9} disabled={busy} />

@@ -142,7 +142,7 @@ export function WhatsAppPage() {
     <header className="page-header">
       <div>
         <p className="eyebrow">WHATSAPP</p>
-        <h1>Manage your WhatsApp session.</h1>
+        <h1>WhatsApp connection</h1>
         <p className="lede">Pair a device, reconnect, or remove the session from your WhatsApp account.</p>
       </div>
       <StatusBadge tone={paired && (status?.runtimeState === "connected" || status?.runtimeState === "open") ? "good" : pairingActive || status?.bindingState === "revoked" ? "warn" : "neutral"}>
@@ -158,7 +158,7 @@ export function WhatsAppPage() {
         </div>
         {paired && status?.whatsAppAccountID && <span className="session-account">{status.whatsAppAccountID}</span>}
       </div>
-      <p className="muted session-explainer">{status?.agentActive ? "The Agent runtime is using this WhatsApp connection and processing messages through the app pipeline." : "This session only maintains the WhatsApp connection. The Agent will not process or reply to messages until it is started."}</p>
+      <p className="muted session-explainer">{status?.agentActive ? "Your assistant is using this connection to receive and respond to messages." : "This session only maintains the WhatsApp connection. The Agent will not process or reply to messages until it is started."}</p>
 
       {pairingActive && <div className="pairing-panel" aria-live="polite">
         {status?.pairing?.method === "qr" && status.pairing.qrCodeDataURL && !pairingExpired ? <>

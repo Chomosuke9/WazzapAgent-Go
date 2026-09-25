@@ -31,6 +31,15 @@ function messageTime(value: string, includeDate = false): string {
     : { hour: "2-digit", minute: "2-digit" });
 }
 
+function conversationTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  return date.toDateString() === today.toDateString()
+    ? date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(date.getFullYear() !== today.getFullYear() ? { year: "numeric" as const } : {}) });
+}
+
 function deliveryLabel(delivery: string): string {
   switch (delivery) {
     case "sent": return "Sent";
@@ -438,8 +447,8 @@ export function ChatPage() {
       {loadingConversations && conversations.length === 0 ? <div className="inbox-empty"><span className="inbox-spinner" />Loading conversations…</div>
         : conversations.length === 0 ? <div className="inbox-empty">
           <span className="inbox-empty-icon" aria-hidden="true">◌</span>
-          <strong>{conversationError ? "Could not load conversations" : "No saved messages yet"}</strong>
-          <p>{conversationError ? "The app will retry automatically." : "Messages processed by the Agent will appear here. This history only shows messages saved by the app."}</p>
+          <strong>{conversationError ? "Could not load conversations" : "Your conversations start here"}</strong>
+          <p>{conversationError ? "The app will retry automatically." : "Start your assistant from Overview. Conversations will appear here as it receives messages."}</p>
         </div> : <>
           <nav className="bot-chat-list" aria-label="Conversation list">
             <div className="chat-list-toolbar">
@@ -455,8 +464,8 @@ export function ChatPage() {
             >
               <span className="bot-chat-avatar" aria-hidden="true">{conversation.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
               <span className="bot-chat-summary">
-                <span className="bot-chat-title"><strong>{conversation.name}</strong><time>{messageTime(conversation.lastMessageAt, true)}</time></span>
-              <span className="bot-chat-preview"><span>{conversation.lastFromBot ? "Bot: " : ""}{renderMessageText(conversation.lastMessage, conversation.lastMessageMentions ?? [])}</span><small>{conversationKind(conversation.kind)}</small></span>
+                <span className="bot-chat-title"><strong>{conversation.name}</strong><time title={messageTime(conversation.lastMessageAt, true)}>{conversationTime(conversation.lastMessageAt)}</time></span>
+              <span className="bot-chat-preview"><span>{conversation.lastFromBot ? "You: " : ""}{renderMessageText(conversation.lastMessage, conversation.lastMessageMentions ?? [])}</span><small>{conversationKind(conversation.kind)}</small></span>
               </span>
             </button>)}
           </nav>
@@ -595,10 +604,10 @@ export function ChatPage() {
                 <button type="button" className="reply-clear" aria-label="Cancel reply" onClick={() => setReplyTarget(null)}>×</button>
               </div>}
               <textarea ref={messageInputRef} aria-label="Write a WhatsApp message" value={draft} onChange={(event) => setDraft(event.target.value)}
-                placeholder="Write a message as the Agent…" rows={2} maxLength={12000} disabled={sending} />
+                placeholder="Write a message…" rows={2} maxLength={12000} disabled={sending} />
               <button type="submit" disabled={sending || !draft.trim()}>{sending ? "Sending…" : "Send"}</button>
             </form>}
-            <p className="transcript-note">This history shows messages saved by the Agent. Sending messages and moderation require an active Agent and WhatsApp connection.{selectedConversation?.kind === "group" && !groupAdminChecked ? " Checking the bot account's admin permissions…" : selectedConversation?.kind === "group" && membersError ? " Could not check admin permissions. Open Chat settings for details." : ""}</p>
+            <p className="transcript-note">Double-click a message to reply. Select a name to mention someone.{selectedConversation?.kind === "group" && !groupAdminChecked ? " Checking the bot account's admin permissions…" : selectedConversation?.kind === "group" && membersError ? " Could not check admin permissions. Open Chat settings for details." : ""}</p>
           </section>
         </>}
     </div>

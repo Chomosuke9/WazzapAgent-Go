@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
-import { useApp } from "../hooks/AppProvider";
-import { getAgentRuntimeStatus, startAgent, stopAgent, type AgentRuntimeStatusDTO } from "../services/backend";
+import { NavIcon, type PageId } from "../layouts/AppLayout";
+import { getAgentRuntimeStatus, getWhatsAppUsage, startAgent, stopAgent, type AgentRuntimeStatusDTO, type WhatsAppUsageDTO } from "../services/backend";
 
 const agentLabels: Record<string, string> = {
   stopped: "Stopped",
@@ -26,11 +26,14 @@ function whatsappLabel(state: string): string {
   return labels[state] ?? (state || "Unknown");
 }
 
-export function OverviewPage() {
-  const { appInfo, infoError, loadingInfo, lastPing, pingPending, pingError, sendPing } = useApp();
+const numberFormat = new Intl.NumberFormat("id-ID");
+
+export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
   const [runtime, setRuntime] = useState<AgentRuntimeStatusDTO | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [usage, setUsage] = useState<WhatsAppUsageDTO | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refreshRuntime = useCallback(async () => {
@@ -42,11 +45,30 @@ export function OverviewPage() {
     }
   }, []);
 
+  const refreshUsage = useCallback(async () => {
+    try {
+      setUsage(await getWhatsAppUsage(1));
+      setUsageError(null);
+    } catch (reason: unknown) {
+      setUsageError(reason instanceof Error ? reason.message : "Could not load message activity.");
+    }
+  }, []);
+
   useEffect(() => {
     void refreshRuntime();
     const timer = window.setInterval(() => void refreshRuntime(), 1500);
     return () => window.clearInterval(timer);
   }, [refreshRuntime]);
+
+  useEffect(() => {
+    void refreshUsage();
+    const timer = window.setInterval(() => void refreshUsage(), 30000);
+    window.addEventListener("focus", refreshUsage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshUsage);
+    };
+  }, [refreshUsage]);
 
   const runtimeActive = runtime?.state === "running" || runtime?.state === "starting" || runtime?.state === "stopping";
   const inTransition = runtime?.state === "starting" || runtime?.state === "stopping";
@@ -67,18 +89,46 @@ export function OverviewPage() {
     }
   }
 
-  return <div className="page">
-    <header className="page-header"><div><p className="eyebrow">OVERVIEW</p><h1>Welcome back.</h1><p className="lede">Run the bot using the existing WazzapAgent headless pipeline.</p></div><StatusBadge tone={appInfo ? "good" : infoError ? "warn" : "neutral"}>{appInfo ? "Shell ready" : infoError ? "Could not read info" : "Loading info"}</StatusBadge></header>
-    <section className="hero-card"><div><p className="eyebrow light">APP STATUS</p><h2>{appInfo?.name ?? "WazzapAgent"}</h2><p>{appInfo ? `${appInfo.platform} · version ${appInfo.version}` : loadingInfo ? "Reading info from backend…" : infoError ?? "Backend info is not available."}</p></div><div className="hero-orb" aria-hidden="true"><span>✦</span></div></section>
-    <div className="card-grid two">
-      <section className="card"><div className="card-heading"><div><p className="eyebrow">AGENT</p><h3>{agentLabels[runtime?.state ?? ""] ?? "Loading status"}</h3></div><StatusBadge tone={badgeTone}>{agentLabels[runtime?.state ?? ""] ?? "Loading"}</StatusBadge></div>
-        <p className="muted">{runtime?.state === "running" ? `The bot pipeline is active on settings revision ${runtime.activeRevision}.` : runtime?.state === "starting" ? "The runtime is preparing the WhatsApp client and message pipeline." : runtime?.state === "failed" ? `The runtime stopped with status ${runtime.errorCode || "error"}.` : "The bot is stopped. Starting it will use the saved WhatsApp session."}</p>
+  const connected = runtime?.whatsAppState === "connected" || runtime?.whatsAppState === "open";
+  const running = runtime?.state === "running";
+  const heading = statusError ? "Status unavailable" : running ? "Your assistant is on duty." : runtime?.state === "starting" ? "Getting things ready…" : runtime?.state === "stopping" ? "Wrapping things up…" : runtime?.state === "failed" ? "Your assistant needs attention." : runtime ? "Ready when you are." : "Checking your workspace…";
+  const description = statusError ? "We couldn't check your assistant. Try refreshing its status." : running ? "Your assistant is active. Keep an eye on conversations and manage your messages from here." : runtime?.state === "failed" ? "Check your settings and recent activity, then try starting your assistant again." : inTransition ? "This usually takes a moment. Your status will update automatically." : "Connect WhatsApp, set up your assistant, and start handling conversations in one place.";
+
+  return <div className="page overview-page">
+    <header className="page-header"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Overview</h1><p className="lede">A clear view of your assistant and conversations.</p></div><button className="button secondary" onClick={() => onNavigate("chat")}>Open inbox <span aria-hidden="true">↗</span></button></header>
+    <section className="agent-hero" aria-label="Assistant status">
+      <div className="agent-hero-copy">
+        <StatusBadge tone={statusError ? "warn" : badgeTone}>{statusError ? "Status unavailable" : agentLabels[runtime?.state ?? ""] ?? "Checking status"}</StatusBadge>
+        <h2>{heading}</h2><p>{description}</p>
+        <div className="session-actions">
+          <button className={`button ${runtimeActive ? "secondary" : "primary"}`} onClick={() => void toggleAgent()} disabled={busy || inTransition || Boolean(statusError) || (!runtimeActive && !canStart)}>{busy ? "Working…" : runtimeActive ? "Stop Agent" : "Start Agent"}</button>
+          <button className="text-button" onClick={() => onNavigate(runtime?.state === "failed" ? "logs" : "settings")}>{runtime?.state === "failed" ? "View activity" : "Configure assistant"} <span aria-hidden="true">→</span></button>
+          {statusError && <button className="text-button" onClick={() => void refreshRuntime()}>Retry status</button>}
+        </div>
         {operationError && <p className="error-text" role="alert">{operationError}</p>}
         {statusError && <p className="error-text" role="status">{statusError}</p>}
-        <div className="session-actions"><button className={`button ${runtimeActive ? "danger" : "primary"}`} onClick={() => void toggleAgent()} disabled={busy || inTransition || (!runtimeActive && !canStart)}>{busy ? "Working…" : runtimeActive ? "Stop Agent" : "Start Agent"}</button>{runtime?.pendingChanges && <StatusBadge tone="warn">Settings need to be applied</StatusBadge>}</div>
-      </section>
-      <section className="card"><div className="card-heading"><div><p className="eyebrow">WHATSAPP</p><h3>{whatsappLabel(runtime?.whatsAppState ?? "")}</h3></div><StatusBadge tone={runtime?.whatsAppState === "connected" || runtime?.whatsAppState === "open" ? "good" : "neutral"}>{whatsappLabel(runtime?.whatsAppState ?? "")}</StatusBadge></div><p className="muted">Connection status comes from the client used by the Agent runtime. Pairing and account management are available on the WhatsApp page while the Agent is stopped.</p></section>
+      </div>
+      <div className={`assistant-emblem${running && !statusError ? " is-running" : ""}`} aria-hidden="true"><NavIcon id="whatsapp" /><span /></div>
+    </section>
+    <div className="workspace-stats">
+      <section className="card status-card"><span className="section-icon"><NavIcon id="whatsapp" /></span><p>WhatsApp</p><h3>{statusError ? "Unavailable" : runtime ? whatsappLabel(runtime.whatsAppState) : "Checking…"}</h3><button className="text-button" onClick={() => onNavigate("whatsapp")}>{connected ? "Manage connection" : "Set up connection"} <span aria-hidden="true">→</span></button></section>
+      <section className="card status-card"><span className="section-icon"><NavIcon id="settings" /></span><p>Configuration</p><h3>{statusError ? "Unavailable" : !runtime ? "Checking…" : runtime.pendingChanges ? "Changes to apply" : running ? "Up to date" : "Saved settings"}</h3><button className="text-button" onClick={() => onNavigate("settings")}>{runtime?.pendingChanges ? "Review changes" : "Manage settings"} <span aria-hidden="true">→</span></button></section>
+      <section className="card status-card"><span className="section-icon"><NavIcon id="logs" /></span><p>Assistant</p><h3>{statusError ? "Unavailable" : running ? "Active" : agentLabels[runtime?.state ?? ""] ?? "Checking…"}</h3><button className="text-button" onClick={() => onNavigate("logs")}>View recent activity <span aria-hidden="true">→</span></button></section>
     </div>
-    <section className="card probe-card"><div><p className="eyebrow">APP CONNECTION TEST</p><h3>Check that the Go service is active</h3><p className="muted">Ping checks the connection to the Go service and shows its reply.</p>{lastPing && <p className="event-line"><span className="event-check">✓</span>{lastPing.message} <span>#{lastPing.sequence}</span></p>}{pingError && <p className="error-text">{pingError}</p>}</div><button className="button primary" onClick={() => void sendPing()} disabled={pingPending}>{pingPending ? "Sending…" : "Send ping"}</button></section>
+    <section className="usage-section" aria-labelledby="today-usage-heading">
+      <div className="section-heading usage-title-row"><div><h2 id="today-usage-heading">Today</h2></div><button className="text-button" onClick={() => onNavigate("analytics")}>Open analytics <span aria-hidden="true">→</span></button></div>
+      {usageError ? <div className="card usage-error" role="alert"><div><strong>Today’s numbers are unavailable</strong><p className="muted">{usageError}</p></div><button className="button secondary" onClick={() => void refreshUsage()}>Try again</button></div>
+        : !usage ? <div className="card usage-loading" role="status">Loading today’s numbers…</div>
+          : <div className="today-usage-stats">
+            <article className="card usage-stat"><span>Messages today</span><strong>{numberFormat.format(usage.messagesInPeriod)}</strong></article>
+            <article className="card usage-stat"><span>Agent invokes today</span><strong>{numberFormat.format(usage.invocationsInPeriod)}</strong></article>
+          </div>}
+    </section>
+    {runtime?.pendingChanges && <div className="workspace-notice"><span><strong>Settings are ready to apply</strong><span>{running ? "Apply your saved changes in Settings to update the running assistant." : "Your saved changes will be used the next time you start the Agent."}</span></span><button className="button secondary" onClick={() => onNavigate("settings")}>Review settings</button></div>}
+    <div className="section-heading"><div><h2>Make room for the conversation.</h2><p className="muted">Everything you need for your day-to-day messaging.</p></div></div>
+    <div className="card-grid two quick-access">
+      <button className="card quick-access-card" onClick={() => onNavigate("chat")}><span className="section-icon"><NavIcon id="chat" /></span><span><strong>Your inbox, in one place</strong><span>Read conversations, reply to messages, and manage each chat.</span></span><span className="quick-arrow" aria-hidden="true">↗</span></button>
+      <button className="card quick-access-card" onClick={() => onNavigate("broadcast")}><span className="section-icon"><NavIcon id="broadcast" /></span><span><strong>Reach your groups</strong><span>Compose a broadcast and send it now or schedule it for later.</span></span><span className="quick-arrow" aria-hidden="true">↗</span></button>
+    </div>
   </div>;
 }

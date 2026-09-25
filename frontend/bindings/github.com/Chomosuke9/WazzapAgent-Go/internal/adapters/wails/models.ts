@@ -266,6 +266,12 @@ export interface WhatsAppConversationDTO {
     "lastMessageMentions": WhatsAppMentionDTO[] | null;
 }
 
+export interface WhatsAppDailyUsageDTO {
+    "date": string;
+    "messages": number;
+    "invocations": number;
+}
+
 export interface WhatsAppGroupMemberDTO {
     "id": string;
     "name": string;
@@ -277,6 +283,14 @@ export interface WhatsAppGroupMemberDTO {
 export interface WhatsAppGroupMembersDTO {
     "botIsAdmin": boolean;
     "members": WhatsAppGroupMemberDTO[] | null;
+}
+
+export interface WhatsAppGroupUsageDTO {
+    "name": string;
+    "messages": number;
+    "messagesInPeriod": number;
+    "invocations": number;
+    "invocationsInPeriod": number;
 }
 
 export interface WhatsAppMentionDTO {
@@ -334,4 +348,20 @@ export interface WhatsAppSessionStatusDTO {
     "operationID"?: string;
     "pairing"?: WhatsAppPairingDTO | null;
     "errorCode"?: string;
+}
+
+export interface WhatsAppUsageDTO {
+    "totalMessages": number;
+    "totalInvocations": number;
+    "totalChats": number;
+    "messagesInPeriod": number;
+    "invocationsInPeriod": number;
+    "activeChatsInPeriod": number;
+    "totalGroups": number;
+    "activeGroupsInPeriod": number;
+    "periodStart": string;
+    "periodDays": number;
+    "groups": WhatsAppGroupUsageDTO[] | null;
+    "invocationGroups": WhatsAppGroupUsageDTO[] | null;
+    "dailyActivity": WhatsAppDailyUsageDTO[] | null;
 }

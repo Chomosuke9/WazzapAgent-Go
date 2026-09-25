@@ -34,13 +34,16 @@ export type {
     WhatsAppBroadcastScheduleResultDTO,
     WhatsAppChatSettingsDTO,
     WhatsAppConversationDTO,
+    WhatsAppDailyUsageDTO,
     WhatsAppGroupMemberDTO,
     WhatsAppGroupMembersDTO,
+    WhatsAppGroupUsageDTO,
     WhatsAppMentionDTO,
     WhatsAppMessageDTO,
     WhatsAppPairingDTO,
     WhatsAppQuoteDTO,
     WhatsAppSessionEventDTO,
     WhatsAppSessionOperationDTO,
-    WhatsAppSessionStatusDTO
+    WhatsAppSessionStatusDTO,
+    WhatsAppUsageDTO
 } from "./models.js";

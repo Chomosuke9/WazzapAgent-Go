@@ -54,6 +54,36 @@ type WhatsAppConversationDTO struct {
 	LastMessageMentions []WhatsAppMentionDTO `json:"lastMessageMentions"`
 }
 
+type WhatsAppUsageDTO struct {
+	TotalMessages        uint64                  `json:"totalMessages"`
+	TotalInvocations     uint64                  `json:"totalInvocations"`
+	TotalChats           uint64                  `json:"totalChats"`
+	MessagesInPeriod     uint64                  `json:"messagesInPeriod"`
+	InvocationsInPeriod  uint64                  `json:"invocationsInPeriod"`
+	ActiveChatsInPeriod  uint64                  `json:"activeChatsInPeriod"`
+	TotalGroups          uint64                  `json:"totalGroups"`
+	ActiveGroupsInPeriod uint64                  `json:"activeGroupsInPeriod"`
+	PeriodStart          string                  `json:"periodStart"`
+	PeriodDays           uint32                  `json:"periodDays"`
+	Groups               []WhatsAppGroupUsageDTO `json:"groups"`
+	InvocationGroups     []WhatsAppGroupUsageDTO `json:"invocationGroups"`
+	DailyActivity        []WhatsAppDailyUsageDTO `json:"dailyActivity"`
+}
+
+type WhatsAppGroupUsageDTO struct {
+	Name                string `json:"name"`
+	Messages            uint64 `json:"messages"`
+	MessagesInPeriod    uint64 `json:"messagesInPeriod"`
+	Invocations         uint64 `json:"invocations"`
+	InvocationsInPeriod uint64 `json:"invocationsInPeriod"`
+}
+
+type WhatsAppDailyUsageDTO struct {
+	Date        string `json:"date"`
+	Messages    uint64 `json:"messages"`
+	Invocations uint64 `json:"invocations"`
+}
+
 type WhatsAppMentionDTO struct {
 	Token       string `json:"token"`
 	SenderRef   string `json:"senderRef"`
@@ -268,6 +298,43 @@ func (s *AppService) GetWhatsAppConversations() ([]WhatsAppConversationDTO, erro
 		}
 	}
 	return result, nil
+}
+
+func (s *AppService) GetWhatsAppUsage(periodDays uint32) (WhatsAppUsageDTO, error) {
+	if s.conversations == nil {
+		return WhatsAppUsageDTO{}, errors.New("conversation controller is not initialized")
+	}
+	usage, err := s.conversations.Usage(context.Background(), periodDays)
+	if err != nil {
+		return WhatsAppUsageDTO{}, err
+	}
+	dto := WhatsAppUsageDTO{
+		TotalMessages: usage.TotalMessages, TotalInvocations: usage.TotalInvocations, TotalChats: usage.TotalChats,
+		MessagesInPeriod: usage.MessagesInPeriod, InvocationsInPeriod: usage.InvocationsInPeriod,
+		ActiveChatsInPeriod: usage.ActiveChatsInPeriod,
+		TotalGroups:         usage.TotalGroups, ActiveGroupsInPeriod: usage.ActiveGroupsInPeriod,
+		PeriodStart: usage.PeriodStart, PeriodDays: usage.PeriodDays,
+		Groups:           make([]WhatsAppGroupUsageDTO, len(usage.Groups)),
+		InvocationGroups: make([]WhatsAppGroupUsageDTO, len(usage.InvocationGroups)),
+		DailyActivity:    make([]WhatsAppDailyUsageDTO, len(usage.DailyActivity)),
+	}
+	for index, group := range usage.Groups {
+		dto.Groups[index] = whatsAppGroupUsage(group)
+	}
+	for index, group := range usage.InvocationGroups {
+		dto.InvocationGroups[index] = whatsAppGroupUsage(group)
+	}
+	for index, day := range usage.DailyActivity {
+		dto.DailyActivity[index] = WhatsAppDailyUsageDTO{Date: day.Date, Messages: day.Messages, Invocations: day.Invocations}
+	}
+	return dto, nil
+}
+
+func whatsAppGroupUsage(group control.BotGroupUsage) WhatsAppGroupUsageDTO {
+	return WhatsAppGroupUsageDTO{
+		Name: group.Name, Messages: group.Messages, MessagesInPeriod: group.MessagesInPeriod,
+		Invocations: group.Invocations, InvocationsInPeriod: group.InvocationsInPeriod,
+	}
 }
 
 func (s *AppService) GetWhatsAppMessages(chatID string) ([]WhatsAppMessageDTO, error) {

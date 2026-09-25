@@ -93,6 +93,10 @@ export function GetWhatsAppSessionStatus(): $CancellablePromise<$models.WhatsApp
     return $Call.ByID(1227179819);
 }
 
+export function GetWhatsAppUsage(periodDays: number): $CancellablePromise<$models.WhatsAppUsageDTO> {
+    return $Call.ByID(2810214222, periodDays);
+}
+
 export function KickWhatsAppGroupMember(chatID: string, memberID: string): $CancellablePromise<void> {
     return $Call.ByID(2898311284, chatID, memberID);
 }

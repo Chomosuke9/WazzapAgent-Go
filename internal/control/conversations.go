@@ -24,6 +24,36 @@ type BotConversation struct {
 	LastMessageMentions []BotMention
 }
 
+type BotConversationUsage struct {
+	TotalMessages        uint64
+	TotalInvocations     uint64
+	TotalChats           uint64
+	MessagesInPeriod     uint64
+	InvocationsInPeriod  uint64
+	ActiveChatsInPeriod  uint64
+	TotalGroups          uint64
+	ActiveGroupsInPeriod uint64
+	PeriodStart          string
+	PeriodDays           uint32
+	Groups               []BotGroupUsage
+	InvocationGroups     []BotGroupUsage
+	DailyActivity        []BotDailyActivity
+}
+
+type BotGroupUsage struct {
+	Name                string
+	Messages            uint64
+	MessagesInPeriod    uint64
+	Invocations         uint64
+	InvocationsInPeriod uint64
+}
+
+type BotDailyActivity struct {
+	Date        string
+	Messages    uint64
+	Invocations uint64
+}
+
 type BotMention struct {
 	Token       string
 	SenderRef   identity.SenderRef
@@ -55,6 +85,7 @@ type BotMessage struct {
 type ConversationRepository interface {
 	ListBotConversations(context.Context, SessionScope, uint32) ([]BotConversation, error)
 	ListBotMessages(context.Context, SessionScope, identity.ChatID, uint32) ([]BotMessage, error)
+	ConversationUsage(context.Context, SessionScope, uint32) (BotConversationUsage, error)
 }
 
 // ConversationController exposes only the active account's stored transcript.
@@ -88,6 +119,27 @@ func (controller *ConversationController) List(ctx context.Context) ([]BotConver
 		return nil, conversationRepositoryError("list bot conversations", err)
 	}
 	return conversations, nil
+}
+
+func (controller *ConversationController) Usage(ctx context.Context, periodDays uint32) (BotConversationUsage, error) {
+	if controller == nil || controller.bindings == nil || controller.reader == nil {
+		return BotConversationUsage{}, agent.NewError(agent.ErrorUnavailable, "read conversation usage", errors.New("conversation controller is unavailable"))
+	}
+	if periodDays != 1 && periodDays != 7 && periodDays != 30 {
+		return BotConversationUsage{}, agent.NewError(agent.ErrorInvalidArgument, "read conversation usage", errors.New("period must be 1, 7, or 30 days"))
+	}
+	binding, err := controller.bindings.LoadSessionBinding(nonNilContext(ctx))
+	if err != nil {
+		return BotConversationUsage{}, sessionRepositoryError("load account scope for conversation usage", err)
+	}
+	if !binding.HasActiveScope {
+		return BotConversationUsage{PeriodDays: periodDays}, nil
+	}
+	usage, err := controller.reader.ConversationUsage(nonNilContext(ctx), binding.ActiveScope, periodDays)
+	if err != nil {
+		return BotConversationUsage{}, conversationRepositoryError("read conversation usage", err)
+	}
+	return usage, nil
 }
 
 func (controller *ConversationController) Messages(ctx context.Context, chatID string) ([]BotMessage, error) {
