@@ -33,7 +33,24 @@ by `common:build:frontend`. `NPM` can override the npm command, for example
 `wails3 task NPM=path/to/npm build`; no machine-specific path is committed.
 
 GitHub Actions builds the Windows amd64 executable, Linux amd64 executable,
-and Android arm64 debug APK on every push and pull request. It can also be
-started manually with **Run workflow**. Each run uploads the three outputs as
-separate downloadable artifacts; the Android artifact is a debug-signed APK
-for testing, not a Play Store release.
+and Android arm64 debug APK on every push and pull request. Each run uploads
+the three outputs as separate downloadable artifacts. It can also be started
+manually with **Run workflow**. The Android artifact is a debug-signed APK for
+testing, not a Play Store release.
+
+Pushing a version tag beginning with `v` also creates a draft GitHub Release
+after all three application builds succeed. The draft contains a Windows
+executable, a Linux `.tar.gz`, the Android debug APK, and `SHA256SUMS`. The
+separate `ci` workflow still needs to be checked before publishing. Review the
+draft under **Releases**, then click **Publish release** when it is ready.
+
+Create and push a tag from the commit to release:
+
+```sh
+git tag -a v0.1.0 -m "WazzapAgent v0.1.0"
+git push origin v0.1.0
+```
+
+The Linux build is a raw executable and still needs the host's GTK4/WebKitGTK
+runtime. The Android APK is debug-signed for testing; the release workflow does
+not produce a Play Store package or claim stable-release readiness.
