@@ -31,7 +31,9 @@ type ModelConfig struct {
 type PromptOverrideMode uint8
 
 const (
+	// PromptAppend adds the configured text inside <additional> after the main prompt.
 	PromptAppend PromptOverrideMode = iota + 1
+	// PromptReplace uses the configured text inside <additional> in place of the main prompt.
 	PromptReplace
 )
 

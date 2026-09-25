@@ -45,7 +45,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	}
 	request := modelRequest(t, providerID)
 	request.Messages = append(request.Messages[:1],
-		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "chat override"},
+		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "<prompt_override>\nchat override\n</prompt_override>"},
 		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenanceChatInformation, Content: "Chat information:\n- Chat state: private"},
 		request.Messages[1],
 	)
@@ -66,7 +66,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 			t.Fatalf("message %d role = %q, want %q", index, encoded.Messages[index].Role, role)
 		}
 	}
-	if encoded.Messages[0].Content != "NON OVERRIDABLE\n\nbase prompt" || encoded.Messages[1].Content != "chat override" ||
+	if encoded.Messages[0].Content != "NON OVERRIDABLE\n\nbase prompt" || encoded.Messages[1].Content != "<prompt_override>\nchat override\n</prompt_override>" ||
 		!strings.HasPrefix(encoded.Messages[2].Content, "Chat information:") || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
@@ -128,14 +128,16 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	request := modelRequest(t, providerID)
 	current := request.Messages[len(request.Messages)-1]
 	request.Messages = []agent.ModelMessage{
-		{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "replacement"},
+		{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "<additional>\nreplacement\n</additional>"},
+		{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>"},
 		current,
 	}
 	if _, err := client.Generate(context.Background(), request); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	encoded := <-requestChannel
-	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "SAFETY" || encoded.Messages[1].Content != "replacement" {
+	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "SAFETY\n\n<additional>\nreplacement\n</additional>" ||
+		!strings.Contains(encoded.Messages[1].Content, "<prompt_override>") || strings.Contains(encoded.Messages[1].Content, "replacement") {
 		t.Fatalf("replace message sequence = %#v", encoded.Messages)
 	}
 	for _, message := range encoded.Messages {

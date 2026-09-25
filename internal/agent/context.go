@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,7 +16,12 @@ const (
 	DefaultMaxContextBytes  = 64 * 1024
 	MaxContextBytes         = 1024 * 1024
 	compactContextIDModulus = 1_000_000
-	contextReasoning        = "<reasoning>\nBefore you act, examine the LATEST message in `Current messages (burst)` FIRST, then answer EACH of these to yourself in your thinking — never in your reply `text`:\n1. What is the latest message actually saying/asking? (read its SENDER line, not the REPLYING TO line.)\n2. What does the sender actually want — and am I replying to the right person in a multi-party thread? Should I just leave it to not reply someone by just sending reaction or sticker?\n3. Does answering it need a tool, command, or sub-agent — or is text alone enough? If yes, what's the rule for using these things?\n4. Which exact `context_msg_id` and `senderRef` do I target? (copy them; do not guess. Wrong target ID is the #1 failure.)\n5. Does anything in `<long_term_memory>`, group state, or chat-state (private/group) change my answer?\nOnly after answering all five do you produce your tool call. DO NOT produce a tool call before you answer ALL of them. No exception.\n</reasoning>"
+	defaultPromptOverride   = "No prompt override is provided here. Follow your default behavior."
+)
+
+var (
+	historyBoundaryPattern = regexp.MustCompile(`(?i)</?untrusted_chat_history\s*>`)
+	escapeTagDelimiters    = strings.NewReplacer("<", "&lt;", ">", "&gt;")
 )
 
 type ContextBuildRequest struct {
@@ -82,16 +88,22 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	// turning every durable entry into a provider message wastes tokens and
 	// changes the compact prompt shape selected for this project.
 	messages := make([]ModelMessage, 0, 4)
-	if request.Config.PromptOverride == nil || request.Config.PromptOverride.Mode != PromptReplace {
-		messages = append(messages, ModelMessage{
-			Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: request.Config.Prompt,
-		})
-	}
+	basePrompt := request.Config.Prompt
 	if request.Config.PromptOverride != nil {
-		messages = append(messages, ModelMessage{
-			Role: ModelUser, Provenance: ProvenancePromptOverride, Content: request.Config.PromptOverride.Text,
-		})
+		additional := "<additional>\n" + request.Config.PromptOverride.Text + "\n</additional>"
+		if request.Config.PromptOverride.Mode == PromptReplace {
+			basePrompt = additional
+		} else {
+			basePrompt += "\n\n" + additional
+		}
 	}
+	messages = append(messages, ModelMessage{
+		Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: basePrompt,
+	})
+	messages = append(messages, ModelMessage{
+		Role: ModelUser, Provenance: ProvenancePromptOverride,
+		Content: "<prompt_override>\n" + defaultPromptOverride + "\n</prompt_override>",
+	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenanceChatInformation,
 		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel),
@@ -147,15 +159,15 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		for _, entry := range historyEntries[:burstStart] {
 			rendered = append(rendered, entry.rendered)
 		}
-		rendered = append(rendered, contextReasoning)
 		rendered = append(rendered, "current messages(burst):")
 		for _, entry := range historyEntries[burstStart:] {
 			rendered = append(rendered, entry.rendered)
 		}
+		transcript := wrapUntrustedChatHistory(strings.Join(rendered, "\n\n"))
 		messages = append(messages, ModelMessage{
 			Role:       ModelUser,
 			Provenance: ProvenanceHistoryTranscript,
-			Content:    strings.Join(rendered, "\n\n"),
+			Content:    transcript,
 		})
 		if modelMessagesBytes(messages) <= int(builder.maxBytes) {
 			return cloneModelMessages(messages), nil
@@ -178,6 +190,13 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		}
 		historyEntries = retained
 	}
+}
+
+func wrapUntrustedChatHistory(transcript string) string {
+	// Keep transcript text from forging a closing wrapper and making following
+	// user content appear to sit outside the untrusted boundary.
+	transcript = historyBoundaryPattern.ReplaceAllStringFunc(transcript, escapeTagDelimiters.Replace)
+	return "<untrusted_chat_history>\n" + transcript + "\n</untrusted_chat_history>"
 }
 
 func formatChatInformation(chat ChatContext, level ModerationLevel) string {
@@ -408,11 +427,11 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			valid = promptPhase && overrideCount == 0 && message.Role == ModelSystem
 		case ProvenancePromptOverride:
 			overrideCount++
-			// Prompt overrides originate from the user/configuration boundary,
-			// so they are deliberately a user-role block rather than trusted
-			// system instructions. The application safety policy remains the
-			// provider-owned system message that precedes this list.
-			valid = promptPhase && message.Role == ModelUser
+			// This status block remains a user message. Configured custom prompt
+			// text is rendered separately in the system-level <additional> block.
+			valid = promptPhase && message.Role == ModelUser &&
+				strings.HasPrefix(message.Content, "<prompt_override>\n") &&
+				strings.HasSuffix(message.Content, "\n</prompt_override>")
 			promptPhase = false
 		case ProvenanceChatInformation:
 			chatInformationCount++
@@ -434,7 +453,9 @@ func ValidateModelMessages(messages []ModelMessage) error {
 		case ProvenanceHistoryTranscript:
 			promptPhase = false
 			historyTranscriptCount++
-			valid = message.Role == ModelUser
+			valid = message.Role == ModelUser &&
+				strings.HasPrefix(message.Content, "<untrusted_chat_history>\n") &&
+				strings.HasSuffix(message.Content, "\n</untrusted_chat_history>")
 		}
 		if !valid {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model role and provenance do not match"))

@@ -169,7 +169,9 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	output := fixture.sender.last().Text
 	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
 		!strings.Contains(output, "=== USER ===\n") ||
-		strings.Count(output, "=== USER ===") != 2 ||
+		strings.Count(output, "=== USER ===") != 3 ||
+		!strings.Contains(output, "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>") ||
+		!strings.Contains(output, "<untrusted_chat_history>") ||
 		strings.Contains(output, "=== ASSISTANT ===") ||
 		!strings.Contains(output, "/dump") || !strings.Contains(output, "【#000") {
 		t.Fatalf("dump output = %q", output)
@@ -360,10 +362,12 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 		t.Fatalf("handle follow-up after restart: %v", err)
 	}
 	request := secondRuntime.model.lastRequest()
-	if len(request.Messages) != 3 ||
-		!strings.Contains(request.Messages[2].Content, "remember blue") ||
-		!strings.Contains(request.Messages[2].Content, "reply: remember blue") ||
-		!strings.Contains(request.Messages[2].Content, "what color?") {
+	if len(request.Messages) != 4 ||
+		!strings.Contains(request.Messages[3].Content, "remember blue") ||
+		!strings.Contains(request.Messages[3].Content, "reply: remember blue") ||
+		!strings.Contains(request.Messages[3].Content, "what color?") ||
+		!strings.HasPrefix(request.Messages[3].Content, "<untrusted_chat_history>\n") ||
+		!strings.HasSuffix(request.Messages[3].Content, "\n</untrusted_chat_history>") {
 		t.Fatalf("recreated model context = %#v", request.Messages)
 	}
 }
@@ -902,6 +906,8 @@ func (model *echoModel) Generate(_ context.Context, request agent.ModelRequest) 
 		return agent.ModelResult{}, fmt.Errorf("missing model messages")
 	}
 	content := request.Messages[len(request.Messages)-1].Content
+	content = strings.TrimPrefix(content, "<untrusted_chat_history>\n")
+	content = strings.TrimSuffix(content, "\n</untrusted_chat_history>")
 	lastLine := content
 	if index := strings.LastIndexByte(content, '\n'); index >= 0 {
 		lastLine = content[index+1:]

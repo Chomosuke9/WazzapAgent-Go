@@ -558,7 +558,7 @@ export function ChatPage() {
                     </section>
                     <section className="chat-settings-section">
                       <h2>Custom instructions</h2>
-                      <p>Add instructions for the Agent in this conversation. Leave blank to use only the main instructions.</p>
+                      <p>Append adds these instructions to the system prompt. Replace uses them in place of the main prompt. Leave blank to use the main prompt without a custom addition.</p>
                       <label className="settings-field">Apply mode
                         <select value={promptOverrideMode} onChange={(event) => { setPromptOverrideMode(event.target.value); setSettingsSaved(false); }}>
                           <option value="append">Append to main instructions</option>
