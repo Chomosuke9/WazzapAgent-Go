@@ -83,12 +83,19 @@ func TestBootstrapPointerRoundTripsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read bootstrap pointer: %v", err)
 	}
-	want, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("resolve expected root: %v", err)
+	if !filepath.IsAbs(got) || got != filepath.Clean(got) {
+		t.Fatalf("bootstrap root is not an absolute clean path: %q", got)
 	}
-	if got != filepath.Clean(want) {
-		t.Fatalf("bootstrap root = %q, want %q", got, filepath.Clean(want))
+	wantInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat expected root: %v", err)
+	}
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat bootstrap root: %v", err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("bootstrap root = %q, want the same directory as %q", got, root)
 	}
 	if runtime.GOOS != "windows" {
 		if mode := func() os.FileMode { info, _ := os.Stat(BootstrapPath(configDir)); return info.Mode().Perm() }(); mode != 0o600 {

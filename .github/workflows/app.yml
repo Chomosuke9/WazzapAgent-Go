@@ -111,6 +111,10 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
+      - name: Install native dependencies for Wails CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libayatana-appindicator3-dev
       - name: Install Android SDK and NDK
         run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;26.3.11579264'
       - name: Use pinned npm

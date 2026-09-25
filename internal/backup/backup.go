@@ -390,16 +390,48 @@ func checkedRoot(path string, mustExist bool) (string, error) {
 		if !info.IsDir() {
 			return "", fmt.Errorf("path is not a directory")
 		}
-		resolved, err := filepath.EvalSymlinks(absolute)
-		if err != nil {
+	}
+	resolved, err := resolveExistingPrefix(absolute)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Dir(resolved) == resolved {
+		return "", fmt.Errorf("filesystem root is not allowed")
+	}
+	return resolved, nil
+}
+
+// resolveExistingPrefix canonicalizes the deepest existing ancestor before
+// appending any missing path components. Besides resolving symlinks, this
+// makes comparisons reliable on Windows where one directory can have both a
+// long name and an 8.3 short name.
+func resolveExistingPrefix(path string) (string, error) {
+	missing := make([]string, 0)
+	prefix := path
+	for {
+		_, err := os.Lstat(prefix)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
-		absolute = filepath.Clean(resolved)
-		if filepath.Dir(absolute) == absolute {
-			return "", fmt.Errorf("filesystem root is not allowed")
+		parent := filepath.Dir(prefix)
+		if parent == prefix {
+			return "", err
 		}
+		missing = append(missing, filepath.Base(prefix))
+		prefix = parent
 	}
-	return absolute, nil
+
+	resolved, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		return "", err
+	}
+	for index := len(missing) - 1; index >= 0; index-- {
+		resolved = filepath.Join(resolved, missing[index])
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func checkedRelative(path string) (string, error) {
