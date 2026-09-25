@@ -27,6 +27,7 @@ tasks:
   compile:go:
     internal: true
     summary: Compile the shared Go backend for one Android ABI
+    dir: '{{.ROOT_DIR}}'
     cmds:
       - |
         SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -47,15 +48,16 @@ tasks:
         [ -x "$CC" ] || { echo "NDK compiler missing: $CC"; exit 1; }
         mkdir -p "build/android/app/src/main/jniLibs/$ABI"
         GOOS=android GOARCH="$GOARCH" CGO_ENABLED=1 CC="$CC" CXX="$CXX" \
-          go build -buildmode=c-shared -overlay build/android/overlay.json \
+          go build -buildmode=c-shared -overlay "{{.ROOT_DIR}}/build/android/overlay.json" \
           -tags 'gui,android,{{.FLAVOR | default "debug"}}' -buildvcs=false \
           -o "build/android/app/src/main/jniLibs/$ABI/libwails.so" ./cmd/app
 
   build:
     summary: Build an Android debug APK for a device or emulator
+    dir: '{{.ROOT_DIR}}'
     cmds:
       - task: toolchain:check
-      - cmd: wails3 android overlay:gen -out ../../build/android/overlay.json -config ../../build/config.yml
+      - cmd: wails3 android overlay:gen -out "{{.ROOT_DIR}}/build/android/overlay.json" -config "{{.ROOT_DIR}}/build/config.yml"
         dir: '{{.ROOT_DIR}}/cmd/app'
       - task: common:generate:bindings:android
       - task: common:build:frontend
@@ -67,9 +69,10 @@ tasks:
 
   package:
     summary: Build an Android release APK for local testing
+    dir: '{{.ROOT_DIR}}'
     cmds:
       - task: toolchain:check
-      - cmd: wails3 android overlay:gen -out ../../build/android/overlay.json -config ../../build/config.yml
+      - cmd: wails3 android overlay:gen -out "{{.ROOT_DIR}}/build/android/overlay.json" -config "{{.ROOT_DIR}}/build/config.yml"
         dir: '{{.ROOT_DIR}}/cmd/app'
       - task: common:generate:bindings:android
       - task: common:build:frontend
