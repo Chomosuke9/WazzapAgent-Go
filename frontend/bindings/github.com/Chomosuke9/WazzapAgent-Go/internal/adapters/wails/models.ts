@@ -64,6 +64,15 @@ export interface ReadinessIssueDTO {
     "message": string;
 }
 
+export interface ResetWhatsAppChatSettingsRequestDTO {
+    "expectedSettingsRevision": string;
+    "category": string;
+}
+
+export interface ResetWhatsAppChatSettingsResultDTO {
+    "changedChats": number;
+}
+
 export interface SaveSettingsRequestDTO {
     "expectedRevision": string;
     "patch": SettingsPatchDTO;
@@ -88,6 +97,15 @@ export interface SaveWhatsAppChatSettingsRequestDTO {
     "triggerNamePattern": string;
 }
 
+export interface ScheduleWhatsAppBroadcastRequestDTO {
+    "groupIDs": string[] | null;
+    "format": string;
+    "payload": string;
+    "batchSize": number;
+    "batchDelaySeconds": number;
+    "scheduledAt": string;
+}
+
 export interface SecretPatchDTO {
     "llmAPIKey": SecretUpdateDTO;
     "fallbackAPIKey": SecretUpdateDTO;
@@ -97,6 +115,14 @@ export interface SecretPatchDTO {
 export interface SecretUpdateDTO {
     "action": string;
     "value"?: string;
+}
+
+export interface SendWhatsAppBroadcastRequestDTO {
+    "groupIDs": string[] | null;
+    "format": string;
+    "payload": string;
+    "batchSize": number;
+    "batchDelaySeconds": number;
 }
 
 /**
@@ -187,6 +213,34 @@ export interface ValidationResultDTO {
     "readiness": ReadinessIssueDTO[] | null;
     "sessionReadiness": ReadinessIssueDTO[] | null;
     "agentReadiness": ReadinessIssueDTO[] | null;
+}
+
+export interface WhatsAppBroadcastGroupDTO {
+    "id": string;
+    "name": string;
+}
+
+export interface WhatsAppBroadcastGroupResultDTO {
+    "id": string;
+    "name": string;
+    "sent": boolean;
+    "errorCode": string;
+}
+
+export interface WhatsAppBroadcastScheduleDTO {
+    "id": string;
+    "scheduledAt": string;
+    "batchSize": number;
+    "batchDelaySeconds": number;
+    "groupCount": number;
+    "status": string;
+    "results": WhatsAppBroadcastScheduleResultDTO[] | null;
+}
+
+export interface WhatsAppBroadcastScheduleResultDTO {
+    "name": string;
+    "sent": boolean;
+    "errorCode": string;
 }
 
 export interface WhatsAppChatSettingsDTO {

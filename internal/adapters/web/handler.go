@@ -24,6 +24,9 @@ var allowedMethods = map[string]bool{
 	"StopWhatsAppSession": true, "CancelWhatsAppPairing": true, "ReconnectWhatsAppSession": true,
 	"LogoutWhatsAppSession": true, "GetWhatsAppConversations": true, "GetWhatsAppMessages": true,
 	"GetWhatsAppGroupMembers": true, "GetWhatsAppChatSettings": true, "SaveWhatsAppChatSettings": true,
+	"ResetWhatsAppChatSettings":  true,
+	"GetWhatsAppBroadcastGroups": true, "NormalizeWhatsAppBroadcastPayload": true, "SendWhatsAppBroadcast": true,
+	"ScheduleWhatsAppBroadcast": true, "GetWhatsAppBroadcastSchedules": true, "CancelWhatsAppBroadcastSchedule": true,
 	"SendWhatsAppMessage": true, "DeleteWhatsAppMessage": true, "KickWhatsAppGroupMember": true,
 }
 

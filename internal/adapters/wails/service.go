@@ -5,13 +5,16 @@ package wails
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	agentapp "github.com/Chomosuke9/WazzapAgent-Go/internal/app"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
@@ -92,6 +95,51 @@ type WhatsAppGroupMembersDTO struct {
 	Members    []WhatsAppGroupMemberDTO `json:"members"`
 }
 
+type WhatsAppBroadcastGroupDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type SendWhatsAppBroadcastRequestDTO struct {
+	GroupIDs          []string `json:"groupIDs"`
+	Format            string   `json:"format"`
+	Payload           string   `json:"payload"`
+	BatchSize         int      `json:"batchSize"`
+	BatchDelaySeconds int      `json:"batchDelaySeconds"`
+}
+
+type ScheduleWhatsAppBroadcastRequestDTO struct {
+	GroupIDs          []string `json:"groupIDs"`
+	Format            string   `json:"format"`
+	Payload           string   `json:"payload"`
+	BatchSize         int      `json:"batchSize"`
+	BatchDelaySeconds int      `json:"batchDelaySeconds"`
+	ScheduledAt       string   `json:"scheduledAt"`
+}
+
+type WhatsAppBroadcastGroupResultDTO struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Sent      bool   `json:"sent"`
+	ErrorCode string `json:"errorCode"`
+}
+
+type WhatsAppBroadcastScheduleResultDTO struct {
+	Name      string `json:"name"`
+	Sent      bool   `json:"sent"`
+	ErrorCode string `json:"errorCode"`
+}
+
+type WhatsAppBroadcastScheduleDTO struct {
+	ID                string                               `json:"id"`
+	ScheduledAt       string                               `json:"scheduledAt"`
+	BatchSize         int                                  `json:"batchSize"`
+	BatchDelaySeconds int                                  `json:"batchDelaySeconds"`
+	GroupCount        int                                  `json:"groupCount"`
+	Status            string                               `json:"status"`
+	Results           []WhatsAppBroadcastScheduleResultDTO `json:"results"`
+}
+
 type WhatsAppChatSettingsDTO struct {
 	Version            string `json:"version"`
 	ModerationLevel    uint8  `json:"moderationLevel"`
@@ -115,6 +163,15 @@ type SaveWhatsAppChatSettingsRequestDTO struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+}
+
+type ResetWhatsAppChatSettingsRequestDTO struct {
+	ExpectedSettingsRevision string `json:"expectedSettingsRevision"`
+	Category                 string `json:"category"`
+}
+
+type ResetWhatsAppChatSettingsResultDTO struct {
+	ChangedChats int64 `json:"changedChats"`
 }
 
 const chatActionTimeout = 45 * time.Second
@@ -283,6 +340,165 @@ func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMember
 	return result, nil
 }
 
+func (s *AppService) GetWhatsAppBroadcastGroups() ([]WhatsAppBroadcastGroupDTO, error) {
+	var groups []control.AgentBroadcastGroup
+	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support WhatsApp broadcast")
+		}
+		var actionErr error
+		groups, actionErr = broadcaster.ListBroadcastGroups(ctx)
+		return actionErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WhatsAppBroadcastGroupDTO, len(groups))
+	for index, group := range groups {
+		result[index] = WhatsAppBroadcastGroupDTO{ID: group.ID, Name: group.Name}
+	}
+	return result, nil
+}
+
+func (s *AppService) NormalizeWhatsAppBroadcastPayload(payload string) (string, error) {
+	return agentapp.NormalizeWhatsAppBroadcastPayload(payload)
+}
+
+func (s *AppService) SendWhatsAppBroadcast(request SendWhatsAppBroadcastRequestDTO) ([]WhatsAppBroadcastGroupResultDTO, error) {
+	format := request.Format
+	if format != "text" && format != "payload" {
+		format = "invalid"
+	}
+	s.recordChatActionDetails("INFO", "WhatsApp broadcast send started", fmt.Sprintf("groups=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
+	var results []control.AgentBroadcastGroupResult
+	err := s.withBroadcastActions(broadcastActionTimeout(len(request.GroupIDs), request.BatchSize, request.BatchDelaySeconds), func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support WhatsApp broadcast")
+		}
+		var actionErr error
+		results, actionErr = broadcaster.BroadcastWhatsAppGroups(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds)
+		return actionErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WhatsAppBroadcastGroupResultDTO, len(results))
+	sent := 0
+	for index, item := range results {
+		result[index] = WhatsAppBroadcastGroupResultDTO{ID: item.ID, Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
+		if item.Sent {
+			sent++
+		}
+	}
+	level, message := "INFO", "WhatsApp broadcast completed"
+	if sent != len(results) {
+		level, message = "WARN", "WhatsApp broadcast completed with delivery failures"
+	}
+	s.recordChatActionDetails(level, message, broadcastResultLogDetails(results, sent))
+	return result, nil
+}
+
+func broadcastResultLogDetails(results []control.AgentBroadcastGroupResult, sent int) string {
+	failedByCode := make(map[string]int)
+	for _, item := range results {
+		if item.Sent {
+			continue
+		}
+		code := item.ErrorCode
+		if code == "" {
+			code = "unknown"
+		}
+		failedByCode[code]++
+	}
+	details := fmt.Sprintf("groups=%d · sent=%d · failed=%d", len(results), sent, len(results)-sent)
+	if len(failedByCode) == 0 {
+		return details
+	}
+	codes := make([]string, 0, len(failedByCode))
+	for code := range failedByCode {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	counts := make([]string, 0, len(codes))
+	for _, code := range codes {
+		counts = append(counts, fmt.Sprintf("%s:%d", code, failedByCode[code]))
+	}
+	return details + " · error_codes=" + strings.Join(counts, ",")
+}
+
+func (s *AppService) ScheduleWhatsAppBroadcast(request ScheduleWhatsAppBroadcastRequestDTO) (WhatsAppBroadcastScheduleDTO, error) {
+	scheduledAt, err := time.Parse(time.RFC3339, request.ScheduledAt)
+	if err != nil {
+		return WhatsAppBroadcastScheduleDTO{}, errors.New("Scheduled time is invalid.")
+	}
+	var schedule control.AgentBroadcastSchedule
+	err = s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
+		}
+		var actionErr error
+		schedule, actionErr = broadcaster.ScheduleWhatsAppBroadcast(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds, scheduledAt)
+		return actionErr
+	})
+	if err != nil {
+		return WhatsAppBroadcastScheduleDTO{}, err
+	}
+	s.recordChatAction("INFO", "WhatsApp broadcast scheduled", nil)
+	return broadcastScheduleDTO(schedule), nil
+}
+
+func (s *AppService) GetWhatsAppBroadcastSchedules() ([]WhatsAppBroadcastScheduleDTO, error) {
+	var schedules []control.AgentBroadcastSchedule
+	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
+		}
+		var actionErr error
+		schedules, actionErr = broadcaster.ListWhatsAppBroadcastSchedules(ctx)
+		return actionErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WhatsAppBroadcastScheduleDTO, len(schedules))
+	for index, schedule := range schedules {
+		result[index] = broadcastScheduleDTO(schedule)
+	}
+	return result, nil
+}
+
+func (s *AppService) CancelWhatsAppBroadcastSchedule(id string) error {
+	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
+		if !ok {
+			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
+		}
+		return broadcaster.CancelWhatsAppBroadcastSchedule(ctx, id)
+	})
+	if err != nil {
+		return err
+	}
+	s.recordChatAction("INFO", "WhatsApp broadcast schedule cancelled", nil)
+	return nil
+}
+
+func broadcastScheduleDTO(schedule control.AgentBroadcastSchedule) WhatsAppBroadcastScheduleDTO {
+	result := WhatsAppBroadcastScheduleDTO{
+		ID: schedule.ID, ScheduledAt: schedule.ScheduledAt.UTC().Format(time.RFC3339),
+		BatchSize: schedule.BatchSize, BatchDelaySeconds: schedule.BatchDelaySeconds,
+		GroupCount: schedule.GroupCount, Status: schedule.Status,
+		Results: make([]WhatsAppBroadcastScheduleResultDTO, len(schedule.Results)),
+	}
+	for index, item := range schedule.Results {
+		result.Results[index] = WhatsAppBroadcastScheduleResultDTO{Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
+	}
+	return result
+}
+
 func (s *AppService) GetWhatsAppChatSettings(chatID string) (WhatsAppChatSettingsDTO, error) {
 	var settings control.AgentChatSettings
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
@@ -295,6 +511,38 @@ func (s *AppService) GetWhatsAppChatSettings(chatID string) (WhatsAppChatSetting
 	}
 	s.recordChatAction("INFO", "Chat settings opened", nil)
 	return chatSettingsDTO(settings), nil
+}
+
+func (s *AppService) ResetWhatsAppChatSettings(request ResetWhatsAppChatSettingsRequestDTO) (ResetWhatsAppChatSettingsResultDTO, error) {
+	if s.control == nil {
+		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("settings controller is not initialized")
+	}
+	expectedRevision, err := strconv.ParseUint(request.ExpectedSettingsRevision, 10, 64)
+	if err != nil || expectedRevision == 0 {
+		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("settings revision is invalid")
+	}
+	view, err := s.control.GetSettings(context.Background())
+	if err != nil {
+		return ResetWhatsAppChatSettingsResultDTO{}, err
+	}
+	if view.Revision != expectedRevision {
+		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("Saved settings changed. Reload Settings and try again.")
+	}
+	var changed int64
+	err = s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		resetter, ok := runtime.(control.ManagedAgentChatSettingsReset)
+		if !ok {
+			return errors.New("the active Agent runtime does not support chat settings reset")
+		}
+		var resetErr error
+		changed, resetErr = resetter.ResetChatSettings(ctx, control.ChatSettingsResetCategory(request.Category), view.Values.ChatDefaults)
+		return resetErr
+	})
+	if err != nil {
+		return ResetWhatsAppChatSettingsResultDTO{}, err
+	}
+	s.recordChatAction("INFO", "Saved chat settings reset", nil)
+	return ResetWhatsAppChatSettingsResultDTO{ChangedChats: changed}, nil
 }
 
 func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRequestDTO) (WhatsAppChatSettingsDTO, error) {
@@ -392,19 +640,49 @@ func (s *AppService) KickWhatsAppGroupMember(chatID, memberID string) error {
 }
 
 func (s *AppService) withChatActions(action func(control.ManagedAgentChatActions, context.Context) error) error {
+	return s.withChatActionsTimeout(chatActionTimeout, action)
+}
+
+func (s *AppService) withChatActionsTimeout(timeout time.Duration, action func(control.ManagedAgentChatActions, context.Context) error) error {
+	return s.withManagedChatActions(timeout, "WhatsApp action from Chat failed", action)
+}
+
+func (s *AppService) withBroadcastActions(timeout time.Duration, action func(control.ManagedAgentChatActions, context.Context) error) error {
+	return s.withManagedChatActions(timeout, "WhatsApp broadcast action failed", action)
+}
+
+func (s *AppService) withManagedChatActions(timeout time.Duration, failureLogMessage string, action func(control.ManagedAgentChatActions, context.Context) error) error {
 	if s == nil || s.agent == nil {
 		return errors.New("Agent chat actions are not initialized")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), chatActionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	err := s.agent.WithChatActions(ctx, func(runtime control.ManagedAgentChatActions) error {
 		return action(runtime, ctx)
 	})
 	if err != nil {
-		s.recordChatAction("WARN", "WhatsApp action from Chat failed", err)
+		s.recordChatAction("WARN", failureLogMessage, err)
 		return safeChatActionError(err)
 	}
 	return nil
+}
+
+func broadcastActionTimeout(groupCount, batchSize, batchDelaySeconds int) time.Duration {
+	if groupCount < 0 {
+		groupCount = 0
+	}
+	if batchSize < 1 || batchSize > 100 {
+		batchSize = 20
+	}
+	if batchDelaySeconds < 0 || batchDelaySeconds > 300 {
+		batchDelaySeconds = 0
+	}
+	batches := (groupCount + batchSize - 1) / batchSize
+	timeout := chatActionTimeout + time.Duration(batches)*(5*time.Minute+time.Duration(batchDelaySeconds)*time.Second)
+	if timeout > 24*time.Hour {
+		return 24 * time.Hour
+	}
+	return timeout
 }
 
 func safeChatActionError(err error) error {
@@ -416,6 +694,8 @@ func safeChatActionError(err error) error {
 			case "use Agent chat actions":
 				return errors.New("The Agent is not running. Start it from Overview.")
 			case "use WhatsApp chat actions", "send WhatsApp text", "list WhatsApp group members", "kick WhatsApp group member":
+				return errors.New("The Agent is running, but its WhatsApp connection is not ready. Check the WhatsApp status on Overview and try again.")
+			case "list WhatsApp broadcast groups", "send WhatsApp broadcast", "schedule WhatsApp broadcast":
 				return errors.New("The Agent is running, but its WhatsApp connection is not ready. Check the WhatsApp status on Overview and try again.")
 			}
 		}
@@ -432,6 +712,10 @@ func safeChatActionError(err error) error {
 			switch operation.Operation() {
 			case "kick WhatsApp group member":
 				return errors.New("The group member list has changed. Refresh it and try again.")
+			case "send WhatsApp broadcast":
+				return errors.New("The selected group list expired. Refresh the groups and try again.")
+			case "schedule WhatsApp broadcast":
+				return errors.New("The selected group list changed. Refresh the groups and try again.")
 			case "resolve chat target":
 				return errors.New("This chat is not available on the current Agent connection. Reload the chat list.")
 			case "resolve message target", "resolve WhatsApp effect target", "delete WhatsApp chat message", "delete WhatsApp message":
@@ -442,10 +726,25 @@ func safeChatActionError(err error) error {
 		}
 		return errors.New("Chat data is no longer available. Reload the chat list.")
 	case agent.ErrorInvalidArgument:
+		var operation interface{ Operation() string }
+		if errors.As(err, &operation) {
+			switch operation.Operation() {
+			case "validate WhatsApp broadcast payload":
+				return errors.New("The JSON must match the WhatsApp waE2E.Message payload format.")
+			case "validate WhatsApp broadcast timing":
+				return errors.New("Batch size must be 1–100 and the pause must be 0–300 seconds.")
+			case "schedule WhatsApp broadcast":
+				return errors.New("Choose a future date within the next year.")
+			}
+		}
 		return errors.New("The action data is invalid.")
 	case agent.ErrorTimeout:
 		return errors.New("WhatsApp did not respond before the timeout.")
 	case agent.ErrorConflict:
+		var operation interface{ Operation() string }
+		if errors.As(err, &operation) && operation.Operation() == "cancel WhatsApp broadcast schedule" {
+			return errors.New("This schedule has already started or was cancelled.")
+		}
 		return errors.New("Chat settings have changed. Close and reopen the Chat settings panel.")
 	default:
 		return errors.New("The action failed. Check the Logs page for details.")
@@ -463,6 +762,13 @@ func (s *AppService) recordChatAction(level, message string, err error) {
 		if errors.As(err, &operation) && operation.Operation() != "" {
 			details += " op=" + operation.Operation()
 		}
+	}
+	s.recordChatActionDetails(level, message, details)
+}
+
+func (s *AppService) recordChatActionDetails(level, message, details string) {
+	if s == nil || s.logs == nil {
+		return
 	}
 	s.logs.Record(level, message, details)
 }

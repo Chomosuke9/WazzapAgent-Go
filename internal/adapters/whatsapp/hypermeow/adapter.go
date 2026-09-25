@@ -28,6 +28,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -82,6 +83,7 @@ type Config struct {
 	Targets         TargetStore
 	GroupNames      GroupNameStore
 	GroupMetadata   GroupMetadataStore
+	Broadcasts      broadcastmodel.Store
 	Logger          *slog.Logger
 }
 
@@ -96,6 +98,7 @@ type Adapter struct {
 	targets         TargetStore
 	groupNames      GroupNameStore
 	groupMetadata   GroupMetadataStore
+	broadcasts      broadcastmodel.Store
 	handler         CandidateHandler
 	logger          *slog.Logger
 	container       *sqlstore.Container
@@ -109,6 +112,8 @@ type Adapter struct {
 	workers         uint32
 	memberHandlesMu sync.Mutex
 	memberHandles   map[string]memberHandleSet
+	broadcastMu     sync.Mutex
+	broadcastSet    broadcastGroupHandleSet
 	ready           atomic.Bool
 	started         atomic.Bool
 	closed          atomic.Bool
@@ -178,6 +183,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		targets:        config.Targets,
 		groupNames:     config.GroupNames,
 		groupMetadata:  config.GroupMetadata,
+		broadcasts:     config.Broadcasts,
 		logger:         logger,
 		container:      container,
 		client:         client,
@@ -250,6 +256,10 @@ func (adapter *Adapter) Start(ctx context.Context) error {
 		return err
 	}
 	adapter.ready.Store(adapter.client.IsConnected() && adapter.client.IsLoggedIn())
+	if adapter.broadcasts != nil {
+		adapter.wait.Add(1)
+		go adapter.broadcastScheduleWorker()
+	}
 	return nil
 }
 

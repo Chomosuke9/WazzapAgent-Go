@@ -148,7 +148,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Allowlist: application.config.Allowlist(), QueueCapacity: application.config.InboundQueue(),
 		Workers: application.config.InboundWorkers(), ConnectTimeout: application.config.ConnectTimeout(),
 		SendTimeout: application.config.SendTimeout(), Pairing: application.options.Pairing,
-		Targets: store.Inbound(), GroupNames: store.Inbound(), GroupMetadata: store.Inbound(), Logger: application.logger,
+		Targets: store.Inbound(), GroupNames: store.Inbound(), GroupMetadata: store.Inbound(), Broadcasts: store, Logger: application.logger,
 	})
 	if err != nil {
 		return nil, err

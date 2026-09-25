@@ -3,8 +3,19 @@ package control
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+)
+
+type ChatSettingsResetCategory string
+
+const (
+	ChatSettingsResetModeration ChatSettingsResetCategory = "moderation"
+	ChatSettingsResetTriggers   ChatSettingsResetCategory = "triggers"
+	ChatSettingsResetPrompt     ChatSettingsResetCategory = "instructions"
+	ChatSettingsResetAll        ChatSettingsResetCategory = "all"
 )
 
 // AgentGroupMember contains a safe, short-lived group member handle for the
@@ -20,6 +31,34 @@ type AgentGroupMember struct {
 type AgentGroupMembers struct {
 	BotIsAdmin bool
 	Members    []AgentGroupMember
+}
+
+type AgentBroadcastGroup struct {
+	ID   string
+	Name string
+}
+
+type AgentBroadcastGroupResult struct {
+	ID        string
+	Name      string
+	Sent      bool
+	ErrorCode string
+}
+
+type AgentBroadcastScheduleResult struct {
+	Name      string
+	Sent      bool
+	ErrorCode string
+}
+
+type AgentBroadcastSchedule struct {
+	ID                string
+	ScheduledAt       time.Time
+	BatchSize         int
+	BatchDelaySeconds int
+	GroupCount        int
+	Status            string
+	Results           []AgentBroadcastScheduleResult
 }
 
 type AgentChatSettings struct {
@@ -53,6 +92,22 @@ type ManagedAgentChatActions interface {
 // manually composed message as a native reply to a saved chat message.
 type ManagedAgentChatReplyActions interface {
 	SendChatReply(context.Context, string, string, string) (BotMessage, error)
+}
+
+// ManagedAgentChatSettingsReset is available on runtimes that can atomically
+// reset saved chat-specific overrides to the current account defaults.
+type ManagedAgentChatSettingsReset interface {
+	ResetChatSettings(context.Context, ChatSettingsResetCategory, config.ChatDefaults) (int64, error)
+}
+
+// ManagedAgentBroadcastActions exposes joined WhatsApp groups through
+// short-lived handles and sends one manually selected payload to those groups.
+type ManagedAgentBroadcastActions interface {
+	ListBroadcastGroups(context.Context) ([]AgentBroadcastGroup, error)
+	BroadcastWhatsAppGroups(context.Context, []string, string, string, int, int) ([]AgentBroadcastGroupResult, error)
+	ScheduleWhatsAppBroadcast(context.Context, []string, string, string, int, int, time.Time) (AgentBroadcastSchedule, error)
+	ListWhatsAppBroadcastSchedules(context.Context) ([]AgentBroadcastSchedule, error)
+	CancelWhatsAppBroadcastSchedule(context.Context, string) error
 }
 
 // WithChatActions holds the lifecycle operation lock while a bounded UI action

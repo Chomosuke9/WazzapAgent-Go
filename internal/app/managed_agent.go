@@ -73,3 +73,27 @@ func (runtime *managedAgentRuntime) GetChatSettings(ctx context.Context, chatID 
 func (runtime *managedAgentRuntime) SaveChatSettings(ctx context.Context, chatID string, update control.AgentChatSettingsUpdate) (control.AgentChatSettings, error) {
 	return runtime.application.SaveChatSettings(ctx, chatID, update)
 }
+
+func (runtime *managedAgentRuntime) ResetChatSettings(ctx context.Context, category control.ChatSettingsResetCategory, defaults config.ChatDefaults) (int64, error) {
+	return runtime.application.ResetChatSettings(ctx, category, defaults)
+}
+
+func (runtime *managedAgentRuntime) ListBroadcastGroups(ctx context.Context) ([]control.AgentBroadcastGroup, error) {
+	return runtime.application.ListBroadcastGroups(ctx)
+}
+
+func (runtime *managedAgentRuntime) BroadcastWhatsAppGroups(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int) ([]control.AgentBroadcastGroupResult, error) {
+	return runtime.application.BroadcastWhatsAppGroups(ctx, groupIDs, format, payload, batchSize, batchDelaySeconds)
+}
+
+func (runtime *managedAgentRuntime) ScheduleWhatsAppBroadcast(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int, scheduledAt time.Time) (control.AgentBroadcastSchedule, error) {
+	return runtime.application.ScheduleWhatsAppBroadcast(ctx, groupIDs, format, payload, batchSize, batchDelaySeconds, scheduledAt)
+}
+
+func (runtime *managedAgentRuntime) ListWhatsAppBroadcastSchedules(ctx context.Context) ([]control.AgentBroadcastSchedule, error) {
+	return runtime.application.ListWhatsAppBroadcastSchedules(ctx)
+}
+
+func (runtime *managedAgentRuntime) CancelWhatsAppBroadcastSchedule(ctx context.Context, id string) error {
+	return runtime.application.CancelWhatsAppBroadcastSchedule(ctx, id)
+}

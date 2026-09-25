@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
-import { applyAgentSettings, getAgentRuntimeStatus, getSettings, saveSettings, type AgentRuntimeStatusDTO, type SettingsValuesDTO, type SettingsViewDTO } from "../services/backend";
+import { applyAgentSettings, getAgentRuntimeStatus, getSettings, resetWhatsAppChatSettings, saveSettings, type AgentRuntimeStatusDTO, type SettingsValuesDTO, type SettingsViewDTO } from "../services/backend";
 
 const secretKeep = () => ({ action: "keep", value: "" });
+type ChatResetCategory = "moderation" | "triggers" | "instructions" | "all";
 
 const agentFieldLabels: Record<string, string> = {
   ASSISTANT_NAME: "Assistant name",
@@ -30,6 +31,7 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<AgentRuntimeStatusDTO | null>(null);
+  const [resetMessage, setResetMessage] = useState("");
 
   const refreshRuntime = useCallback(async () => {
     try { setRuntimeStatus(await getAgentRuntimeStatus()); } catch { /* settings remain usable if runtime status is temporarily unavailable */ }
@@ -111,6 +113,29 @@ export function SettingsPage() {
     }
   }
 
+  async function resetSavedChatSettings(category: ChatResetCategory, label: string) {
+    if (!snapshot || !saved || busy || runtimeStatus?.state !== "running" || runtimeStatus?.pendingChanges) return;
+    const accepted = window.confirm("Reset " + label + " in every saved chat to the currently saved defaults? This overwrites chat-specific values.");
+    if (!accepted) return;
+    setBusy(true);
+    setError(null);
+    setResetMessage("");
+    try {
+      const result = await resetWhatsAppChatSettings({
+        expectedSettingsRevision: snapshot.revision,
+        category,
+      });
+      setResetMessage(result.changedChats === 0
+        ? "No saved chat settings needed resetting for " + label + "."
+        : "Reset " + label + " to the saved default in " + result.changedChats + (result.changedChats === 1 ? " chat." : " chats."));
+      await refreshRuntime();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Could not reset " + label.toLowerCase() + ".");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error && !draft) return <div className="page"><header className="page-header"><div><p className="eyebrow">SETTINGS</p><h1>App configuration.</h1><p className="lede">Could not open the settings backend.</p></div><StatusBadge tone="warn">Error</StatusBadge></header><section className="card error-text">{error}</section></div>;
   if (!draft || !snapshot) return <div className="page"><header className="page-header"><div><p className="eyebrow">SETTINGS</p><h1>App configuration.</h1><p className="lede">Loading saved settings…</p></div><StatusBadge>Loading</StatusBadge></header></div>;
 
@@ -139,6 +164,16 @@ export function SettingsPage() {
 
       <p className="eyebrow settings-section-title">DEFAULT CHAT SETTINGS</p>
       <p className="muted small">Used when a chat gets its settings for the first time. Existing chat settings keep their saved values. Save and Apply to use these defaults in the running Agent.</p>
+      <div className="reset-chat-settings">
+        <p className="muted small">Reset saved chat-specific settings across every chat, including older chats. These actions use the saved defaults above. {runtimeStatus?.state !== "running" ? "Start the Agent first." : runtimeStatus.pendingChanges ? "Apply saved settings to the Agent first." : "Save any pending edits before using these actions."}</p>
+        <div className="reset-chat-settings-actions">
+          <button type="button" className="button secondary" disabled={busy || !saved || runtimeStatus?.state !== "running" || runtimeStatus?.pendingChanges} onClick={() => void resetSavedChatSettings("moderation", "moderation")}>Reset moderation in all chats</button>
+          <button type="button" className="button secondary" disabled={busy || !saved || runtimeStatus?.state !== "running" || runtimeStatus?.pendingChanges} onClick={() => void resetSavedChatSettings("triggers", "triggers")}>Reset triggers in all chats</button>
+          <button type="button" className="button secondary" disabled={busy || !saved || runtimeStatus?.state !== "running" || runtimeStatus?.pendingChanges} onClick={() => void resetSavedChatSettings("instructions", "custom instructions")}>Reset custom instructions in all chats</button>
+          <button type="button" className="button secondary" disabled={busy || !saved || runtimeStatus?.state !== "running" || runtimeStatus?.pendingChanges} onClick={() => void resetSavedChatSettings("all", "all chat settings")}>Reset all chat settings</button>
+        </div>
+        {resetMessage && <p className="success-text" role="status">{resetMessage}</p>}
+      </div>
       <div className="settings-form-grid">
         <label><span>Moderation level</span><select value={draft.chatDefaults.moderationLevel} onChange={(event) => updateChatDefault("moderationLevel", Number(event.target.value))}>
           <option value={0}>Disabled — no moderation</option><option value={1}>Level 1 — delete messages</option><option value={2}>Level 2 — delete and mute</option><option value={3}>Level 3 — delete, mute, and kick</option>

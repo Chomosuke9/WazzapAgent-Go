@@ -14,6 +14,8 @@ require (
 	rsc.io/qr v0.2.0
 )
 
+replace github.com/polymorfa/hypermeow => ./third_party/hypermeow
+
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect

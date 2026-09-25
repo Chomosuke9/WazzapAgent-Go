@@ -23,6 +23,10 @@ export function BeginWhatsAppPairing(request: $models.BeginWhatsAppPairingReques
     return $Call.ByID(2833984550, request);
 }
 
+export function CancelWhatsAppBroadcastSchedule(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1497871571, id);
+}
+
 export function CancelWhatsAppPairing(operationID: string): $CancellablePromise<$models.WhatsAppSessionStatusDTO> {
     return $Call.ByID(3187940753, operationID);
 }
@@ -61,6 +65,14 @@ export function GetSettingsSchema(): $CancellablePromise<$models.FieldDescriptor
     return $Call.ByID(1479220523);
 }
 
+export function GetWhatsAppBroadcastGroups(): $CancellablePromise<$models.WhatsAppBroadcastGroupDTO[] | null> {
+    return $Call.ByID(3275715686);
+}
+
+export function GetWhatsAppBroadcastSchedules(): $CancellablePromise<$models.WhatsAppBroadcastScheduleDTO[] | null> {
+    return $Call.ByID(4015715464);
+}
+
 export function GetWhatsAppChatSettings(chatID: string): $CancellablePromise<$models.WhatsAppChatSettingsDTO> {
     return $Call.ByID(3685747852, chatID);
 }
@@ -89,6 +101,10 @@ export function LogoutWhatsAppSession(): $CancellablePromise<$models.WhatsAppSes
     return $Call.ByID(4192932161);
 }
 
+export function NormalizeWhatsAppBroadcastPayload(payload: string): $CancellablePromise<string> {
+    return $Call.ByID(1235894727, payload);
+}
+
 /**
  * Ping provides an explicit UI action for checking the Go-to-frontend event path.
  */
@@ -98,6 +114,10 @@ export function Ping(): $CancellablePromise<void> {
 
 export function ReconnectWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
     return $Call.ByID(3156183818);
+}
+
+export function ResetWhatsAppChatSettings(request: $models.ResetWhatsAppChatSettingsRequestDTO): $CancellablePromise<$models.ResetWhatsAppChatSettingsResultDTO> {
+    return $Call.ByID(2399289539, request);
 }
 
 export function ResumeWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
@@ -114,6 +134,14 @@ export function SaveSettings(request: $models.SaveSettingsRequestDTO): $Cancella
 
 export function SaveWhatsAppChatSettings(request: $models.SaveWhatsAppChatSettingsRequestDTO): $CancellablePromise<$models.WhatsAppChatSettingsDTO> {
     return $Call.ByID(3459881951, request);
+}
+
+export function ScheduleWhatsAppBroadcast(request: $models.ScheduleWhatsAppBroadcastRequestDTO): $CancellablePromise<$models.WhatsAppBroadcastScheduleDTO> {
+    return $Call.ByID(1979498787, request);
+}
+
+export function SendWhatsAppBroadcast(request: $models.SendWhatsAppBroadcastRequestDTO): $CancellablePromise<$models.WhatsAppBroadcastGroupResultDTO[] | null> {
+    return $Call.ByID(2587196246, request);
 }
 
 export function SendWhatsAppMessage(chatID: string, text: string, replyToMessageID: string): $CancellablePromise<$models.WhatsAppMessageDTO> {

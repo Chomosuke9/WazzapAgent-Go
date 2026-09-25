@@ -8,7 +8,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
+	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -293,6 +295,40 @@ func (application *Application) SaveChatSettings(ctx context.Context, chatID str
 		return control.AgentChatSettings{}, err
 	}
 	return chatSettingsDTO(updated), nil
+}
+
+func (application *Application) ResetChatSettings(
+	ctx context.Context,
+	category control.ChatSettingsResetCategory,
+	defaults config.ChatDefaults,
+) (int64, error) {
+	if application == nil || !application.ready.Load() {
+		return 0, agent.NewError(agent.ErrorNotReady, "reset WhatsApp chat settings", errors.New("Agent runtime is not ready"))
+	}
+	runtime := application.runtimeState.Load()
+	if runtime == nil || runtime.store == nil {
+		return 0, agent.NewError(agent.ErrorNotReady, "reset WhatsApp chat settings", errors.New("WhatsApp chat storage is not ready"))
+	}
+	var categories appsqlite.ChatSettingsResetMask
+	switch category {
+	case control.ChatSettingsResetModeration:
+		categories = appsqlite.ResetChatModeration
+	case control.ChatSettingsResetTriggers:
+		categories = appsqlite.ResetChatTriggers
+	case control.ChatSettingsResetPrompt:
+		categories = appsqlite.ResetChatPromptOverride
+	case control.ChatSettingsResetAll:
+		categories = appsqlite.ResetChatModeration | appsqlite.ResetChatTriggers | appsqlite.ResetChatPromptOverride
+	default:
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reset WhatsApp chat settings", errors.New("chat settings reset category is invalid"))
+	}
+	configDefaults := runtime.configDefaults
+	configDefaults.Permission.ModerationLevel = agent.ModerationLevel(defaults.ModerationLevel)
+	configDefaults.Triggers = defaults.Triggers()
+	configDefaults.PromptOverride = defaults.PromptOverride()
+	return runtime.store.Configs().ResetAccountChatSettings(
+		ctx, application.config.TenantID(), application.config.AccountID(), configDefaults, categories,
+	)
 }
 
 func chatSettingsDTO(snapshot agent.ConfigSnapshot) control.AgentChatSettings {

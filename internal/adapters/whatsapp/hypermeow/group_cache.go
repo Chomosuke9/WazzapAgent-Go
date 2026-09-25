@@ -34,6 +34,7 @@ func (adapter *Adapter) clearGroupCache() {
 	}
 	adapter.groupMu.Unlock()
 	adapter.clearMemberHandles()
+	adapter.clearBroadcastHandles()
 }
 
 func (adapter *Adapter) groupStoreContext() context.Context {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -195,6 +196,110 @@ func (store *ConfigStore) ReconcileAccountDefaults(
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, storageError("commit account defaults reconciliation", err)
+	}
+	return changed, nil
+}
+
+// ChatSettingsResetMask selects the per-chat override categories to reset.
+type ChatSettingsResetMask uint8
+
+const (
+	ResetChatModeration ChatSettingsResetMask = 1 << iota
+	ResetChatTriggers
+	ResetChatPromptOverride
+)
+
+const resetAllChatSettings = ResetChatModeration | ResetChatTriggers | ResetChatPromptOverride
+
+// ResetAccountChatSettings applies the selected chat defaults to every saved
+// chat configuration for an account in one transaction. Only selected
+// per-chat fields change; global model, prompt, and policy values are preserved.
+func (store *ConfigStore) ResetAccountChatSettings(
+	ctx context.Context,
+	tenantID identity.TenantID,
+	accountID identity.AccountID,
+	defaults agent.ConfigValues,
+	categories ChatSettingsResetMask,
+) (int64, error) {
+	if tenantID.IsZero() || accountID.IsZero() {
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reset account chat settings", errors.New("tenant and account identity are required"))
+	}
+	if categories == 0 || categories&^resetAllChatSettings != 0 {
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reset account chat settings", errors.New("one or more valid chat setting categories are required"))
+	}
+	if err := agent.ValidateConfigValues(defaults); err != nil {
+		return 0, err
+	}
+
+	sets := []string{}
+	setArgs := []any{}
+	conditions := []string{}
+	conditionArgs := []any{}
+	if categories&ResetChatModeration != 0 {
+		value := uint8(defaults.Permission.ModerationLevel)
+		sets = append(sets, "moderation_level = ?")
+		setArgs = append(setArgs, value)
+		conditions = append(conditions, "moderation_level <> ?")
+		conditionArgs = append(conditionArgs, value)
+	}
+	if categories&ResetChatTriggers != 0 {
+		triggerValues := []struct {
+			column string
+			value  any
+		}{
+			{"trigger_mention", boolInt(defaults.Triggers.Mention)},
+			{"trigger_name", boolInt(defaults.Triggers.Name)},
+			{"trigger_reply", boolInt(defaults.Triggers.Reply)},
+			{"trigger_name_regex", boolInt(defaults.Triggers.NameRegex)},
+			{"trigger_name_pattern", defaults.Triggers.NamePattern},
+		}
+		changed := make([]string, 0, len(triggerValues))
+		for _, item := range triggerValues {
+			sets = append(sets, item.column+" = ?")
+			setArgs = append(setArgs, item.value)
+			changed = append(changed, item.column+" <> ?")
+			conditionArgs = append(conditionArgs, item.value)
+		}
+		conditions = append(conditions, "("+strings.Join(changed, " OR ")+")")
+	}
+	if categories&ResetChatPromptOverride != 0 {
+		mode, text := nullableOverride(defaults.PromptOverride)
+		sets = append(sets, "prompt_override_mode = ?", "prompt_override_text = ?")
+		setArgs = append(setArgs, mode, text)
+		conditions = append(conditions, "(prompt_override_mode IS NOT ? OR prompt_override_text IS NOT ?)")
+		conditionArgs = append(conditionArgs, mode, text)
+	}
+	where := strings.Join(conditions, " OR ")
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, storageError("begin account chat settings reset", err)
+	}
+	defer tx.Rollback()
+	var exhausted int
+	countQuery := "SELECT COUNT(*) FROM agent_configs WHERE tenant_id = ? AND account_id = ? AND version >= ? AND (" + where + ")"
+	if err := tx.QueryRowContext(ctx, countQuery,
+		append([]any{tenantID.String(), accountID.String(), int64(math.MaxInt64)}, conditionArgs...)...,
+	).Scan(&exhausted); err != nil {
+		return 0, storageError("check account chat config versions", err)
+	}
+	if exhausted != 0 {
+		return 0, agent.NewError(agent.ErrorIntegrityFailure, "reset account chat settings", errors.New("a chat config version is exhausted"))
+	}
+	args := append(setArgs, store.clock.Now().UnixMilli(), tenantID.String(), accountID.String(), int64(math.MaxInt64))
+	args = append(args, conditionArgs...)
+	updateQuery := "UPDATE agent_configs SET version = version + 1, " + strings.Join(sets, ", ") +
+		", updated_at_ms = ? WHERE tenant_id = ? AND account_id = ? AND version < ? AND (" + where + ")"
+	result, err := tx.ExecContext(ctx, updateQuery, args...)
+	if err != nil {
+		return 0, storageError("reset account chat settings", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return 0, storageError("inspect account chat settings reset", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, storageError("commit account chat settings reset", err)
 	}
 	return changed, nil
 }

@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-export type PageId = "overview" | "whatsapp" | "chat" | "settings" | "data" | "logs";
+export type PageId = "overview" | "whatsapp" | "broadcast" | "chat" | "settings" | "data" | "logs";
 type Theme = "light" | "dark";
 
 const navigation: Array<{ id: PageId; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "whatsapp", label: "WhatsApp" },
+  { id: "broadcast", label: "Broadcast" },
   { id: "chat", label: "Chat" },
   { id: "settings", label: "Settings" },
   { id: "data", label: "App & Data" },
@@ -29,6 +30,7 @@ function NavIcon({ id }: { id: PageId }) {
   const paths: Record<PageId, ReactNode> = {
     overview: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
     whatsapp: <><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.2A8 8 0 1 1 20 11.5Z" /><path d="M9 9.5c.8 2.2 2.3 3.7 4.5 4.5l1.2-1" /></>,
+    broadcast: <><path d="M4 12h11" /><path d="m11 6 6 6-6 6" /><path d="M18 5.5 21 4v16l-3-1.5" /></>,
     chat: <><path d="M4 5.5h16v12H8l-4 3v-15Z" /><path d="M8 10h8M8 14h6" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4m10.6 10.6 1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" /></>,
     data: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
