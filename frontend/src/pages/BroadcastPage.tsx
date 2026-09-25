@@ -134,7 +134,7 @@ export function BroadcastPage() {
     }
   }
 
-  function confirmReady(action: "send" | "schedule"): string | null {
+  function validateReady(action: "send" | "schedule"): string | null {
     const body = messageValue.trim();
     if (!selectedIDs.length) return "Select at least one group.";
     if (!body) return "Add a message before continuing.";
@@ -147,12 +147,8 @@ export function BroadcastPage() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || loading) return;
-    const validation = confirmReady("send");
+    const validation = validateReady("send");
     if (validation) { setError(validation); return; }
-    const formatLabel = format === "text" ? "plain text" : "JSON payload";
-    const batches = Math.ceil(selectedIDs.length / batchSize);
-    const pause = batches > 1 ? `, in batches of ${batchSize} with a ${batchDelaySeconds}-second pause` : "";
-    if (!window.confirm(`Send ${formatLabel} to ${selectedIDs.length} selected groups${pause}?`)) return;
 
     setSending(true);
     setError("");
@@ -170,7 +166,7 @@ export function BroadcastPage() {
 
   async function submitSchedule() {
     if (busy || loading) return;
-    const validation = confirmReady("schedule");
+    const validation = validateReady("schedule");
     if (validation) { setError(validation); return; }
     const scheduledAt = new Date(scheduleTime);
     if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
