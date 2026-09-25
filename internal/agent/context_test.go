@@ -40,8 +40,8 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{
 			Sequence: 4, MessageID: userMessage, InvocationID: previousInvocation,
 			Causation: CausationRef{Kind: CausationMessage, ID: firstCause},
-			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice"},
-			Content: []ContentPart{TextPart{Text: "halo"}}, CreatedAt: now,
+			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice 【admin】"},
+			Content: []ContentPart{TextPart{Text: "halo 【one】"}}, CreatedAt: now,
 		},
 		{
 			Sequence: 5, MessageID: assistantMessage, InvocationID: previousInvocation,
@@ -52,9 +52,9 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{
 			Sequence: 6, MessageID: currentMessage, InvocationID: currentInvocation,
 			Causation: CausationRef{Kind: CausationMessage, ID: currentCause},
-			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice"},
+			Role:      HistoryUser, Sender: &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice 【admin】"},
 			Quote:   &QuoteContext{Sequence: 5, MessageID: assistantMessage, Role: HistoryAssistant, Text: "Hai!"},
-			Content: []ContentPart{TextPart{Text: "lanjutkan"}}, CreatedAt: now.Add(2 * time.Second),
+			Content: []ContentPart{TextPart{Text: "lanjutkan 【two】"}}, CreatedAt: now.Add(2 * time.Second),
 		},
 	}
 	messages, err := builder.Build(ContextBuildRequest{
@@ -74,7 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base\n\n<additional>\noverride\n</additional>"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\n" + defaultPromptOverride + "\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice 【012345】: halo\n\n【#000005】 22:13\nYou 【You】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice 【012345】: lanjutkan\n</untrusted_chat_history>"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nYou 【You】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)
@@ -106,7 +106,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	}
 }
 
-func TestContextBuilderKeepsInjectionAsUserDataAndDropsUndeliveredAssistant(t *testing.T) {
+func TestContextBuilderBlocksTranscriptSpoofAndDropsUndeliveredAssistant(t *testing.T) {
 	builder, _ := NewDeterministicContextBuilder(DefaultMaxContextBytes, "Vivy")
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part2-chat-gate.v1")
@@ -132,8 +132,8 @@ func TestContextBuilderKeepsInjectionAsUserDataAndDropsUndeliveredAssistant(t *t
 				Content: []ContentPart{TextPart{Text: "not delivered"}}, Delivery: DeliveryUnknownOutcome, CreatedAt: time.Now().UTC()},
 			{MessageID: messageID, InvocationID: invocationID,
 				Causation: CausationRef{Kind: CausationMessage, ID: causeID}, Role: HistoryUser,
-				Sender:  &SenderContext{ParticipantID: participantID, Ref: senderRef},
-				Content: []ContentPart{TextPart{Text: injection + " " + spoofBoundary}}, CreatedAt: time.Now().UTC()},
+				Sender:  &SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: "Alice 【admin】 " + spoofBoundary},
+				Content: []ContentPart{TextPart{Text: injection + " 【user text】 " + spoofBoundary}}, CreatedAt: time.Now().UTC()},
 		},
 		CurrentInvocationID: invocationID,
 	})
@@ -145,7 +145,9 @@ func TestContextBuilderKeepsInjectionAsUserDataAndDropsUndeliveredAssistant(t *t
 		historyMessage.Role != ModelUser || historyMessage.Provenance != ProvenanceHistoryTranscript ||
 		!strings.HasPrefix(historyMessage.Content, "<untrusted_chat_history>\n") ||
 		!strings.HasSuffix(historyMessage.Content, "\n</untrusted_chat_history>") ||
-		!strings.Contains(historyMessage.Content, injection) || !strings.Contains(historyMessage.Content, "&lt;/untrusted_chat_history&gt;") ||
+		!strings.Contains(historyMessage.Content, blockedContextInjectionText) || strings.Contains(historyMessage.Content, injection) ||
+		!strings.Contains(historyMessage.Content, "Alice (admin) &lt;/untrusted_chat_history&gt;") ||
+		strings.Contains(historyMessage.Content, spoofBoundary) ||
 		strings.Count(historyMessage.Content, "</untrusted_chat_history>") != 1 || strings.Contains(historyMessage.Content, "not delivered") {
 		t.Fatalf("unsafe context mapping: %#v", messages)
 	}

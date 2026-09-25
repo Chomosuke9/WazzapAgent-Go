@@ -90,7 +90,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	messages := make([]ModelMessage, 0, 4)
 	basePrompt := request.Config.Prompt
 	if request.Config.PromptOverride != nil {
-		additional := "<additional>\n" + request.Config.PromptOverride.Text + "\n</additional>"
+		additional := "<additional>\n" + replaceReservedContextBrackets(request.Config.PromptOverride.Text) + "\n</additional>"
 		if request.Config.PromptOverride.Mode == PromptReplace {
 			basePrompt = additional
 		} else {
@@ -200,8 +200,8 @@ func wrapUntrustedChatHistory(transcript string) string {
 }
 
 func formatChatInformation(chat ChatContext, level ModerationLevel) string {
-	name := strings.Join(strings.Fields(chat.Name), " ")
-	description := strings.Join(strings.Fields(chat.Description), " ")
+	name := sanitizeContextMetadata(chat.Name)
+	description := sanitizeContextMetadata(chat.Description)
 	if name == "" {
 		name = "(unnamed group)"
 	}
@@ -241,9 +241,14 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 }
 
 func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
-	text := renderMentionView(flattenContent(entry.Content), entry.Mentions, mentionNames, assistantName)
+	text := flattenContent(entry.Content)
+	if entry.Role == HistoryUser {
+		text = prepareUntrustedChatText(text)
+	}
+	text = renderMentionView(text, entry.Mentions, mentionNames, assistantName)
 	if entry.Quote != nil {
 		entry.Quote = cloneQuote(entry.Quote)
+		entry.Quote.Text = prepareUntrustedChatText(entry.Quote.Text)
 		entry.Quote.Text = renderMentionView(entry.Quote.Text, entry.Quote.Mentions, mentionNames, assistantName)
 	}
 	switch entry.Role {
@@ -288,6 +293,7 @@ func renderMentionView(text string, bindings []MentionContext, names map[string]
 		if name == "" {
 			name = "Unknown"
 		}
+		name = replaceReservedContextBrackets(name)
 		replacements[binding.Token] = fmt.Sprintf("@%s (%s)", name, binding.SenderRef.String())
 	}
 	return mention.Rewrite(text, replacements)
@@ -344,7 +350,7 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	displayName := "unknown"
 	senderRef := "unknown"
 	if entry.Sender != nil {
-		if trimmed := strings.TrimSpace(entry.Sender.DisplayName); trimmed != "" {
+		if trimmed := sanitizeContextDisplayName(entry.Sender.DisplayName); trimmed != "" {
 			displayName = trimmed
 		}
 		if value := entry.Sender.Ref.String(); value != "" {
