@@ -24,6 +24,14 @@ wails3 task android:package           # arm64 release APK signed for local testi
 ```
 
 The output is in `build/android/app/build/outputs/apk/{debug,release}/`.
+Both build tasks call `android:overlay:generate` from `cmd/app`, so the generated
+`main_android.gen.go` registers the application's main function. Task's working
+directory belongs to the task itself; a `dir` field on an individual command is
+ignored. Generating the overlay from the repository root leaves the registration
+outside the compiled package, and the WebView cannot load its initial page.
+The application CI also checks that the generated file is selected by Go and
+that the compiled library contains the main package's initialization function.
+
 For an existing installation, use `adb install -r <apk>` and launch the app;
 do not uninstall it, because uninstalling removes the app's stored session.
 The release task uses Android's debug signing key unless a release keystore is

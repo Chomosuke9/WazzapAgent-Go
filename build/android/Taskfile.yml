@@ -7,6 +7,12 @@ vars:
   MIN_SDK: '21'
 
 tasks:
+  overlay:generate:
+    summary: Register the Android entrypoint in the cmd/app package
+    dir: '{{.ROOT_DIR}}/cmd/app'
+    cmds:
+      - wails3 android overlay:gen -out "{{.ROOT_DIR}}/build/android/overlay.json" -config "{{.ROOT_DIR}}/build/config.yml"
+
   toolchain:check:
     summary: Check the Android SDK, NDK, Java, and supported build host
     cmds:
@@ -57,8 +63,7 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - task: toolchain:check
-      - cmd: wails3 android overlay:gen -out "{{.ROOT_DIR}}/build/android/overlay.json" -config "{{.ROOT_DIR}}/build/config.yml"
-        dir: '{{.ROOT_DIR}}/cmd/app'
+      - task: overlay:generate
       - task: common:generate:bindings:android
       - task: common:build:frontend
       - task: compile:go
@@ -72,8 +77,7 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - task: toolchain:check
-      - cmd: wails3 android overlay:gen -out "{{.ROOT_DIR}}/build/android/overlay.json" -config "{{.ROOT_DIR}}/build/config.yml"
-        dir: '{{.ROOT_DIR}}/cmd/app'
+      - task: overlay:generate
       - task: common:generate:bindings:android
       - task: common:build:frontend
       - task: compile:go

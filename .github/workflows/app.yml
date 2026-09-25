@@ -18,6 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify embedded migration line endings
+        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
@@ -63,6 +65,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify embedded migration line endings
+        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
@@ -99,6 +103,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify embedded migration line endings
+        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
@@ -131,6 +137,14 @@ jobs:
           npm test -- --run
       - name: Build Android debug APK
         run: wails3 task android:build ARCH=arm64
+      - name: Verify Android startup registration
+        shell: bash
+        run: |
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 go list -e \
+            -overlay build/android/overlay.json -tags gui,android,debug \
+            -f '{{join .GoFiles "\n"}}' ./cmd/app | grep -Fx main_android.gen.go
+          go tool nm build/android/app/src/main/jniLibs/arm64-v8a/libwails.so \
+            | grep -E ' [Tt] main\.init(\.[0-9]+)?$'
       - uses: actions/upload-artifact@v4
         with:
           name: WazzapAgent-android-arm64-debug

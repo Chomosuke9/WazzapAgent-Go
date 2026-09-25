@@ -38,6 +38,13 @@ the three outputs as separate downloadable artifacts. It can also be started
 manually with **Run workflow**. The Android artifact is a debug-signed APK for
 testing, not a Play Store release.
 
+SQL migration files must use LF line endings, enforced by `.gitattributes`.
+Their embedded bytes determine the checksums stored in existing databases;
+CRLF conversion can make startup fail with `applied migration checksum mismatch`.
+Every application build job checks the embedded migrations before packaging.
+Rebuild from a checkout that honors these attributes; changing the database's
+migration ledger is not part of the build fix.
+
 Pushing a version tag beginning with `v` also creates a draft GitHub Release
 after all three application builds succeed. The draft contains a Windows
 executable, a Linux `.tar.gz`, the Android debug APK, and `SHA256SUMS`. The
