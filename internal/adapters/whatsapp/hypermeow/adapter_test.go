@@ -33,8 +33,7 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 	adapter, ownJID := normalizationAdapter(t)
 	chat := types.NewJID("15550000002", types.DefaultUserServer)
 	sender := types.NewADJID("15550000001", 0, 7)
-	adapter.owner = sender.ToNonAD().String()
-	adapter.allowlist[chat.String()] = struct{}{}
+	setInboundGate(t, adapter, sender.ToNonAD().String(), chat.String())
 	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000001", types.HiddenUserServer)},
@@ -44,7 +43,7 @@ func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok {
 		t.Fatal("text event was not normalized")
 	}
@@ -74,13 +73,13 @@ func TestNormalizeUsesEventPushNameBeforeContactPushName(t *testing.T) {
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
 
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || candidate.SenderName != "event push name" {
 		t.Fatalf("event push name was not preferred: %#v, ok=%v", candidate, ok)
 	}
 
 	event.Info.PushName = ""
-	candidate, ok = adapter.normalizeMessage(context.Background(), event)
+	candidate, ok = adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || candidate.SenderName != "cached push name" {
 		t.Fatalf("contact push name was not used as fallback: %#v, ok=%v", candidate, ok)
 	}
@@ -90,7 +89,7 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 	adapter, ownJID := normalizationAdapter(t)
 	chat := types.NewJID("120363000000000001", types.GroupServer)
 	sender := types.NewJID("15550000003", types.DefaultUserServer)
-	adapter.allowlist[chat.String()] = struct{}{}
+	setInboundGate(t, adapter, "", chat.String())
 	message := func(mentions []string) *events.Message {
 		return &events.Message{
 			Info: types.MessageInfo{
@@ -103,11 +102,11 @@ func TestGroupRequiresExplicitMentionOfCurrentAccount(t *testing.T) {
 			}},
 		}
 	}
-	withoutMention, ok := adapter.normalizeMessage(context.Background(), message([]string{"15550000999@s.whatsapp.net"}))
+	withoutMention, ok := adapter.normalizer.normalizeMessage(context.Background(), message([]string{"15550000999@s.whatsapp.net"}))
 	if !ok || withoutMention.MentionsBot {
 		t.Fatalf("non-mention candidate = %#v, ok=%v", withoutMention, ok)
 	}
-	withMention, ok := adapter.normalizeMessage(context.Background(), message([]string{ownJID.String()}))
+	withMention, ok := adapter.normalizer.normalizeMessage(context.Background(), message([]string{ownJID.String()}))
 	if !ok || !withMention.MentionsBot || withMention.ChatKind != conversation.ChatGroup {
 		t.Fatalf("mention candidate = %#v, ok=%v", withMention, ok)
 	}
@@ -132,7 +131,7 @@ func TestNormalizePreservesRawMentionTextAndExtractsTargets(t *testing.T) {
 		}},
 	}
 
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok {
 		t.Fatal("mention message was not normalized")
 	}
@@ -158,7 +157,7 @@ func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.
 	adapter, _ := normalizationAdapter(t)
 	chat := types.NewJID("120363000000000009", types.GroupServer)
 	sender := types.NewJID("15550000003", types.DefaultUserServer)
-	adapter.allowlist[chat.String()] = struct{}{}
+	setInboundGate(t, adapter, "", chat.String())
 	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
@@ -168,7 +167,7 @@ func TestNormalizeCarriesOnlyQuotedProviderIdentityToDurableBoundary(t *testing.
 			Text: proto.String("reply"), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("quoted-provider-id")},
 		}},
 	}
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || candidate.ProviderQuotedMessageID != "quoted-provider-id" {
 		t.Fatalf("quoted candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -178,7 +177,7 @@ func TestNormalizeStickerAsTranscriptPlaceholder(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	chat := types.NewJID("120363000000000010", types.GroupServer)
 	sender := types.NewJID("15550000003", types.DefaultUserServer)
-	adapter.allowlist[chat.String()] = struct{}{}
+	setInboundGate(t, adapter, "", chat.String())
 	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
@@ -186,7 +185,7 @@ func TestNormalizeStickerAsTranscriptPlaceholder(t *testing.T) {
 		},
 		Message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}},
 	}
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || candidate.Text != "【sticker】" || !candidate.Allowlisted || candidate.ChatKind != conversation.ChatGroup {
 		t.Fatalf("sticker candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -201,10 +200,10 @@ func TestNormalizeRejectsNonTextAndEdits(t *testing.T) {
 		},
 		ID: types.MessageID("id"), Timestamp: time.Now().UTC(),
 	}
-	if _, ok := adapter.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{}}); ok {
+	if _, ok := adapter.normalizer.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{}}); ok {
 		t.Fatal("accepted non-text message")
 	}
-	if _, ok := adapter.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("edit")}, IsEdit: true}); ok {
+	if _, ok := adapter.normalizer.normalizeMessage(context.Background(), &events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("edit")}, IsEdit: true}); ok {
 		t.Fatal("accepted edited message")
 	}
 }
@@ -217,7 +216,7 @@ func TestNormalizeFailsClosedWithoutSenderLID(t *testing.T) {
 		}, ID: "missing-lid", Timestamp: time.Now().UTC()},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	if _, ok := adapter.normalizeMessage(context.Background(), event); ok {
+	if _, ok := adapter.normalizer.normalizeMessage(context.Background(), event); ok {
 		t.Fatal("message without a trusted LID was accepted")
 	}
 }
@@ -259,8 +258,7 @@ func TestDirectMessageUsesLIDIdentityAndPhoneAliasForAllowlist(t *testing.T) {
 	adapter, _ := normalizationAdapter(t)
 	lid := types.NewJID("10000000001", types.HiddenUserServer)
 	phone := types.NewJID("15550000011", types.DefaultUserServer)
-	adapter.owner = phone.String()
-	adapter.allowlist[phone.String()] = struct{}{}
+	setInboundGate(t, adapter, phone.String(), phone.String())
 	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: lid, Sender: lid, SenderAlt: phone, AddressingMode: types.AddressingModeLID},
@@ -268,41 +266,12 @@ func TestDirectMessageUsesLIDIdentityAndPhoneAliasForAllowlist(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || !candidate.Owner || !candidate.Allowlisted {
 		t.Fatalf("alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
 	if candidate.ProviderChatAddress != phone.String() || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
 		t.Fatalf("did not preserve LID identity and phone alias: %#v", candidate)
-	}
-}
-
-func TestAllowlistWildcardsMatchExpectedChatKinds(t *testing.T) {
-	direct := types.NewJID("10000000001", types.HiddenUserServer)
-	group := types.NewJID("120363000000000001", types.GroupServer)
-	status := types.StatusBroadcastJID
-	tests := []struct {
-		name    string
-		pattern string
-		kind    conversation.ChatKind
-		address string
-		want    bool
-	}{
-		{name: "all direct", pattern: policy.ChatAllowlistAll, kind: conversation.ChatDirect, address: direct.String(), want: true},
-		{name: "all group", pattern: policy.ChatAllowlistAll, kind: conversation.ChatGroup, address: group.String(), want: true},
-		{name: "all excludes status", pattern: policy.ChatAllowlistAll, kind: conversation.ChatStatus, address: status.String(), want: false},
-		{name: "direct wildcard direct", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatDirect, address: direct.String(), want: true},
-		{name: "direct wildcard group", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatGroup, address: group.String(), want: false},
-		{name: "group wildcard group", pattern: policy.ChatAllowlistGroup, kind: conversation.ChatGroup, address: group.String(), want: true},
-		{name: "group wildcard direct", pattern: policy.ChatAllowlistGroup, kind: conversation.ChatDirect, address: direct.String(), want: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			adapter := &Adapter{allowlist: map[string]struct{}{test.pattern: {}}}
-			if got := adapter.chatAllowlisted(test.kind, test.address); got != test.want {
-				t.Fatalf("chatAllowlisted(%q, %v) = %v, want %v", test.pattern, test.kind, got, test.want)
-			}
-		})
 	}
 }
 
@@ -320,8 +289,7 @@ func TestGroupSenderUsesLIDIdentityAndPhoneAliasForOwner(t *testing.T) {
 	chat := types.NewJID("120363000000000002", types.GroupServer)
 	lid := types.NewJID("10000000002", types.HiddenUserServer)
 	phone := types.NewJID("15550000012", types.DefaultUserServer)
-	adapter.owner = phone.String()
-	adapter.allowlist[chat.String()] = struct{}{}
+	setInboundGate(t, adapter, phone.String(), chat.String())
 	event := &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: lid, SenderAlt: phone, IsGroup: true, AddressingMode: types.AddressingModeLID},
@@ -329,7 +297,7 @@ func TestGroupSenderUsesLIDIdentityAndPhoneAliasForOwner(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello group")},
 	}
-	candidate, ok := adapter.normalizeMessage(context.Background(), event)
+	candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), event)
 	if !ok || !candidate.Owner || candidate.SenderLID.String() != lid.String() || candidate.ProviderSenderPhone != phone.String() {
 		t.Fatalf("group alternate identity candidate = %#v, ok=%v", candidate, ok)
 	}
@@ -695,14 +663,26 @@ func normalizationAdapter(t *testing.T) (*Adapter, types.JID) {
 	accountID, _ := identity.NewAccountID()
 	ownJID := types.NewJID("15550000099", types.DefaultUserServer)
 	device := &store.Device{ID: &ownJID}
-	return &Adapter{
+	adapter := &Adapter{
 		tenantID:      tenantID,
 		accountID:     accountID,
-		allowlist:     make(map[string]struct{}),
 		client:        whatsmeow.NewClient(device, waLog.Noop),
 		groupMetadata: appStore.Inbound(),
 		rootCtx:       context.Background(),
-	}, ownJID
+	}
+	adapter.normalizer = messageNormalizer{
+		tenantID: tenantID, accountID: accountID, client: adapter.client, groupRoles: adapter.groupRoleFlags,
+	}
+	return adapter, ownJID
+}
+
+func setInboundGate(t *testing.T, adapter *Adapter, owner string, allowlist ...string) {
+	t.Helper()
+	gate, err := policy.NewInboundGate(owner, allowlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.normalizer.gate = gate
 }
 
 type testContactStore struct {
