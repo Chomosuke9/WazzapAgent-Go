@@ -619,7 +619,8 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	if !request.Capabilities.Has("command.execute") || len(request.Commands) != 2 || request.Commands[0] != "help" || request.Commands[1] != "info" {
+	if !request.Capabilities.Has("command.execute") || len(request.Commands) != 3 ||
+		request.Commands[0] != "catch" || request.Commands[1] != "help" || request.Commands[2] != "info" {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 
