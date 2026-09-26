@@ -3,14 +3,13 @@
 package wails
 
 import (
-	"fmt"
-
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-const WhatsAppSessionEventName = "whatsapp:session"
+const WhatsAppSessionEventName = ui.WhatsAppSessionEventName
 
 type SessionEventSink struct {
 	app    *application.App
@@ -52,19 +51,8 @@ func (sink *SessionEventSink) TryPublish(event control.SessionEvent) bool {
 
 func (sink *SessionEventSink) dispatch() {
 	for event := range sink.events {
-		if sink.logs != nil {
-			details := fmt.Sprintf("state=%s · binding_state=%s", event.Status.RuntimeState, event.Status.BindingState)
-			if event.Status.ErrorCode != "" {
-				details += " · code=" + string(event.Status.ErrorCode)
-				sink.logs.Record("ERROR", "WhatsApp session status reported a failure", details)
-			} else {
-				sink.logs.Record("INFO", "WhatsApp session status changed", details)
-			}
-		}
-		sink.app.Event.Emit(WhatsAppSessionEventName, WhatsAppSessionEventDTO{
-			OperationID: event.OperationID,
-			Status:      whatsappSessionStatusDTO(event.Status),
-		})
+		ui.RecordSessionEvent(sink.logs, event)
+		sink.app.Event.Emit(WhatsAppSessionEventName, ui.NewWhatsAppSessionEventDTO(event))
 	}
 }
 

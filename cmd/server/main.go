@@ -26,6 +26,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
 var version = "dev"
@@ -124,7 +125,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	service := web.NewAppService(version, settings, sessions, agents, conversations, lease.Root(), logs)
+	service := ui.NewAppService(ui.Options{
+		Version:       version,
+		Settings:      settings,
+		Sessions:      sessions,
+		Agent:         agents,
+		Conversations: conversations,
+		DataRoot:      lease.Root(),
+		Logs:          logs,
+	})
 	assets, err := fs.Sub(frontend.WebAssets, "web-dist")
 	if err != nil {
 		return err

@@ -13,13 +13,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as $models from "./models.js";
+import * as ui$0 from "../../ui/models.js";
 
-export function ApplyAgentSettings(request: $models.ApplyAgentSettingsRequestDTO): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
+export function ApplyAgentSettings(request: ui$0.ApplyAgentSettingsRequestDTO): $CancellablePromise<ui$0.AgentRuntimeStatusDTO> {
     return $Call.ByID(1025413539, request);
 }
 
-export function BeginWhatsAppPairing(request: $models.BeginWhatsAppPairingRequestDTO): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
+export function BeginWhatsAppPairing(request: ui$0.BeginWhatsAppPairingRequestDTO): $CancellablePromise<ui$0.WhatsAppSessionOperationDTO> {
     return $Call.ByID(2833984550, request);
 }
 
@@ -27,7 +27,7 @@ export function CancelWhatsAppBroadcastSchedule(id: string): $CancellablePromise
     return $Call.ByID(1497871571, id);
 }
 
-export function CancelWhatsAppPairing(operationID: string): $CancellablePromise<$models.WhatsAppSessionStatusDTO> {
+export function CancelWhatsAppPairing(operationID: string): $CancellablePromise<ui$0.WhatsAppSessionStatusDTO> {
     return $Call.ByID(3187940753, operationID);
 }
 
@@ -35,18 +35,18 @@ export function DeleteWhatsAppMessage(chatID: string, messageID: string): $Cance
     return $Call.ByID(4126946629, chatID, messageID);
 }
 
-export function GetAgentRuntimeStatus(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
+export function GetAgentRuntimeStatus(): $CancellablePromise<ui$0.AgentRuntimeStatusDTO> {
     return $Call.ByID(1640000984);
 }
 
-export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
+export function GetAppInfo(): $CancellablePromise<ui$0.AppInfo> {
     return $Call.ByID(1606186488);
 }
 
 /**
  * GetLogs returns the newest safe application events captured in this run.
  */
-export function GetLogs(): $CancellablePromise<$models.LogEntryDTO[] | null> {
+export function GetLogs(): $CancellablePromise<ui$0.LogEntryDTO[] | null> {
     return $Call.ByID(1753640526);
 }
 
@@ -54,46 +54,46 @@ export function GetLogs(): $CancellablePromise<$models.LogEntryDTO[] | null> {
  * GetSettings returns the current public settings snapshot. Secret values are
  * replaced by configured flags inside the DTO conversion.
  */
-export function GetSettings(): $CancellablePromise<$models.SettingsViewDTO> {
+export function GetSettings(): $CancellablePromise<ui$0.SettingsViewDTO> {
     return $Call.ByID(219153200);
 }
 
 /**
  * GetSettingsSchema returns the typed field catalog used by the form.
  */
-export function GetSettingsSchema(): $CancellablePromise<$models.FieldDescriptorDTO[] | null> {
+export function GetSettingsSchema(): $CancellablePromise<ui$0.FieldDescriptorDTO[] | null> {
     return $Call.ByID(1479220523);
 }
 
-export function GetWhatsAppBroadcastGroups(): $CancellablePromise<$models.WhatsAppBroadcastGroupDTO[] | null> {
+export function GetWhatsAppBroadcastGroups(): $CancellablePromise<ui$0.WhatsAppBroadcastGroupDTO[] | null> {
     return $Call.ByID(3275715686);
 }
 
-export function GetWhatsAppBroadcastSchedules(): $CancellablePromise<$models.WhatsAppBroadcastScheduleDTO[] | null> {
+export function GetWhatsAppBroadcastSchedules(): $CancellablePromise<ui$0.WhatsAppBroadcastScheduleDTO[] | null> {
     return $Call.ByID(4015715464);
 }
 
-export function GetWhatsAppChatSettings(chatID: string): $CancellablePromise<$models.WhatsAppChatSettingsDTO> {
+export function GetWhatsAppChatSettings(chatID: string): $CancellablePromise<ui$0.WhatsAppChatSettingsDTO> {
     return $Call.ByID(3685747852, chatID);
 }
 
-export function GetWhatsAppConversations(): $CancellablePromise<$models.WhatsAppConversationDTO[] | null> {
+export function GetWhatsAppConversations(): $CancellablePromise<ui$0.WhatsAppConversationDTO[] | null> {
     return $Call.ByID(568159641);
 }
 
-export function GetWhatsAppGroupMembers(chatID: string): $CancellablePromise<$models.WhatsAppGroupMembersDTO> {
+export function GetWhatsAppGroupMembers(chatID: string): $CancellablePromise<ui$0.WhatsAppGroupMembersDTO> {
     return $Call.ByID(1637618105, chatID);
 }
 
-export function GetWhatsAppMessages(chatID: string): $CancellablePromise<$models.WhatsAppMessageDTO[] | null> {
+export function GetWhatsAppMessages(chatID: string): $CancellablePromise<ui$0.WhatsAppMessageDTO[] | null> {
     return $Call.ByID(2315394807, chatID);
 }
 
-export function GetWhatsAppSessionStatus(): $CancellablePromise<$models.WhatsAppSessionStatusDTO> {
+export function GetWhatsAppSessionStatus(): $CancellablePromise<ui$0.WhatsAppSessionStatusDTO> {
     return $Call.ByID(1227179819);
 }
 
-export function GetWhatsAppUsage(periodDays: number): $CancellablePromise<$models.WhatsAppUsageDTO> {
+export function GetWhatsAppUsage(periodDays: number): $CancellablePromise<ui$0.WhatsAppUsageDTO> {
     return $Call.ByID(2810214222, periodDays);
 }
 
@@ -101,7 +101,7 @@ export function KickWhatsAppGroupMember(chatID: string, memberID: string): $Canc
     return $Call.ByID(2898311284, chatID, memberID);
 }
 
-export function LogoutWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
+export function LogoutWhatsAppSession(): $CancellablePromise<ui$0.WhatsAppSessionOperationDTO> {
     return $Call.ByID(4192932161);
 }
 
@@ -116,15 +116,15 @@ export function Ping(): $CancellablePromise<void> {
     return $Call.ByID(752415863);
 }
 
-export function ReconnectWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
+export function ReconnectWhatsAppSession(): $CancellablePromise<ui$0.WhatsAppSessionOperationDTO> {
     return $Call.ByID(3156183818);
 }
 
-export function ResetWhatsAppChatSettings(request: $models.ResetWhatsAppChatSettingsRequestDTO): $CancellablePromise<$models.ResetWhatsAppChatSettingsResultDTO> {
+export function ResetWhatsAppChatSettings(request: ui$0.ResetWhatsAppChatSettingsRequestDTO): $CancellablePromise<ui$0.ResetWhatsAppChatSettingsResultDTO> {
     return $Call.ByID(2399289539, request);
 }
 
-export function ResumeWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionOperationDTO> {
+export function ResumeWhatsAppSession(): $CancellablePromise<ui$0.WhatsAppSessionOperationDTO> {
     return $Call.ByID(198429154);
 }
 
@@ -132,41 +132,41 @@ export function ResumeWhatsAppSession(): $CancellablePromise<$models.WhatsAppSes
  * SaveSettings persists a validated draft with compare-and-swap revision
  * semantics. The response contains the new public revision and readiness.
  */
-export function SaveSettings(request: $models.SaveSettingsRequestDTO): $CancellablePromise<$models.SaveSettingsResultDTO> {
+export function SaveSettings(request: ui$0.SaveSettingsRequestDTO): $CancellablePromise<ui$0.SaveSettingsResultDTO> {
     return $Call.ByID(527042219, request);
 }
 
-export function SaveWhatsAppChatSettings(request: $models.SaveWhatsAppChatSettingsRequestDTO): $CancellablePromise<$models.WhatsAppChatSettingsDTO> {
+export function SaveWhatsAppChatSettings(request: ui$0.SaveWhatsAppChatSettingsRequestDTO): $CancellablePromise<ui$0.WhatsAppChatSettingsDTO> {
     return $Call.ByID(3459881951, request);
 }
 
-export function ScheduleWhatsAppBroadcast(request: $models.ScheduleWhatsAppBroadcastRequestDTO): $CancellablePromise<$models.WhatsAppBroadcastScheduleDTO> {
+export function ScheduleWhatsAppBroadcast(request: ui$0.ScheduleWhatsAppBroadcastRequestDTO): $CancellablePromise<ui$0.WhatsAppBroadcastScheduleDTO> {
     return $Call.ByID(1979498787, request);
 }
 
-export function SendWhatsAppBroadcast(request: $models.SendWhatsAppBroadcastRequestDTO): $CancellablePromise<$models.WhatsAppBroadcastGroupResultDTO[] | null> {
+export function SendWhatsAppBroadcast(request: ui$0.SendWhatsAppBroadcastRequestDTO): $CancellablePromise<ui$0.WhatsAppBroadcastGroupResultDTO[] | null> {
     return $Call.ByID(2587196246, request);
 }
 
-export function SendWhatsAppMessage(chatID: string, text: string, replyToMessageID: string): $CancellablePromise<$models.WhatsAppMessageDTO> {
+export function SendWhatsAppMessage(chatID: string, text: string, replyToMessageID: string): $CancellablePromise<ui$0.WhatsAppMessageDTO> {
     return $Call.ByID(1692344886, chatID, text, replyToMessageID);
 }
 
-export function StartAgent(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
+export function StartAgent(): $CancellablePromise<ui$0.AgentRuntimeStatusDTO> {
     return $Call.ByID(508860618);
 }
 
-export function StopAgent(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
+export function StopAgent(): $CancellablePromise<ui$0.AgentRuntimeStatusDTO> {
     return $Call.ByID(4252616312);
 }
 
-export function StopWhatsAppSession(): $CancellablePromise<$models.WhatsAppSessionStatusDTO> {
+export function StopWhatsAppSession(): $CancellablePromise<ui$0.WhatsAppSessionStatusDTO> {
     return $Call.ByID(2473183791);
 }
 
 /**
  * ValidateSettings validates a complete public draft without persisting it.
  */
-export function ValidateSettings(request: $models.SettingsPatchDTO): $CancellablePromise<$models.ValidationResultDTO> {
+export function ValidateSettings(request: ui$0.SettingsPatchDTO): $CancellablePromise<ui$0.ValidationResultDTO> {
     return $Call.ByID(3868475520, request);
 }

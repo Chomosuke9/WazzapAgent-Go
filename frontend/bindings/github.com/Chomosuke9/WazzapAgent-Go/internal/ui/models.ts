@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as config$0 from "../../config/models.js";
+import * as config$0 from "../config/models.js";
 
 export interface AgentRuntimeStatusDTO {
     "state": string;
