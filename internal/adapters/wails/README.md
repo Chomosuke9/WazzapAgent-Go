@@ -14,7 +14,8 @@ Desktop/mobile memakai komunikasi Wails dalam proses, bukan HTTP localhost.
 `AppService` menyediakan `GetAppInfo`, `Ping`, settings, dan API pengelolaan sesi
 WhatsApp: status, pairing QR/kode telepon, resume, stop, reconnect, cancel, dan
 logout. Status berjalan lewat event `whatsapp:session`; `Ping` tetap memakai
-`app:ping`. `service.go` memakai build tag `gui`. Binding TypeScript dihasilkan
+`app:ping`. Implementasi operasi dan DTO berada di `internal/ui` dan dipakai
+bersama adapter web; `service.go` (build tag `gui`) hanya membungkusnya. Binding TypeScript dihasilkan
 oleh Wails; jangan menulis ulang kontraknya secara manual di frontend.
 
 Halaman Log membaca buffer terbaru melalui `GetLogs` dan menerima catatan

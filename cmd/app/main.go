@@ -20,6 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -66,8 +67,8 @@ func main() {
 		_ = lease.Close()
 		log.Fatal(err)
 	}
-	application.RegisterEvent[wails.PingEvent]("app:ping")
-	application.RegisterEvent[wails.WhatsAppSessionEventDTO](wails.WhatsAppSessionEventName)
+	application.RegisterEvent[ui.PingEvent]("app:ping")
+	application.RegisterEvent[ui.WhatsAppSessionEventDTO](ui.WhatsAppSessionEventName)
 
 	app := application.New(application.Options{
 		Name:        wails.AppName,
@@ -151,7 +152,15 @@ func main() {
 	}
 	defer cleanup()
 
-	appService := wails.NewAppServiceWithConversations(app, version, controller, sessionController, lease.Root(), agentController, conversationController, logBuffer)
+	appService := wails.NewAppService(app, ui.NewAppService(ui.Options{
+		Version:       version,
+		Settings:      controller,
+		Sessions:      sessionController,
+		Agent:         agentController,
+		Conversations: conversationController,
+		DataRoot:      lease.Root(),
+		Logs:          logBuffer,
+	}))
 	app.RegisterService(application.NewService(appService))
 	logger.Info("desktop application started", "platform", runtime.GOOS)
 	app.OnShutdown(cleanup)

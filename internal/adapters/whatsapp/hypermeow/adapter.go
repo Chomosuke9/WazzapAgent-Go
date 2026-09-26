@@ -25,7 +25,6 @@ import (
 	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	inboundcommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
@@ -386,10 +385,6 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 	}
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
 }
-
-func (adapter *Adapter) CommandClient() inboundcommands.WhatsAppCommandClient { return adapter.client }
-
-func (adapter *Adapter) CommandTargets() inboundcommands.GroupTargetStore { return adapter.targets }
 
 func (adapter *Adapter) handleEvent(event any) {
 	switch typed := event.(type) {
