@@ -5,13 +5,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
 func TestBrowserHandlerServesUIAndTypedCalls(t *testing.T) {
-	handler, err := NewHandler(NewAppService("test", nil, nil, nil, nil, "", nil), fstest.MapFS{
+	handler, err := NewHandler(ui.NewAppService(ui.Options{Version: "test"}), fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<h1>WazzapAgent</h1>")},
 	})
 	if err != nil {
@@ -35,7 +38,7 @@ func TestBrowserHandlerServesUIAndTypedCalls(t *testing.T) {
 }
 
 func TestBrowserHandlerRejectsCrossSiteAndUnknownOperations(t *testing.T) {
-	handler, err := NewHandler(NewAppService("test", nil, nil, nil, nil, "", nil), fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}})
+	handler, err := NewHandler(ui.NewAppService(ui.Options{Version: "test"}), fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +54,7 @@ func TestBrowserHandlerRejectsCrossSiteAndUnknownOperations(t *testing.T) {
 }
 
 func TestBrowserHandlerAllowsConfiguredHTTPSProxyOrigin(t *testing.T) {
-	handler, err := NewHandler(NewAppService("test", nil, nil, nil, nil, "", nil), fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, "https://panel.example")
+	handler, err := NewHandler(ui.NewAppService(ui.Options{Version: "test"}), fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, "https://panel.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,4 +74,13 @@ func callForTest(handler http.Handler, method, origin, host string) *httptest.Re
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestAllowedMethodsExistOnSharedService(t *testing.T) {
+	service := reflect.ValueOf(ui.NewAppService(ui.Options{Version: "test"}))
+	for method := range allowedMethods {
+		if !service.MethodByName(method).IsValid() {
+			t.Errorf("allowed method %s is missing from ui.AppService", method)
+		}
+	}
 }

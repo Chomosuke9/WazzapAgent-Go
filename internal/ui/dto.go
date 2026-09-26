@@ -1,6 +1,4 @@
-//go:build gui
-
-package wails
+package ui
 
 import (
 	"errors"

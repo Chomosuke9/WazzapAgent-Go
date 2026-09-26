@@ -7,13 +7,13 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as wails$0 from "../../../../Chomosuke9/WazzapAgent-Go/internal/adapters/wails/models.js";
+import type * as ui$0 from "../../../../Chomosuke9/WazzapAgent-Go/internal/ui/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "app:ping": wails$0.PingEvent;
-            "whatsapp:session": wails$0.WhatsAppSessionEventDTO;
+            "app:ping": ui$0.PingEvent;
+            "whatsapp:session": ui$0.WhatsAppSessionEventDTO;
         }
     }
 }

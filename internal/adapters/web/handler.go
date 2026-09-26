@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
 // The browser bridge exposes exactly the operations used by the shared UI.
@@ -40,7 +41,7 @@ type response struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func NewHandler(service *AppService, assets fs.FS, publicOrigin ...string) (http.Handler, error) {
+func NewHandler(service *ui.AppService, assets fs.FS, publicOrigin ...string) (http.Handler, error) {
 	if service == nil || assets == nil {
 		return nil, errors.New("web service and assets are required")
 	}
@@ -135,7 +136,7 @@ func allowedBrowserRequest(r *http.Request, trustedHost string) bool {
 	return true
 }
 
-func invoke(service *AppService, input request) (any, error) {
+func invoke(service *ui.AppService, input request) (any, error) {
 	if !allowedMethods[input.Method] {
 		return nil, errors.New("unknown operation")
 	}

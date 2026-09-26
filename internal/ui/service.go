@@ -1,4 +1,4 @@
-package web
+package ui
 
 import (
 	"context"
@@ -220,11 +220,29 @@ type AppService struct {
 	sequence      atomic.Uint64
 }
 
-func NewAppService(version string, settings *control.Controller, sessions *control.SessionController, agentController *control.AgentController, conversations *control.ConversationController, dataRoot string, logs *observability.LogBuffer) *AppService {
+// Options wires the controllers a transport exposes. Nil controllers are
+// allowed; the matching operations then report that they are not ready.
+type Options struct {
+	Version       string
+	Settings      *control.Controller
+	Sessions      *control.SessionController
+	Agent         *control.AgentController
+	Conversations *control.ConversationController
+	// DataRoot is the effective leased root shown in the public settings view.
+	// Changing the root is a separate data operation and is intentionally not
+	// exposed through SaveSettings.
+	DataRoot string
+	Logs     *observability.LogBuffer
+}
+
+// NewAppService builds the transport-neutral UI service shared by the Wails
+// bindings and the browser HTTP bridge.
+func NewAppService(opts Options) *AppService {
+	version := opts.Version
 	if version == "" {
 		version = "dev"
 	}
-	return &AppService{version: version, control: settings, sessions: sessions, agent: agentController, conversations: conversations, dataRoot: dataRoot, logs: logs}
+	return &AppService{version: version, control: opts.Settings, sessions: opts.Sessions, agent: opts.Agent, conversations: opts.Conversations, dataRoot: opts.DataRoot, logs: opts.Logs}
 }
 
 func (s *AppService) GetAppInfo() AppInfo {
@@ -820,7 +838,8 @@ func (s *AppService) recordLog(level, message string, err error) {
 	s.logs.Record(level, message, details)
 }
 
-// Ping returns the event payload so the browser transport can dispatch it locally.
+// Ping returns the next app:ping payload. Each transport decides how to deliver
+// it: the browser bridge returns it to the caller, Wails emits it as an event.
 func (s *AppService) Ping() (PingEvent, error) {
 	return PingEvent{
 		Message:  "pong",
