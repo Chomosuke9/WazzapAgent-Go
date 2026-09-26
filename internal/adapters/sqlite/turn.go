@@ -310,6 +310,7 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, storageError("insert action receipt", err)
 	}
 	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
+	var quotedSenderIsAdmin, quotedSenderIsSuperAdmin int
 	if historyEntry.Quote != nil {
 		quotedMessageID = historyEntry.Quote.MessageID.String()
 		if historyEntry.Quote.Sequence > 0 {
@@ -320,16 +321,24 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		if !historyEntry.Quote.SenderRef.IsZero() {
 			quotedSenderRef = historyEntry.Quote.SenderRef.String()
 		}
+		if historyEntry.Quote.SenderIsAdmin {
+			quotedSenderIsAdmin = 1
+		}
+		if historyEntry.Quote.SenderIsSuperAdmin {
+			quotedSenderIsSuperAdmin = 1
+		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO history_entries(
 	        tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
 	        causation_id, role, sender_name, quoted_message_id, quoted_sequence,
-	        quoted_role, quoted_sender_ref, quoted_text, content_text, content_digest,
+	        quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin,
+	        content_text, content_digest,
 	        delivery_status, created_at_ms, updated_at_ms
-	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
 		responseID.String(), request.InvocationID.String(), uint8(row.causationKind), row.causationID,
 		uint8(agent.HistoryAssistant), quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText,
+		quotedSenderIsAdmin, quotedSenderIsSuperAdmin,
 		request.ResponseText, historyDigest[:], uint8(agent.DeliveryPending),
 		createdAt.UnixMilli(), nowMS,
 	)

@@ -387,6 +387,8 @@ func (agent *Agent) ensureInvocationHistory(
 					return NewError(ErrorIntegrityFailure, "restore invocation history", fmt.Errorf("reply target sender is missing"))
 				}
 				quote.SenderRef = entry.Sender.Ref
+				quote.SenderIsAdmin = entry.Sender.IsAdmin
+				quote.SenderIsSuperAdmin = entry.Sender.IsSuperAdmin
 				quote.Mentions = cloneMentions(entry.Mentions)
 			}
 			break

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -144,7 +145,10 @@ func (store *HistoryStore) list(
 			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", digestErr)
 		}
 		if !equalRawDigest(loaded[index].digest, wantedDigest[:]) {
-			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("content digest mismatch"))
+			entry := loaded[index].entry
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry",
+				fmt.Errorf("content digest mismatch (sequence=%d, message_id=%s, role=%d)",
+					loaded[index].sequence, entry.MessageID, entry.Role))
 		}
 	}
 	if err := tx.Commit(); err != nil {
