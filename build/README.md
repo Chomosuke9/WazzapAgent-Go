@@ -1,63 +1,39 @@
-# Build P0
+# Build and release
 
-The task files target the official Wails `v3.0.0-beta.23` source pinned by the
-application module. Bootstrap the matching CLI with
-`go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23`
-and put the Go binary directory on PATH. After that,
-`wails3 task common:wails:install` can reinstall the pinned CLI.
-The Go entrypoint is `./cmd/app`, the product name is
-`WazzapAgent`, and the application identifier is
-`io.github.chomosuke9.wazzapagent`.
-
-`wails3 task build`, `wails3 task package`, `wails3 task run`, and
-`wails3 task dev` select the current
-desktop host. The desktop tasks generate bindings, build `frontend/dist`, and
-compile the GUI with the project `gui` tag. Windows is configured for a
-no-cgo executable; Linux and macOS require their native Wails WebView toolchain
-on the host that runs the task.
-
-For P0, `package` produces a production executable only: it does not yet create
-an installer, macOS `.app` bundle, signed package, or auto-update distribution.
-Linux and macOS tasks are scaffolding and have not been run on those hosts.
-
-The Android native Gradle project is generated from beta.23 and the app's
-private-storage path is wired in. `wails3 task android:build` produces a debug
-APK on a Linux or macOS host with Android SDK/NDK and JDK installed;
-`android:package` produces a release APK for local testing. These tasks do not
-install or uninstall the app. See [Android build](android/README.md) for
-prerequisites and remaining device-validation work.
-
-The common tasks keep binding generation separate from the frontend build:
-`common:generate:bindings` or `common:generate:bindings:android` is followed
-by `common:build:frontend`. `NPM` can override the npm command, for example
-`wails3 task NPM=path/to/npm build`; no machine-specific path is committed.
-
-GitHub Actions builds the Windows amd64 executable, Linux amd64 executable,
-and Android arm64 debug APK on every push and pull request. Each run uploads
-the three outputs as separate downloadable artifacts. It can also be started
-manually with **Run workflow**. The Android artifact is a debug-signed APK for
-testing, not a Play Store release.
-
-SQL migration files must use LF line endings, enforced by `.gitattributes`.
-Their embedded bytes determine the checksums stored in existing databases;
-CRLF conversion can make startup fail with `applied migration checksum mismatch`.
-Every application build job checks the embedded migrations before packaging.
-Rebuild from a checkout that honors these attributes; changing the database's
-migration ledger is not part of the build fix.
-
-Pushing a version tag beginning with `v` also creates a draft GitHub Release
-after all three application builds succeed. The draft contains a Windows
-executable, a Linux `.tar.gz`, the Android debug APK, and `SHA256SUMS`. The
-separate `ci` workflow still needs to be checked before publishing. Review the
-draft under **Releases**, then click **Publish release** when it is ready.
-
-Create and push a tag from the commit to release:
+The application uses the Wails v3 CLI pinned by the Go module:
 
 ```sh
-git tag -a v0.1.0 -m "WazzapAgent v0.1.0"
-git push origin v0.1.0
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
 ```
 
-The Linux build is a raw executable and still needs the host's GTK4/WebKitGTK
-runtime. The Android APK is debug-signed for testing; the release workflow does
-not produce a Play Store package or claim stable-release readiness.
+From the repository root, use `wails3 task build`, `wails3 task package`, `wails3 task run`, or `wails3 task dev` for the current desktop host. These tasks generate bindings, build the frontend, and compile the desktop application.
+
+Linux builds require the native GTK4 and WebKitGTK development packages. The packaged Linux executable also uses the host's GTK4/WebKitGTK runtime.
+
+## Android
+
+Android builds require Linux or macOS, Android SDK API 35, build-tools, NDK `26.3.11579264`, JDK 17 or newer, npm, and Go 1.26.5 or newer. Set `ANDROID_HOME` and optionally `ANDROID_NDK_HOME`.
+
+```sh
+wails3 task android:toolchain:check
+wails3 task android:build             # arm64 debug APK
+wails3 task android:build ARCH=amd64  # x86_64 emulator APK
+wails3 task android:package           # arm64 APK
+```
+
+The output is in `build/android/app/build/outputs/apk/{debug,release}/`. See the [Android build guide](android/README.md) for installation and storage details. Debug-signed APKs are not suitable for Google Play distribution.
+
+## Release assets
+
+Pushing a version tag beginning with `v` runs the application builds and prepares a draft GitHub Release containing:
+
+- `WazzapAgent-windows-amd64.exe`
+- `WazzapAgent-linux-amd64.tar.gz`
+- `WazzapAgent-android-arm64-debug.apk`
+- `SHA256SUMS`
+
+The Android release artifact is debug-signed. Linux releases contain the application executable and require GTK4 and WebKitGTK on the target system.
+
+## SQLite migrations
+
+Migration files must use LF line endings. Their embedded bytes determine the checksums stored in existing databases; converting them to CRLF can cause an `applied migration checksum mismatch` at startup. `.gitattributes` enforces LF, and the application build workflow checks migration line endings.

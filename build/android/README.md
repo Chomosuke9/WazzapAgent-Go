@@ -38,4 +38,3 @@ The release task uses Android's debug signing key unless a release keystore is
 provided with the `ANDROID_KEYSTORE_*` variables. The arm64 debug APK build
 completed on a Debian x86_64 host with the isolated SDK/NDK toolchain. The APK
 contains `libwails.so`, the expected package ID, and a valid debug signature.
-A device smoke test and a sustained background run have not been completed yet.
