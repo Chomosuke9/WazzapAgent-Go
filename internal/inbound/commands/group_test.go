@@ -2,12 +2,9 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
-
-	whatsmeow "github.com/polymorfa/hypermeow"
-	"github.com/polymorfa/hypermeow/proto/waE2E"
-	"github.com/polymorfa/hypermeow/types"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -16,16 +13,54 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-type recordingCommandAdapter struct {
-	client  *recordingCommandClient
-	targets *recordingGroupTargets
-	sent    []action.SendTextRequest
+// fakeGroupModerator records every port call so tests can assert dispatch
+// without any provider types.
+type fakeGroupModerator struct {
+	operation   string
+	key         agent.Key
+	announce    bool
+	description string
+	target      identity.MessageID
+	ref         identity.SenderRef
+	minutes     uint32
+	now         time.Time
+	err         error
+	sent        []action.SendTextRequest
 }
 
-func (adapter *recordingCommandAdapter) CommandClient() WhatsAppCommandClient { return adapter.client }
-func (adapter *recordingCommandAdapter) CommandTargets() GroupTargetStore     { return adapter.targets }
-func (adapter *recordingCommandAdapter) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
-	adapter.sent = append(adapter.sent, request)
+func (fake *fakeGroupModerator) record(operation string, key agent.Key) error {
+	fake.operation, fake.key = operation, key
+	return fake.err
+}
+func (fake *fakeGroupModerator) SetGroupAnnounce(_ context.Context, key agent.Key, announce bool) error {
+	fake.announce = announce
+	return fake.record("announce", key)
+}
+func (fake *fakeGroupModerator) SetGroupDescription(_ context.Context, key agent.Key, description string) error {
+	fake.description = description
+	return fake.record("description", key)
+}
+func (fake *fakeGroupModerator) RevokeGroupMessage(_ context.Context, key agent.Key, target identity.MessageID) error {
+	fake.target = target
+	return fake.record("delete", key)
+}
+func (fake *fakeGroupModerator) RemoveGroupMember(_ context.Context, key agent.Key, ref identity.SenderRef) error {
+	fake.ref = ref
+	return fake.record("kick", key)
+}
+func (fake *fakeGroupModerator) MuteGroupMember(_ context.Context, key agent.Key, ref identity.SenderRef, minutes uint32, now time.Time) error {
+	fake.ref, fake.minutes, fake.now = ref, minutes, now
+	return fake.record("mute", key)
+}
+func (fake *fakeGroupModerator) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	fake.sent = append(fake.sent, request)
+	return action.SendTextResult{}, nil
+}
+
+// textOnlyAdapter satisfies command.Adapter but not GroupModerator.
+type textOnlyAdapter struct{}
+
+func (textOnlyAdapter) SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error) {
 	return action.SendTextResult{}, nil
 }
 
@@ -54,53 +89,6 @@ func (*recordingCommandStore) MarkTriggerMutationApplied(context.Context, conver
 	return nil
 }
 
-type recordingCommandClient struct {
-	operation   string
-	closed      bool
-	description string
-}
-
-func (client *recordingCommandClient) SetGroupAnnounce(_ context.Context, _ types.JID, closed bool) error {
-	client.operation, client.closed = "announce", closed
-	return nil
-}
-func (client *recordingCommandClient) SetGroupDescription(_ context.Context, _ types.JID, value string) error {
-	client.operation, client.description = "description", value
-	return nil
-}
-func (client *recordingCommandClient) BuildRevoke(types.JID, types.JID, types.MessageID) *waE2E.Message {
-	return &waE2E.Message{}
-}
-func (client *recordingCommandClient) SendMessage(context.Context, types.JID, *waE2E.Message, ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
-	client.operation = "delete"
-	return whatsmeow.SendResponse{}, nil
-}
-func (client *recordingCommandClient) UpdateGroupParticipants(context.Context, types.JID, []types.JID, whatsmeow.ParticipantChange) ([]types.GroupParticipant, error) {
-	client.operation = "kick"
-	return []types.GroupParticipant{{}}, nil
-}
-
-type recordingGroupTargets struct {
-	operation string
-	ref       identity.SenderRef
-	duration  uint32
-	now       time.Time
-}
-
-func (*recordingGroupTargets) ResolveChatAddress(context.Context, agent.Key) (string, error) {
-	return "123456789@g.us", nil
-}
-func (*recordingGroupTargets) ResolveMessageTarget(context.Context, agent.Key, identity.MessageID) (string, string, string, time.Time, error) {
-	return "123456789@g.us", "provider-message", "10000000001@lid", time.Now(), nil
-}
-func (*recordingGroupTargets) ResolveLID(context.Context, agent.Key, identity.SenderRef) (identity.LID, error) {
-	return identity.ParseLID("10000000001@lid")
-}
-func (targets *recordingGroupTargets) SetChatMute(_ context.Context, _ agent.Key, ref identity.SenderRef, duration uint32, now time.Time) error {
-	targets.operation, targets.ref, targets.duration, targets.now = "mute", ref, duration, now
-	return nil
-}
-
 func TestHandleGroupOwnsEverySupportedSubcommand(t *testing.T) {
 	key := groupCommandKey(t)
 	target, _ := identity.NewMessageID()
@@ -108,61 +96,107 @@ func TestHandleGroupOwnsEverySupportedSubcommand(t *testing.T) {
 	tests := []struct {
 		name, command, operation string
 		target                   identity.MessageID
-		check                    func(*testing.T, *recordingCommandAdapter)
+		check                    func(*testing.T, *fakeGroupModerator)
 	}{
-		{name: "close", command: "/group close", operation: "announce", check: func(t *testing.T, got *recordingCommandAdapter) {
-			if !got.client.closed {
+		{name: "close", command: "/group close", operation: "announce", check: func(t *testing.T, got *fakeGroupModerator) {
+			if !got.announce {
 				t.Fatal("close did not enable announce mode")
 			}
 		}},
-		{name: "open", command: "/group open", operation: "announce", check: func(t *testing.T, got *recordingCommandAdapter) {
-			if got.client.closed {
+		{name: "open", command: "/group open", operation: "announce", check: func(t *testing.T, got *fakeGroupModerator) {
+			if got.announce {
 				t.Fatal("open enabled announce mode")
 			}
 		}},
-		{name: "description", command: "/group description Aturan baru", operation: "description", check: func(t *testing.T, got *recordingCommandAdapter) {
-			if got.client.description != "Aturan baru" {
-				t.Fatalf("description = %q", got.client.description)
+		{name: "description", command: "/group description Aturan baru", operation: "description", check: func(t *testing.T, got *fakeGroupModerator) {
+			if got.description != "Aturan baru" {
+				t.Fatalf("description = %q", got.description)
 			}
 		}},
-		{name: "delete", command: "/group delete", target: target, operation: "delete"},
-		{name: "mute", command: "/group mute @Alice (abc123) 15", operation: "mute", check: func(t *testing.T, got *recordingCommandAdapter) {
-			if got.targets.ref.String() != "abc123" || got.targets.duration != 15 || !got.targets.now.Equal(now) {
+		{name: "delete", command: "/group delete", target: target, operation: "delete", check: func(t *testing.T, got *fakeGroupModerator) {
+			if got.target != target {
+				t.Fatalf("revoked %v, want %v", got.target, target)
+			}
+		}},
+		{name: "mute", command: "/group mute @Alice (abc123) 15", operation: "mute", check: func(t *testing.T, got *fakeGroupModerator) {
+			if got.ref.String() != "abc123" || got.minutes != 15 || !got.now.Equal(now) {
 				t.Fatal("wrong mute arguments")
 			}
 		}},
-		{name: "kick", command: "/group kick @Alice Smith (abc123)", operation: "kick"},
+		{name: "kick", command: "/group kick @Alice Smith (abc123)", operation: "kick", check: func(t *testing.T, got *fakeGroupModerator) {
+			if got.ref.String() != "abc123" {
+				t.Fatalf("kicked %q, want abc123", got.ref)
+			}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			adapter := &recordingCommandAdapter{client: &recordingCommandClient{}, targets: &recordingGroupTargets{}}
-			if err := HandleGroup(context.Background(), adapter, key, test.command, test.target, now); err != nil {
+			moderator := &fakeGroupModerator{}
+			if err := HandleGroup(context.Background(), moderator, key, test.command, test.target, now); err != nil {
 				t.Fatalf("handle command: %v", err)
 			}
-			operation := adapter.client.operation
-			if test.operation == "mute" {
-				operation = adapter.targets.operation
+			if moderator.operation != test.operation {
+				t.Fatalf("operation = %q, want %q", moderator.operation, test.operation)
 			}
-			if operation != test.operation {
-				t.Fatalf("operation = %q, want %q", operation, test.operation)
+			if moderator.key != key {
+				t.Fatalf("key = %v, want %v", moderator.key, key)
 			}
-			if test.check != nil {
-				test.check(t, adapter)
-			}
+			test.check(t, moderator)
 		})
 	}
 }
 
 func TestHandleGroupRejectsMalformedCommandsBeforeProviderCall(t *testing.T) {
 	key := groupCommandKey(t)
-	for _, value := range []string{"/group close now", "/group description", "/group delete", "/group mute @Alice (abc123) 43201", "/group kick @Alice (invalid)", "/group admin"} {
-		adapter := &recordingCommandAdapter{client: &recordingCommandClient{}, targets: &recordingGroupTargets{}}
-		if err := HandleGroup(context.Background(), adapter, key, value, identity.MessageID{}, time.Now().UTC()); err == nil {
-			t.Fatalf("malformed command accepted: %q", value)
+	target, _ := identity.NewMessageID()
+	tests := []struct {
+		command string
+		target  identity.MessageID
+	}{
+		{command: "/group close now"},
+		{command: "/group description"},
+		{command: "/group delete"},
+		{command: "/group close", target: target},
+		{command: "/group mute @Alice (abc123) 43201"},
+		{command: "/group kick @Alice (invalid)"},
+		{command: "/group admin"},
+	}
+	for _, test := range tests {
+		moderator := &fakeGroupModerator{}
+		err := HandleGroup(context.Background(), moderator, key, test.command, test.target, time.Now().UTC())
+		if !agent.IsCode(err, agent.ErrorInvalidArgument) {
+			t.Fatalf("%q: error = %v, want invalid argument", test.command, err)
 		}
-		if adapter.client.operation != "" || adapter.targets.operation != "" {
-			t.Fatalf("provider called for malformed command %q", value)
+		if moderator.operation != "" {
+			t.Fatalf("moderator called for malformed command %q", test.command)
 		}
+	}
+}
+
+func TestHandleGroupRejectsMissingDependencies(t *testing.T) {
+	key := groupCommandKey(t)
+	now := time.Now().UTC()
+	if err := HandleGroup(context.Background(), nil, key, "/group close", identity.MessageID{}, now); !agent.IsCode(err, agent.ErrorInvalidArgument) {
+		t.Fatalf("nil moderator error = %v", err)
+	}
+	moderator := &fakeGroupModerator{}
+	if err := HandleGroup(context.Background(), moderator, key, "/group close", identity.MessageID{}, time.Time{}); !agent.IsCode(err, agent.ErrorInvalidArgument) {
+		t.Fatalf("zero time error = %v", err)
+	}
+	if err := HandleGroup(context.Background(), moderator, agent.Key{}, "/group close", identity.MessageID{}, now); !agent.IsCode(err, agent.ErrorInvalidArgument) {
+		t.Fatalf("zero key error = %v", err)
+	}
+	if moderator.operation != "" {
+		t.Fatal("moderator called without valid dependencies")
+	}
+}
+
+func TestHandleGroupPropagatesModeratorErrors(t *testing.T) {
+	want := agent.NewError(agent.ErrorProviderFailure, "set group announce", errors.New("boom"))
+	moderator := &fakeGroupModerator{err: want}
+	err := HandleGroup(context.Background(), moderator, groupCommandKey(t), "/group close", identity.MessageID{}, time.Now().UTC())
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
 	}
 }
 
@@ -178,28 +212,55 @@ func TestGroupCommandSuppressesAutomaticFeedbackForDeleteAndKick(t *testing.T) {
 		{name: "delete", text: "/group delete", quote: &conversation.QuotedMessage{ID: target}},
 		{name: "kick", text: "/group kick @Alice (abc123)"},
 		{name: "close still confirms", text: "/group close", wantSent: 1},
+		{name: "usage on malformed", text: "/group admin", wantSent: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			adapter := &recordingCommandAdapter{client: &recordingCommandClient{}, targets: &recordingGroupTargets{}}
+			moderator := &fakeGroupModerator{}
 			store := &recordingCommandStore{}
-			input := command.Context{
-				Message: conversation.IncomingMessage{
-					TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
-					Text: test.text, Quote: test.quote,
-				},
-				Store: store,
-			}
-			if err := handleGroup(context.Background(), input, adapter); err != nil {
+			if err := handleGroup(context.Background(), groupCommandInput(key, test.text, test.quote, store), moderator); err != nil {
 				t.Fatalf("handle group command: %v", err)
 			}
-			if len(adapter.sent) != test.wantSent {
-				t.Fatalf("automatic feedback messages = %d, want %d", len(adapter.sent), test.wantSent)
+			if len(moderator.sent) != test.wantSent {
+				t.Fatalf("automatic feedback messages = %d, want %d", len(moderator.sent), test.wantSent)
 			}
 			if store.handled != 1 {
 				t.Fatalf("handled marks = %d, want 1", store.handled)
 			}
 		})
+	}
+}
+
+func TestGroupCommandRequiresModerator(t *testing.T) {
+	store := &recordingCommandStore{}
+	err := handleGroup(context.Background(), groupCommandInput(groupCommandKey(t), "/group close", nil, store), textOnlyAdapter{})
+	if !agent.IsCode(err, agent.ErrorIntegrityFailure) {
+		t.Fatalf("error = %v, want integrity failure", err)
+	}
+	if store.handled != 0 {
+		t.Fatal("command marked handled without a moderator")
+	}
+}
+
+func TestGroupCommandDoesNotMarkHandledOnModeratorFailure(t *testing.T) {
+	moderator := &fakeGroupModerator{err: agent.NewError(agent.ErrorProviderFailure, "kick", errors.New("boom"))}
+	store := &recordingCommandStore{}
+	err := handleGroup(context.Background(), groupCommandInput(groupCommandKey(t), "/group kick @Alice (abc123)", nil, store), moderator)
+	if !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("error = %v, want provider failure", err)
+	}
+	if store.handled != 0 || len(moderator.sent) != 0 {
+		t.Fatal("failed command was acknowledged")
+	}
+}
+
+func groupCommandInput(key agent.Key, text string, quote *conversation.QuotedMessage, store *recordingCommandStore) command.Context {
+	return command.Context{
+		Message: conversation.IncomingMessage{
+			TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
+			Text: text, Quote: quote,
+		},
+		Store: store,
 	}
 }
 
