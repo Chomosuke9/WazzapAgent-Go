@@ -189,7 +189,7 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	systemContent := client.systemPolicy
 	for _, message := range request.Messages {
 		if message.Provenance == agent.ProvenanceBasePrompt {
-			systemContent += "\n\n" + message.Content
+			systemContent = appendSystemPromptContent(systemContent, message.Content)
 		}
 	}
 	messages := []completionMessage{{Role: "system", Content: systemContent}}
@@ -211,6 +211,15 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 		messages = append(messages, completionMessage{Role: role, Content: message.Content})
 	}
 	return messages, tools, nil
+}
+
+func appendSystemPromptContent(systemPolicy, promptContent string) string {
+	const rootCloseTag = "</main>"
+	closingIndex := strings.LastIndex(systemPolicy, rootCloseTag)
+	if closingIndex < 0 || strings.TrimSpace(systemPolicy[closingIndex+len(rootCloseTag):]) != "" {
+		return systemPolicy + "\n\n" + promptContent
+	}
+	return strings.TrimRight(systemPolicy[:closingIndex], "\r\n") + "\n\n" + promptContent + "\n" + systemPolicy[closingIndex:]
 }
 
 type completionRequest struct {

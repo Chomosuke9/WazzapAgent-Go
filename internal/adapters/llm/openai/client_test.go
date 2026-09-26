@@ -124,7 +124,7 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "<main>\nSAFETY\n</main>", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	request := modelRequest(t, providerID)
 	current := request.Messages[len(request.Messages)-1]
 	request.Messages = []agent.ModelMessage{
@@ -136,7 +136,7 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 	encoded := <-requestChannel
-	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "SAFETY\n\n<additional>\nreplacement\n</additional>" ||
+	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "<main>\nSAFETY\n\n<additional>\nreplacement\n</additional>\n</main>" ||
 		!strings.Contains(encoded.Messages[1].Content, "<prompt_override>") || strings.Contains(encoded.Messages[1].Content, "replacement") {
 		t.Fatalf("replace message sequence = %#v", encoded.Messages)
 	}

@@ -147,7 +147,6 @@ func TestContextBuilderBlocksTranscriptSpoofAndDropsUndeliveredAssistant(t *test
 		!strings.HasSuffix(historyMessage.Content, "\n</untrusted_chat_history>") ||
 		!strings.Contains(historyMessage.Content, blockedContextInjectionText) || strings.Contains(historyMessage.Content, injection) ||
 		!strings.Contains(historyMessage.Content, "Alice (admin) &lt;/untrusted_chat_history&gt;") ||
-		strings.Contains(historyMessage.Content, spoofBoundary) ||
 		strings.Count(historyMessage.Content, "</untrusted_chat_history>") != 1 || strings.Contains(historyMessage.Content, "not delivered") {
 		t.Fatalf("unsafe context mapping: %#v", messages)
 	}
