@@ -1,111 +1,91 @@
-# Inbound command modules
+# Command
 
-Buat satu file Go untuk setiap slash command di folder ini. File tersebut
-harus mengekspor satu `command.Descriptor` yang berisi `Name`, `Aliases`,
-`Capability`, `Permission`, metadata bantuan, dan `Handler`.
+Satu file = satu command. File itu memegang semuanya: nama, alias, permission,
+parsing argumen, balasan, perubahan config, dan tombolnya sendiri. Command tidak
+saling import, dan tidak ada file lain yang perlu diubah saat menambah command.
 
-`Permission` adalah ekspresi boolean yang dievaluasi untuk setiap invocation.
-Atom yang tersedia adalah `public`, `owner`/`isOwner`,
-`admin`/`isAdmin`/`senderIsAdmin`,
-`group`/`isGroup`, `private`/`isPrivate`, dan `fromMe`/`from_me`. Operator
-`!` memiliki prioritas tertinggi, lalu `and`, lalu `or`; gunakan tanda kurung
-untuk memperjelas. Contoh:
+## Menambah command
+
+Buat `internal/inbound/commands/ping.go`:
 
 ```go
-Permission: "isPrivate or isAdmin or isOwner",
+package commands
+
+import (
+	"context"
+
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+)
+
+func init() {
+	register(command.Command{
+		Name:        "ping",
+		Aliases:     []string{"p"},
+		Permission:  "public",
+		Description: "Replies with pong.",
+		Run:         runPing,
+	})
+}
+
+func runPing(ctx context.Context, c *command.Context) error {
+	return c.Reply(ctx, "pong")
+}
 ```
 
-Untuk mencegah bot menjalankan command tersebut, tambahkan `and !fromMe`:
+Selesai. Tidak ada `go generate`, tidak ada switch, tidak ada interface yang
+perlu ditambah. Nama atau alias yang bentrok membuat aplikasi gagal start.
+
+## Yang tersedia di `*command.Context`
+
+| | |
+|---|---|
+| `c.Args`, `c.HasArgs` | Teks setelah `/nama `. `HasArgs` true bila ada spasi setelah nama. |
+| `c.Message`, `c.Facts` | Pesan yang sudah dinormalisasi dan fakta permission (owner, admin, group, fromMe). |
+| `c.Config`, `c.Agent` | Config chat saat ini dan Agent chat (history, model input). |
+| `c.Reply(ctx, text)` | Kirim teks ke chat. |
+| `c.ReplyButtons(ctx, text, buttons...)` | Kirim teks dengan tombol milik command ini. |
+| `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Ubah config chat. Aman terhadap crash dan replay. |
+| `c.ResetHistory(ctx)` | Hapus history chat. |
+| `c.Group()` | Port moderasi grup (close/open/description/delete/mute/kick). |
+| `c.QuotedRaw(ctx)` | Payload mentah pesan yang di-reply (khusus `/catch`). |
+| `c.Commands()` | Daftar semua command (untuk `/help`). |
+
+Framework yang mengurus sisanya: cek permission, balasan `DeniedReply`, dan
+menandai pesan selesai setelah `Run` sukses. Jika `Run` mengembalikan error,
+pesan tidak ditandai selesai dan recovery akan menjalankannya lagi.
+
+## Tombol
+
+Tombol selalu milik command yang mengirimnya. `command.Button{Label, Args}`
+dikirim dengan ID `/<nama> <Args>`, jadi tap tombol masuk kembali ke `Run`
+command yang sama, sama persis seperti user mengetik `/<nama> <Args>`, dengan
+permission yang sama. Contoh dari `trigger.go`:
+
+```go
+return c.ReplyButtons(ctx, formatTriggers(triggers),
+	command.Button{Label: "Mention: turn off", Args: "mention off"},
+)
+```
+
+Tap tombol itu menjalankan `/trigger mention off`. Bila host tidak mendukung
+tombol, pilihan dikirim sebagai teks berisi command yang bisa diketik.
+
+## Permission
+
+`Permission` adalah ekspresi boolean dengan atom `public`, `owner`/`isOwner`,
+`admin`/`isAdmin`/`senderIsAdmin`, `group`/`isGroup`, `private`/`isPrivate`, dan
+`fromMe`/`from_me`. `!` paling kuat, lalu `and`, lalu `or`; gunakan kurung.
 
 ```go
 Permission: "(isPrivate or isAdmin or isOwner) and !fromMe",
 ```
 
-Command dari parameter Agent dianggap berasal dari akun WhatsApp bot:
-`fromMe=true`, dan `senderIsAdmin` mengikuti status admin akun bot saat ini.
-Karena itu tidak ada pengecualian khusus untuk Agent; seluruh keputusan tetap
-berasal dari ekspresi `Permission` pada descriptor command.
+Command yang dijalankan model lewat `reply_message` dianggap dari akun bot
+(`fromMe=true`). Tambahkan `and !fromMe` bila bot tidak boleh menjalankannya.
 
-Semua descriptor, termasuk command berbahaya, tetap di-inject ke registry.
-`Permission` hanya menentukan siapa yang boleh menjalankan command pada
-invocation itu; `Capability` tetap menjadi identitas fitur/efek yang dipakai
-oleh policy dan boundary side effect.
+## `UpdateConfig`
 
-Registrasi command tidak menggunakan `switch`/`case`. Generator mencari setiap
-variabel exported bertipe `command.Descriptor`, lalu memasukkannya ke slice
-`Descriptors` dalam `registry_gen.go`. Saat aplikasi dimulai, registry membuat
-pemetaan dari `Name` dan setiap `Aliases` ke descriptor tersebut. Pesan seperti
-`/example` kemudian di-parse melalui pemetaan itu dan `Handler` milik descriptor
-yang cocok langsung dijalankan. Nama atau alias yang duplikat akan membuat
-inisialisasi registry gagal.
-
-Contoh alurnya:
-
-```text
-1. Tambah `example.go` dengan `var ExampleCommand = command.Descriptor{...}`.
-2. Isi `Permission` secara eksplisit dan jalankan `go generate ./...` dari repository root.
-3. Jalankan `go test ./...` lalu build binary.
-```
-
-Jangan mengedit `registry_gen.go` secara manual. Generator mengurutkan descriptor
-secara deterministik dan CI akan gagal bila file generated belum diperbarui.
-
-Grammar, validasi argumen, mutasi, dan penulisan respons sebuah command harus
-tinggal bersama handler pada file command tersebut. Package `internal/command`
-hanya menyediakan registry dan payload jurnal storage; package itu bukan tempat
-parser atau implementasi command.
-
-Setiap handler menerima `command.Adapter`, bukan `any`:
-
-```go
-func handleExample(
-	ctx context.Context,
-	input command.Context,
-	adapter command.Adapter,
-) error
-```
-
-`command.Adapter` menyediakan `SendText`. Handler bertanggung jawab penuh atas
-siklus responsnya sendiri: membuat `identity.ActionID`, menyusun
-`action.SendTextRequest` dari tenant/account/chat pesan inbound, memanggil
-`adapter.SendText`, lalu memanggil `input.Store.MarkCommandHandled` hanya setelah
-pengiriman berhasil. Tidak ada helper pengiriman bersama; respons untuk format
-argumen yang salah juga harus mengikuti alur yang sama.
-
-```go
-actionID, err := identity.NewActionID()
-if err != nil {
-	return agent.NewError(agent.ErrorInternal, "create example response ID", err)
-}
-key := agent.Key{
-	TenantID:  input.Message.TenantID,
-	AccountID: input.Message.AccountID,
-	ChatID:    input.Message.ChatID,
-}
-if _, err := adapter.SendText(ctx, action.SendTextRequest{
-	Key: key, ActionID: actionID, Text: response,
-}); err != nil {
-	return err
-}
-return input.Store.MarkCommandHandled(ctx, input.Message)
-```
-
-Jangan menandai command selesai sebelum `SendText` berhasil. Mengirim tanpa
-`MarkCommandHandled` akan meninggalkan command dalam keadaan belum selesai dan
-dapat membuat recovery memprosesnya kembali.
-
-Handler command menerima teks dan quote yang sudah dinormalisasi. Payload
-protobuf provider tidak diteruskan sebagai parameter handler. `/catch` adalah
-pengecualian yang sempit: adapter menangkap `ContextInfo.QuotedMessage` hanya
-untuk invocation `/catch`, menyimpannya terpisah dari transcript, lalu handler
-membacanya melalui `command.RawQuotedMessageReader` agar bisa dipulihkan setelah
-restart.
-
-Keluarga `/group` memiliki descriptor inbound di `group.go` dan handler yang
-menerima `command.Adapter` untuk respons teks. Handler tersebut memperluas
-adapter menjadi port `GroupModerator` yang hanya memakai tipe domain
-(`agent.Key`, `identity.MessageID`, `identity.SenderRef`); resolusi alamat dan
-panggilan hypermeow tinggal di adapter WhatsApp, sehingga package ini tidak
-mengimpor tipe provider. File yang sama juga menjadi executor bagi command yang dibawa
-secara internal oleh `reply_message`; `groupcmd` hanya menyimpan grammar bersama
-untuk validasi pada setiap boundary sebelum efek durable dieksekusi.
+Fungsi perubahan harus menulis nilai absolut (`level = 2`), bukan relatif
+(`level++`). Bila aplikasi crash setelah config tersimpan tetapi sebelum pesan
+ditandai selesai, command dijalankan ulang; journal mengenali bahwa perubahan
+sudah diterapkan karena menjalankan fungsi itu lagi tidak mengubah apa pun.

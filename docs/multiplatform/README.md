@@ -648,7 +648,6 @@ Untuk perubahan Go core, gunakan unit/integration tests yang relevan lalu gate
 repository. Tidak perlu menjalankan test aplikasi untuk edit dokumentasi saja.
 
 ```text
-go generate ./...
 go test -count=1 ./...
 go vet ./...
 go build ./cmd/wazzapagent
@@ -672,8 +671,8 @@ yang mendukung; CI race core existing tetap dipertahankan.
 
 Perintah Windows aktual tersedia pada bagian 7 dan `build/README.md`. Perintah
 Linux/macOS masih memerlukan verifikasi host native; Android memiliki gate eksplisit.
-Saat mengubah command descriptor, generated registry harus diperbarui; pekerjaan
-aplikasi sendiri tidak memerlukan perubahan descriptor.
+Command mendaftarkan dirinya sendiri dari `init()` di filenya; tidak ada registry
+generated yang perlu diperbarui.
 
 ### 5.2 Skenario penerimaan produk
 

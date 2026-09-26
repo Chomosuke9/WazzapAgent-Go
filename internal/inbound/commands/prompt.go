@@ -5,123 +5,59 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-var PromptCommand = command.Descriptor{
-	Name:        "prompt",
-	Capability:  policy.CapabilityPromptWrite,
-	Permission:  "owner and !fromMe",
-	Description: "Views, updates, or deletes the custom chat prompt.",
-	DeniedReply: "The /prompt command can only be used by the configured owner.",
-	Handler:     handlePrompt,
+func init() {
+	register(command.Command{
+		Name:        "prompt",
+		Permission:  "owner and !fromMe",
+		Description: "Views, updates, or deletes the custom chat prompt.",
+		DeniedReply: "The /prompt command can only be used by the configured owner.",
+		Run:         runPrompt,
+	})
 }
 
-func handlePrompt(ctx context.Context, input command.Context, adapter command.Adapter) error {
-	send := func(text string) error {
-		actionID, err := identity.NewActionID()
-		if err != nil {
-			return agent.NewError(agent.ErrorInternal, "create prompt response ID", err)
+func runPrompt(ctx context.Context, c *command.Context) error {
+	switch action, text := parsePromptArgs(c.Args, c.HasArgs); action {
+	case "view":
+		if c.Config.PromptOverride == nil {
+			return c.Reply(ctx, "No prompt override is configured.")
 		}
-		key := agent.Key{TenantID: input.Message.TenantID, AccountID: input.Message.AccountID, ChatID: input.Message.ChatID}
-		if _, err := adapter.SendText(ctx, action.SendTextRequest{Key: key, ActionID: actionID, Text: text}); err != nil {
+		return c.Reply(ctx, "Current prompt override:\n"+c.Config.PromptOverride.Text)
+	case "set":
+		if _, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) {
+			values.PromptOverride = &agent.PromptOverride{Mode: agent.PromptAppend, Text: text}
+		}); err != nil {
 			return err
 		}
-		return input.Store.MarkCommandHandled(ctx, input.Message)
-	}
-	parsed := parsePromptCommand(input.Message.Text)
-	var response string
-	snapshot := input.Snapshot
-	switch parsed.Kind {
-	case command.PromptView:
-		if snapshot.PromptOverride == nil {
-			response = "No prompt override is configured."
-		} else {
-			response = "Current prompt override:\n" + snapshot.PromptOverride.Text
-		}
-	case command.PromptSet:
-		_, err := applyPromptMutation(ctx, input, parsed)
-		if err != nil {
+		return c.Reply(ctx, "Prompt override updated.")
+	case "clear":
+		if _, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) {
+			values.PromptOverride = nil
+		}); err != nil {
 			return err
 		}
-		response = "Prompt override updated."
-	case command.PromptClear:
-		_, err := applyPromptMutation(ctx, input, parsed)
-		if err != nil {
-			return err
-		}
-		response = "Prompt override deleted."
-	case command.PromptInvalid:
-		response = fmt.Sprintf("Usage: /prompt view, /prompt set <text>, or /prompt clear. The prompt can be up to %d bytes long.", agent.MaxPromptBytes)
+		return c.Reply(ctx, "Prompt override deleted.")
 	default:
-		return agent.NewError(agent.ErrorIntegrityFailure, "handle prompt command", fmt.Errorf("unknown command kind"))
+		return c.Reply(ctx, fmt.Sprintf("Usage: /prompt view, /prompt set <text>, or /prompt clear. The prompt can be up to %d bytes long.", agent.MaxPromptBytes))
 	}
-	return send(response)
 }
 
-func parsePromptCommand(raw string) command.PromptCommand {
-	_, argument, argumentsPresent := strings.Cut(strings.TrimPrefix(raw, "/"), " ")
-	if !argumentsPresent || argument == "view" {
-		return command.PromptCommand{Kind: command.PromptView}
-	}
-	if argument == "clear" {
-		return command.PromptCommand{Kind: command.PromptClear}
-	}
-	if strings.HasPrefix(argument, "set ") {
-		value := strings.TrimPrefix(argument, "set ")
+// parsePromptArgs returns "view", "set" with its text, "clear", or "" for
+// invalid arguments.
+func parsePromptArgs(args string, hasArgs bool) (action, text string) {
+	switch {
+	case !hasArgs || args == "view":
+		return "view", ""
+	case args == "clear":
+		return "clear", ""
+	case strings.HasPrefix(args, "set "):
+		value := strings.TrimPrefix(args, "set ")
 		if strings.TrimSpace(value) != "" && len(value) <= agent.MaxPromptBytes {
-			return command.PromptCommand{Kind: command.PromptSet, Text: value}
+			return "set", value
 		}
 	}
-	return command.PromptCommand{Kind: command.PromptInvalid}
-}
-
-func applyPromptMutation(ctx context.Context, input command.Context, parsed command.PromptCommand) (agent.ConfigVersion, error) {
-	journal, err := input.Store.BeginPromptMutation(ctx, input.Message, parsed, input.Snapshot.Version)
-	if err != nil {
-		return 0, err
-	}
-	if journal.AppliedVersion != 0 {
-		return journal.AppliedVersion, nil
-	}
-	if input.Snapshot.Version == journal.ExpectedVersion+1 && promptMutationMatches(input.Snapshot, parsed) {
-		if err := input.Store.MarkPromptMutationApplied(ctx, input.Message, journal.ExpectedVersion, input.Snapshot.Version); err != nil {
-			return 0, err
-		}
-		return input.Snapshot.Version, nil
-	}
-	if input.Snapshot.Version != journal.ExpectedVersion {
-		return 0, agent.NewError(agent.ErrorConflict, "apply prompt mutation", fmt.Errorf("config changed after command authorization; resend the command"))
-	}
-	var updated agent.ConfigSnapshot
-	switch parsed.Kind {
-	case command.PromptSet:
-		updated, err = input.Agent.Config().SetPromptOverride(ctx, input.Snapshot.Version, agent.PromptOverride{Mode: agent.PromptAppend, Text: parsed.Text})
-	case command.PromptClear:
-		updated, err = input.Agent.Config().ClearPromptOverride(ctx, input.Snapshot.Version)
-	default:
-		return 0, agent.NewError(agent.ErrorInvalidArgument, "apply prompt mutation", fmt.Errorf("command is not a mutation"))
-	}
-	if err != nil {
-		return 0, err
-	}
-	if err := input.Store.MarkPromptMutationApplied(ctx, input.Message, journal.ExpectedVersion, updated.Version); err != nil {
-		return 0, err
-	}
-	return updated.Version, nil
-}
-
-func promptMutationMatches(snapshot agent.ConfigSnapshot, parsed command.PromptCommand) bool {
-	switch parsed.Kind {
-	case command.PromptSet:
-		return snapshot.PromptOverride != nil && snapshot.PromptOverride.Mode == agent.PromptAppend && snapshot.PromptOverride.Text == parsed.Text
-	case command.PromptClear:
-		return snapshot.PromptOverride == nil
-	default:
-		return false
-	}
+	return "", ""
 }

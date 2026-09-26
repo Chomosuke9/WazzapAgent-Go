@@ -2,6 +2,7 @@ package hypermeow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -53,6 +54,41 @@ func (adapter *Adapter) textMessage(ctx context.Context, request action.SendText
 		message.ExtendedTextMessage.ContextInfo = contextInfo
 	}
 	return message, nil
+}
+
+// buttonsMessage builds a native-flow message with one quick_reply button per
+// request button. It is wrapped in viewOnceMessage like WhatsApp's own clients
+// send it; hypermeow adds the biz node that makes the buttons render.
+func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
+	if strings.TrimSpace(request.Text) == "" || len(request.Buttons) == 0 || len(request.Buttons) > action.MaxButtons {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("text and 1 to 10 buttons are required"))
+	}
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(request.Buttons))
+	for _, button := range request.Buttons {
+		if strings.TrimSpace(button.ID) == "" || strings.TrimSpace(button.Label) == "" {
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("every button needs an ID and a label"))
+		}
+		params, err := json.Marshal(map[string]string{"display_text": button.Label, "id": button.ID})
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorInternal, "build WhatsApp buttons", err)
+		}
+		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+			Name:             proto.String("quick_reply"),
+			ButtonParamsJSON: proto.String(string(params)),
+		})
+	}
+	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+		MessageContextInfo: &waE2E.MessageContextInfo{
+			DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+			DeviceListMetadataVersion: proto.Int32(2),
+		},
+		InteractiveMessage: &waE2E.InteractiveMessage{
+			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(request.Text)},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons},
+			},
+		},
+	}}}, nil
 }
 
 // ownJID is the paired device's phone JID, or empty before pairing completes.

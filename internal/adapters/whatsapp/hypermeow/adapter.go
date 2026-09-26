@@ -13,6 +13,7 @@ import (
 	"time"
 
 	whatsmeow "github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/socket"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -352,10 +353,28 @@ func (adapter *Adapter) Fatal() <-chan error                    { return adapter
 func (adapter *Adapter) QueueUsage() (int, int)                 { return len(adapter.queue), cap(adapter.queue) }
 
 func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
-	if !adapter.Ready() {
-		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, "send WhatsApp text", errors.New("account is not connected"))
+	return adapter.send(ctx, request.Key, "send WhatsApp text", func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
+		return adapter.textMessage(sendCtx, request, address, target)
+	})
+}
+
+// SendButtons sends text with quick-reply buttons. A tap comes back as an
+// ordinary inbound message whose text is the tapped button's ID.
+func (adapter *Adapter) SendButtons(ctx context.Context, request action.SendButtonsRequest) (action.SendTextResult, error) {
+	message, err := buttonsMessage(request)
+	if err != nil {
+		return action.SendTextResult{}, err
 	}
-	address, err := adapter.targets.ResolveChatAddress(ctx, request.Key)
+	return adapter.send(ctx, request.Key, "send WhatsApp buttons", func(context.Context, string, types.JID) (*waE2E.Message, error) {
+		return message, nil
+	})
+}
+
+func (adapter *Adapter) send(ctx context.Context, key agent.Key, operation string, build func(context.Context, string, types.JID) (*waE2E.Message, error)) (action.SendTextResult, error) {
+	if !adapter.Ready() {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, operation, errors.New("account is not connected"))
+	}
+	address, err := adapter.targets.ResolveChatAddress(ctx, key)
 	if err != nil {
 		return action.SendTextResult{}, err
 	}
@@ -363,25 +382,25 @@ func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextReq
 	if err != nil || target.IsEmpty() {
 		return action.SendTextResult{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp target", errors.New("stored target is invalid"))
 	}
-	stripe := adapter.sendStripe(request.Key.ChatID.String())
+	stripe := adapter.sendStripe(key.ChatID.String())
 	stripe.Lock()
 	defer stripe.Unlock()
 	sendCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
 
-	message, err := adapter.textMessage(sendCtx, request, address, target)
+	message, err := build(sendCtx, address, target)
 	if err != nil {
 		return action.SendTextResult{}, err
 	}
 	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), message)
 	if err != nil {
 		if sendCtx.Err() == context.DeadlineExceeded {
-			return action.SendTextResult{}, agent.NewError(agent.ErrorTimeout, "send WhatsApp text", sendCtx.Err())
+			return action.SendTextResult{}, agent.NewError(agent.ErrorTimeout, operation, sendCtx.Err())
 		}
 		if sendCtx.Err() == context.Canceled {
-			return action.SendTextResult{}, agent.NewError(agent.ErrorCancelled, "send WhatsApp text", sendCtx.Err())
+			return action.SendTextResult{}, agent.NewError(agent.ErrorCancelled, operation, sendCtx.Err())
 		}
-		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", err)
+		return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, operation, err)
 	}
 	return action.SendTextResult{ProviderReceipt: string(response.ID)}, nil
 }

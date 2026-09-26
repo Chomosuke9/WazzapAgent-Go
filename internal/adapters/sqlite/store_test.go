@@ -308,18 +308,16 @@ func TestPromptMutationsAreJournaledInChatOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim second prompt command: %v", err)
 	}
-	set := inbound.PromptCommand{Kind: inbound.PromptSet, Text: "first override"}
-	if _, err := store.Inbound().BeginPromptMutation(context.Background(), first.Message, set, 1); err != nil {
+	if _, err := store.Inbound().BeginConfigMutation(context.Background(), first.Message, 1); err != nil {
 		t.Fatalf("journal first prompt mutation: %v", err)
 	}
-	clear := inbound.PromptCommand{Kind: inbound.PromptClear}
-	if _, err := store.Inbound().BeginPromptMutation(context.Background(), second.Message, clear, 2); !agent.IsCode(err, agent.ErrorConflict) {
+	if _, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2); !agent.IsCode(err, agent.ErrorConflict) {
 		t.Fatalf("second mutation error = %v, want conflict while first is unapplied", err)
 	}
-	if err := store.Inbound().MarkPromptMutationApplied(context.Background(), first.Message, 1, 2); err != nil {
+	if err := store.Inbound().MarkConfigMutationApplied(context.Background(), first.Message, 1, 2); err != nil {
 		t.Fatalf("mark first prompt mutation applied: %v", err)
 	}
-	journal, err := store.Inbound().BeginPromptMutation(context.Background(), second.Message, clear, 2)
+	journal, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2)
 	if err != nil {
 		t.Fatalf("journal second prompt mutation: %v", err)
 	}

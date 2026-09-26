@@ -13,6 +13,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
@@ -559,12 +560,11 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	command := inbound.PromptCommand{Kind: inbound.PromptSet, Text: "crash-safe"}
-	journal, err := fixture.store.Inbound().BeginPromptMutation(context.Background(), claimed.Message, command, snapshot.Version)
+	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
 	if err != nil {
 		t.Fatalf("begin command journal: %v", err)
 	}
-	if _, err := current.Config().SetPromptOverride(context.Background(), journal.ExpectedVersion, agent.PromptOverride{Mode: agent.PromptAppend, Text: command.Text}); err != nil {
+	if _, err := current.Config().SetPromptOverride(context.Background(), journal.ExpectedVersion, agent.PromptOverride{Mode: agent.PromptAppend, Text: "crash-safe"}); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
 	// Simulate a crash before MarkPromptMutationApplied and response planning by
@@ -654,13 +654,12 @@ func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	command := inbound.PermissionCommand{Kind: inbound.PermissionSet, Level: agent.ModerationDeleteMute}
-	journal, err := fixture.store.Inbound().BeginPermissionMutation(context.Background(), claimed.Message, command, snapshot.Version)
+	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
 	if err != nil {
 		t.Fatalf("begin command journal: %v", err)
 	}
 	permission := snapshot.Permission
-	permission.ModerationLevel = command.Level
+	permission.ModerationLevel = agent.ModerationDeleteMute
 	if _, err := current.Config().SetPermission(context.Background(), journal.ExpectedVersion, permission); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
@@ -856,13 +855,13 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, sender,
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender},
 	)
 	if err != nil {
 		t.Fatalf("create command handler: %v", err)
 	}
 	aiHandler, err := inbound.NewAIHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, nil,
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
 		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
 	)
 	if err != nil {

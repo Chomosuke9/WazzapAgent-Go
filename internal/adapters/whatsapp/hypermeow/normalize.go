@@ -2,6 +2,7 @@ package hypermeow
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,7 +39,7 @@ func ignoredNativeReason(event *events.Message) string {
 	if event.IsEdit {
 		return "edited_message"
 	}
-	if event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil {
+	if text, _ := buttonReply(event.Message); event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil && text == "" {
 		return "unsupported_content"
 	}
 	return "invalid_metadata"
@@ -64,6 +65,11 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 			text = "【sticker】"
 			contextInfo = sticker.GetContextInfo()
 		}
+	}
+	if text == "" {
+		// A button tap arrives as the tapped button's ID, so a
+		// "/command args" button re-enters its command like typed text.
+		text, contextInfo = buttonReply(event.Message)
 	}
 	if text == "" {
 		return conversation.IncomingCandidate{}, false
@@ -144,6 +150,41 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 		OccurredAt:                event.Info.Timestamp.UTC(),
 		ReceivedAt:                time.Now().UTC(),
 	}, true
+}
+
+// buttonReply extracts a tap on a quick-reply, buttons, template, or list
+// message. Slash-command IDs become the message text; any other ID yields the
+// label the user saw, so the conversation reads naturally.
+func buttonReply(message *waE2E.Message) (string, *waE2E.ContextInfo) {
+	pick := func(id, label string) string {
+		if strings.HasPrefix(id, "/") {
+			return id
+		}
+		if strings.TrimSpace(label) != "" {
+			return label
+		}
+		return id
+	}
+	switch {
+	case message.GetInteractiveResponseMessage() != nil:
+		response := message.GetInteractiveResponseMessage()
+		var params struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal([]byte(response.GetNativeFlowResponseMessage().GetParamsJSON()), &params)
+		return pick(params.ID, response.GetBody().GetText()), response.GetContextInfo()
+	case message.GetButtonsResponseMessage() != nil:
+		response := message.GetButtonsResponseMessage()
+		return pick(response.GetSelectedButtonID(), response.GetSelectedDisplayText()), response.GetContextInfo()
+	case message.GetTemplateButtonReplyMessage() != nil:
+		response := message.GetTemplateButtonReplyMessage()
+		return pick(response.GetSelectedID(), response.GetSelectedDisplayText()), response.GetContextInfo()
+	case message.GetListResponseMessage() != nil:
+		response := message.GetListResponseMessage()
+		return pick(response.GetSingleSelectReply().GetSelectedRowID(), response.GetTitle()), response.GetContextInfo()
+	default:
+		return "", nil
+	}
 }
 
 func (normalizer *messageNormalizer) quotedMessageFromMe(participant string) *bool {

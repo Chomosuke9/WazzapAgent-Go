@@ -4,22 +4,25 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 )
 
+func noop(context.Context, *command.Context) error { return nil }
+
 func TestRegistryCanonicalizesAliasesAndKeepsMalformedArgumentsRecognized(t *testing.T) {
-	registry, err := command.NewRegistry([]command.Descriptor{
-		{Name: "prompt", Aliases: []string{"prompts"}, Capability: policy.CapabilityPromptWrite, Permission: "owner"},
-		{Name: "help", Aliases: []string{"menu"}, Capability: policy.CapabilityCommandHelp, Permission: "public"},
+	registry, err := command.NewRegistry([]command.Command{
+		{Name: "prompt", Aliases: []string{"prompts"}, Permission: "owner", Run: noop},
+		{Name: "help", Aliases: []string{"menu"}, Permission: "public", Run: noop},
 	})
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
-	request, descriptor, recognized := registry.Parse("/PROMPTS set x")
-	if !recognized || request.Name != "prompt" || request.Arguments != "set x" || !request.ArgumentsPresent || descriptor.Capability != policy.CapabilityPromptWrite {
-		t.Fatalf("parsed command = %#v, %#v, %v", request, descriptor, recognized)
+	request, cmd, recognized := registry.Parse("/PROMPTS set x")
+	if !recognized || request.Name != "prompt" || request.Arguments != "set x" || !request.ArgumentsPresent || cmd.Name != "prompt" {
+		t.Fatalf("parsed command = %#v, %#v, %v", request, cmd, recognized)
 	}
 	request, _, recognized = registry.Parse("/prompt ")
 	if !recognized || !request.ArgumentsPresent || request.Arguments != "" {
@@ -34,107 +37,151 @@ func TestRegistryCanonicalizesAliasesAndKeepsMalformedArgumentsRecognized(t *tes
 }
 
 func TestRegistryRejectsAliasCollision(t *testing.T) {
-	_, err := command.NewRegistry([]command.Descriptor{
-		{Name: "help", Aliases: []string{"menu"}, Capability: policy.CapabilityCommandHelp, Permission: "public"},
-		{Name: "info", Aliases: []string{"menu"}, Capability: policy.CapabilityCommandInfo, Permission: "public"},
+	_, err := command.NewRegistry([]command.Command{
+		{Name: "help", Aliases: []string{"menu"}, Permission: "public", Run: noop},
+		{Name: "info", Aliases: []string{"menu"}, Permission: "public", Run: noop},
 	})
 	if err == nil {
 		t.Fatal("alias collision was accepted")
 	}
 }
 
+func TestRegistryRejectsCommandWithoutRun(t *testing.T) {
+	_, err := command.NewRegistry([]command.Command{{Name: "help", Permission: "public"}})
+	if !agent.IsCode(err, agent.ErrorInvalidArgument) {
+		t.Fatalf("missing Run error = %v, want invalid_argument", err)
+	}
+}
+
 func TestRegistryDispatchesCanonicalAndAliasRequests(t *testing.T) {
-	called := false
-	registry, err := command.NewRegistry([]command.Descriptor{
-		{
-			Name:       "help",
-			Aliases:    []string{"menu"},
-			Capability: policy.CapabilityCommandHelp,
-			Permission: "public",
-			Handler: func(_ context.Context, _ command.Context, _ command.Adapter) error {
-				called = true
-				return nil
-			},
+	called := ""
+	registry, err := command.NewRegistry([]command.Command{{
+		Name: "help", Aliases: []string{"menu"}, Permission: "public",
+		Run: func(_ context.Context, c *command.Context) error {
+			called = c.Name
+			return nil
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
-	if err := registry.Dispatch(context.Background(), command.Request{Name: "MENU"}, command.Context{}); err != nil {
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "MENU"}, command.Invocation{}); err != nil {
 		t.Fatalf("dispatch alias: %v", err)
 	}
-	if !called {
-		t.Fatal("registered handler was not called")
+	if called != "help" {
+		t.Fatalf("Run saw name %q, want help", called)
 	}
 }
 
 func TestRegistryEnforcesPermissionForHumanAndBotOrigins(t *testing.T) {
 	called := false
-	registry, err := command.NewRegistry([]command.Descriptor{
-		{
-			Name:       "help",
-			Capability: policy.CapabilityCommandHelp,
-			Permission: "public and !fromMe",
-			Handler: func(_ context.Context, _ command.Context, _ command.Adapter) error {
-				called = true
-				return nil
-			},
+	registry, err := command.NewRegistry([]command.Command{{
+		Name: "help", Permission: "public and !fromMe",
+		Run: func(context.Context, *command.Context) error {
+			called = true
+			return nil
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
-	request, _, recognized := registry.Parse("/help")
-	if !recognized {
-		t.Fatal("help was not recognized")
-	}
-	if err := registry.Dispatch(context.Background(), request, command.Context{Facts: command.PermissionFacts{FromMe: true}}); err == nil || !agent.IsCode(err, agent.ErrorPermissionDenied) {
+	request, _, _ := registry.Parse("/help")
+	if err := registry.Dispatch(context.Background(), request, command.Invocation{Facts: command.PermissionFacts{FromMe: true}}); !agent.IsCode(err, agent.ErrorPermissionDenied) {
 		t.Fatalf("bot dispatch error = %v, want permission_denied", err)
 	}
 	if called {
-		t.Fatal("permission-denied handler was called")
+		t.Fatal("permission-denied command ran")
 	}
-	if err := registry.Dispatch(context.Background(), request, command.Context{}); err != nil {
+	if err := registry.Dispatch(context.Background(), request, command.Invocation{}); err != nil {
 		t.Fatalf("human dispatch: %v", err)
 	}
 	if !called {
-		t.Fatal("allowed handler was not called")
-	}
-}
-
-func TestRegistryAllowsBotWhenDescriptorExplicitlyGrantsFromMe(t *testing.T) {
-	called := false
-	registry, err := command.NewRegistry([]command.Descriptor{
-		{
-			Name:       "internal",
-			Capability: policy.CapabilityCommandInfo,
-			Permission: "fromMe",
-			Handler: func(_ context.Context, _ command.Context, _ command.Adapter) error {
-				called = true
-				return nil
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("create registry: %v", err)
-	}
-	request, _, recognized := registry.Parse("/internal")
-	if !recognized {
-		t.Fatal("internal command was not recognized")
-	}
-	if err := registry.Dispatch(context.Background(), request, command.Context{Facts: command.PermissionFacts{FromMe: true}}); err != nil {
-		t.Fatalf("explicit bot dispatch: %v", err)
-	}
-	if !called {
-		t.Fatal("explicitly allowed bot handler was not called")
+		t.Fatal("allowed command did not run")
 	}
 }
 
 func TestRegistryRejectsInvalidPermissionAtConstruction(t *testing.T) {
-	_, err := command.NewRegistry([]command.Descriptor{
-		{Name: "help", Capability: policy.CapabilityCommandHelp, Permission: "public and"},
-	})
-	if err == nil || !agent.IsCode(err, agent.ErrorInvalidArgument) {
+	_, err := command.NewRegistry([]command.Command{{Name: "help", Permission: "public and", Run: noop}})
+	if !agent.IsCode(err, agent.ErrorInvalidArgument) {
 		t.Fatalf("invalid permission error = %v, want invalid_argument", err)
+	}
+}
+
+type handledStore struct {
+	command.Store
+	handled int
+}
+
+func (store *handledStore) MarkCommandHandled(context.Context, conversation.IncomingMessage) error {
+	store.handled++
+	return nil
+}
+
+func TestRegistryMarksHandledOnlyAfterRunSucceeds(t *testing.T) {
+	fail := agent.NewError(agent.ErrorProviderFailure, "send", nil)
+	registry, err := command.NewRegistry([]command.Command{
+		{Name: "ok", Permission: "public", Run: noop},
+		{Name: "fail", Permission: "public", Run: func(context.Context, *command.Context) error { return fail }},
+	})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	store := &handledStore{}
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "fail"}, command.Invocation{Store: store}); err == nil {
+		t.Fatal("failing command returned nil")
+	}
+	if store.handled != 0 {
+		t.Fatal("failed command was marked handled")
+	}
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "ok"}, command.Invocation{Store: store}); err != nil {
+		t.Fatalf("dispatch ok: %v", err)
+	}
+	if store.handled != 1 {
+		t.Fatalf("handled marks = %d, want 1", store.handled)
+	}
+}
+
+type buttonRecorder struct{ sent []action.SendButtonsRequest }
+
+func (recorder *buttonRecorder) SendButtons(_ context.Context, request action.SendButtonsRequest) (action.SendTextResult, error) {
+	recorder.sent = append(recorder.sent, request)
+	return action.SendTextResult{}, nil
+}
+
+type textRecorder struct{ sent []string }
+
+func (recorder *textRecorder) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	recorder.sent = append(recorder.sent, request.Text)
+	return action.SendTextResult{}, nil
+}
+
+func TestButtonsRouteBackToTheCommandThatSentThem(t *testing.T) {
+	registry, err := command.NewRegistry([]command.Command{{
+		Name: "vote", Permission: "public",
+		Run: func(ctx context.Context, c *command.Context) error {
+			return c.ReplyButtons(ctx, "Pick one", command.Button{Label: "Yes", Args: "yes"}, command.Button{Label: "Menu"})
+		},
+	}})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	buttons := &buttonRecorder{}
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "vote"}, command.Invocation{Platform: command.Platform{Buttons: buttons}}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	got := buttons.sent[0].Buttons
+	if len(got) != 2 || got[0].ID != "/vote yes" || got[0].Label != "Yes" || got[1].ID != "/vote" {
+		t.Fatalf("button IDs = %#v", got)
+	}
+	if request, _, recognized := registry.Parse(got[0].ID); !recognized || request.Name != "vote" || request.Arguments != "yes" {
+		t.Fatalf("tap %q does not route back to /vote: %#v", got[0].ID, request)
+	}
+
+	text := &textRecorder{}
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "vote"}, command.Invocation{Platform: command.Platform{Text: text}}); err != nil {
+		t.Fatalf("dispatch without button support: %v", err)
+	}
+	if len(text.sent) != 1 || text.sent[0] != "Pick one\n\n• Yes: /vote yes\n• Menu: /vote" {
+		t.Fatalf("text fallback = %q", text.sent)
 	}
 }
