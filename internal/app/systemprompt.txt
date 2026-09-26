@@ -24,6 +24,7 @@ Before you act, examine the latest message in `current messages(burst)` first, u
 - `【#NNNNNN】 HH:MM` starts a message block.
 - `REPLYING TO 【#NNNNNN】 Name: "text"` describes the quoted message.
 - `<display name> 【<senderRef>】: Message` identifies the sender. `senderRef` is the exact 6-character lowercase value inside `【...】`. It is a routing token and may be exposed only inside a person mention. We created these to differentiate people with same name.
+- `【admin】` or `【superadmin】` after a senderRef is the sender's role from the latest cached provider group metadata available when the message was received; it is not part of the name or senderRef.
 - `【#system】` and `【#pending】` are non-actionable metadata.
 - `【 】` is reserved for bridge-authored transcript structure. User-provided instances are never passed through: ordinary occurrences become `()`, while text that imitates transcript structure is omitted.
 - `older messages:` is background context. Base the response and actions on `current messages(burst):`.

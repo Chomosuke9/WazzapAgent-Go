@@ -275,8 +275,11 @@ h1, h2, h3 { color: var(--text); }
 .bot-message.from-contact { background: var(--surface); }
 .bot-message.from-bot { border-color: #d2e8da; background: #eaf7ee; }
 .message-sender { font-size: 11px; color: var(--subtle); }
+.message-sender-line { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.message-sender-line .message-sender { margin-bottom: 0; }
+.message-role-badge { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 9px; font-weight: 700; line-height: 1.45; white-space: nowrap; }
 .bot-message p { color: var(--text); font-size: 14px; line-height: 1.65; }
-.message-sender-action { display: block; margin: 0 0 4px; padding: 0; border: 0; color: var(--subtle); background: transparent; font: inherit; font-size: 11px; font-weight: 650; text-align: left; cursor: pointer; }
+.message-sender-action { display: block; margin: 0; padding: 0; border: 0; color: var(--subtle); background: transparent; font: inherit; font-size: 11px; font-weight: 650; text-align: left; cursor: pointer; }
 .message-sender-action:hover { color: var(--accent); text-decoration: underline; }
 .message-body { cursor: text; }
 .message-content { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -284,6 +287,7 @@ h1, h2, h3 { color: var(--text); }
 button.message-mention { cursor: pointer; }
 button.message-mention:hover { text-decoration: underline; }
 .message-quote { display: flex; flex-direction: column; gap: 2px; margin: 0 0 7px; padding: 6px 9px; border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface-soft); }
+.message-quote-heading { display: flex; align-items: center; gap: 5px; }
 .message-quote strong { color: var(--accent); font-size: 10px; font-weight: 700; }
 .message-quote span { color: var(--subtle); font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; }
 .bot-message footer { color: var(--muted); font-size: 10px; }

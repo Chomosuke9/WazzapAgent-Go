@@ -490,16 +490,26 @@ export function ChatPage() {
                 : messagesError && messages.length === 0 ? <div className="inbox-empty">Could not load messages. The app will retry automatically.</div>
                   : messages.length === 0 ? <div className="inbox-empty">There are no messages in the Agent history for this conversation.</div>
                     : messages.map((message) => <article id={`chat-message-${message.id}`} key={message.id} className={message.role === "assistant" ? "bot-message from-bot" : "bot-message from-contact"}>
-                      {message.role !== "assistant" && (message.senderRef
-                        ? <button type="button" className="message-sender message-sender-action"
-                            onClick={() => insertMention(message.sender, message.senderRef)}
-                            title={`Add @${message.sender} as a mention`}>{message.sender}</button>
-                        : <strong className="message-sender">{message.sender}</strong>)}
+                      {message.role !== "assistant" && <div className="message-sender-line">
+                        {message.senderRef
+                          ? <button type="button" className="message-sender message-sender-action"
+                              onClick={() => insertMention(message.sender, message.senderRef)}
+                              title={`Add @${message.sender} as a mention`}>{message.sender}</button>
+                          : <strong className="message-sender">{message.sender}</strong>}
+                        {message.isSuperAdmin
+                          ? <span className="message-role-badge">Group owner</span>
+                          : message.isAdmin ? <span className="message-role-badge">Admin</span> : null}
+                      </div>}
                       <div className="message-body" title="Double-click to reply" onDoubleClick={() => {
                         if (!message.deleted && (message.role !== "assistant" || message.delivery === "sent")) setReplyTarget(message);
                       }}>
                         {message.quote && <div className="message-quote" aria-label={`Reply to ${replyRoleLabel(message.quote)}`}>
-                          <strong>{replyRoleLabel(message.quote)}</strong>
+                          <div className="message-quote-heading">
+                            <strong>{replyRoleLabel(message.quote)}</strong>
+                            {message.quote.isSuperAdmin
+                              ? <span className="message-role-badge">Group owner</span>
+                              : message.quote.isAdmin ? <span className="message-role-badge">Admin</span> : null}
+                          </div>
                           <span>{renderMessageText(message.quote.content, message.quote.mentions ?? [])}</span>
                         </div>}
                         <p className="message-content">{renderMessageText(message.content, message.mentions ?? [], insertMention)}</p>

@@ -194,6 +194,9 @@ func validateHistoryEntry(entry HistoryEntry) error {
 	if entry.Sender != nil && (!utf8.ValidString(entry.Sender.DisplayName) || len(entry.Sender.DisplayName) > MaxDisplayNameBytes) {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("sender display name is invalid"))
 	}
+	if entry.Sender != nil && entry.Sender.IsSuperAdmin && !entry.Sender.IsAdmin {
+		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("superadmin sender must also be an admin"))
+	}
 	if err := validateQuoteContext(entry.Quote); err != nil {
 		return NewError(ErrorInvalidArgument, "validate history entry", err)
 	}
@@ -261,6 +264,7 @@ func DigestHistoryEntry(entry HistoryEntry) ([32]byte, error) {
 		writeField(&canonical, entry.Sender.ParticipantID.String())
 		writeField(&canonical, entry.Sender.Ref.String())
 		writeField(&canonical, entry.Sender.DisplayName)
+		writeGroupRoleDigest(&canonical, entry.Sender.IsAdmin, entry.Sender.IsSuperAdmin)
 	}
 	if entry.Quote == nil {
 		canonical.WriteByte(0)
@@ -270,6 +274,7 @@ func DigestHistoryEntry(entry HistoryEntry) ([32]byte, error) {
 		canonical.WriteByte(byte(entry.Quote.Role))
 		writeField(&canonical, entry.Quote.SenderRef.String())
 		writeField(&canonical, entry.Quote.Text)
+		writeGroupRoleDigest(&canonical, entry.Quote.SenderIsAdmin, entry.Quote.SenderIsSuperAdmin)
 	}
 	_ = binary.Write(&canonical, binary.BigEndian, entry.CreatedAt.UTC().UnixMilli())
 	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(entry.Content)))
@@ -321,6 +326,12 @@ func validateQuoteContext(quote *QuoteContext) error {
 	}
 	if quote.Role == HistoryAssistant && len(quote.Mentions) != 0 {
 		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted assistant must not carry raw mention bindings")
+	}
+	if quote.SenderIsSuperAdmin && !quote.SenderIsAdmin {
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted superadmin must also be an admin")
+	}
+	if quote.Role == HistoryAssistant && (quote.SenderIsAdmin || quote.SenderIsSuperAdmin) {
+		return Errorf(ErrorInvalidArgument, "validate quote context", "quoted assistant cannot have a group admin role")
 	}
 	if err := validateMentionContexts(quote.Text, quote.Mentions); err != nil {
 		return err

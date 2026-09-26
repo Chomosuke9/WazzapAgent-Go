@@ -306,6 +306,8 @@ export interface WhatsAppMessageDTO {
     "sender": string;
     "senderRef": string;
     "content": string;
+    "isAdmin": boolean;
+    "isSuperAdmin": boolean;
     "createdAt": string;
     "delivery": string;
     "deleted": boolean;
@@ -326,6 +328,8 @@ export interface WhatsAppQuoteDTO {
     "role": string;
     "sender": string;
     "content": string;
+    "isAdmin": boolean;
+    "isSuperAdmin": boolean;
     "mentions": WhatsAppMentionDTO[] | null;
 }
 

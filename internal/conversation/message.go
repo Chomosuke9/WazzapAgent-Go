@@ -51,6 +51,8 @@ type IncomingCandidate struct {
 	// ProviderSenderPhone is an optional delivery/addressing alias, never identity.
 	ProviderSenderPhone string
 	SenderName          string
+	SenderIsAdmin       bool
+	SenderIsSuperAdmin  bool
 	ChatKind            ChatKind
 	Text                string
 	Mentions            []IncomingMention
@@ -93,6 +95,12 @@ func (candidate IncomingCandidate) Validate() error {
 	if !utf8.ValidString(candidate.SenderName) || len(candidate.SenderName) > 512 {
 		return fmt.Errorf("sender name is invalid")
 	}
+	if candidate.SenderIsSuperAdmin && !candidate.SenderIsAdmin {
+		return fmt.Errorf("superadmin sender must also be an admin")
+	}
+	if candidate.ChatKind != ChatGroup && (candidate.SenderIsAdmin || candidate.SenderIsSuperAdmin) {
+		return fmt.Errorf("non-group sender cannot have a group admin role")
+	}
 	if candidate.OccurredAt.IsZero() || candidate.ReceivedAt.IsZero() {
 		return fmt.Errorf("timestamps are required")
 	}
@@ -107,36 +115,40 @@ const (
 )
 
 type QuotedMessage struct {
-	Sequence  uint64
-	ID        identity.MessageID
-	Role      QuoteRole
-	SenderRef identity.SenderRef
-	Text      string
-	Mentions  []MentionBinding
+	Sequence           uint64
+	ID                 identity.MessageID
+	Role               QuoteRole
+	SenderRef          identity.SenderRef
+	SenderIsAdmin      bool
+	SenderIsSuperAdmin bool
+	Text               string
+	Mentions           []MentionBinding
 }
 
 type IncomingMessage struct {
-	ID           identity.MessageID
-	InvocationID identity.InvocationID
-	CausationID  identity.CausationID
-	TenantID     identity.TenantID
-	AccountID    identity.AccountID
-	ChatID       identity.ChatID
-	SenderID     identity.ParticipantID
-	SenderLID    identity.LID
-	SenderRef    identity.SenderRef
-	SenderName   string
-	ChatKind     ChatKind
-	Text         string
-	Mentions     []MentionBinding
-	Quote        *QuotedMessage
-	RepliedToBot bool
-	MentionsBot  bool
-	FromMe       bool
-	Owner        bool
-	Allowlisted  bool
-	OccurredAt   time.Time
-	ReceivedAt   time.Time
+	ID                 identity.MessageID
+	InvocationID       identity.InvocationID
+	CausationID        identity.CausationID
+	TenantID           identity.TenantID
+	AccountID          identity.AccountID
+	ChatID             identity.ChatID
+	SenderID           identity.ParticipantID
+	SenderLID          identity.LID
+	SenderRef          identity.SenderRef
+	SenderName         string
+	SenderIsAdmin      bool
+	SenderIsSuperAdmin bool
+	ChatKind           ChatKind
+	Text               string
+	Mentions           []MentionBinding
+	Quote              *QuotedMessage
+	RepliedToBot       bool
+	MentionsBot        bool
+	FromMe             bool
+	Owner              bool
+	Allowlisted        bool
+	OccurredAt         time.Time
+	ReceivedAt         time.Time
 }
 
 func (message IncomingMessage) Validate() error {
@@ -157,6 +169,12 @@ func (message IncomingMessage) Validate() error {
 	if !utf8.ValidString(message.SenderName) || len(message.SenderName) > 512 {
 		return fmt.Errorf("sender name is invalid")
 	}
+	if message.SenderIsSuperAdmin && !message.SenderIsAdmin {
+		return fmt.Errorf("superadmin sender must also be an admin")
+	}
+	if message.ChatKind != ChatGroup && (message.SenderIsAdmin || message.SenderIsSuperAdmin) {
+		return fmt.Errorf("non-group sender cannot have a group admin role")
+	}
 	if message.Quote != nil {
 		if message.Quote.ID.IsZero() || (message.Quote.Role != QuoteUser && message.Quote.Role != QuoteAssistant) ||
 			message.Quote.Text == "" || !utf8.ValidString(message.Quote.Text) || len(message.Quote.Text) > MaxTextBytes {
@@ -170,6 +188,12 @@ func (message IncomingMessage) Validate() error {
 		}
 		if message.Quote.Role == QuoteAssistant && len(message.Quote.Mentions) != 0 {
 			return fmt.Errorf("quoted assistant must not carry raw mention bindings")
+		}
+		if message.Quote.SenderIsSuperAdmin && !message.Quote.SenderIsAdmin {
+			return fmt.Errorf("quoted superadmin must also be an admin")
+		}
+		if message.Quote.Role == QuoteAssistant && (message.Quote.SenderIsAdmin || message.Quote.SenderIsSuperAdmin) {
+			return fmt.Errorf("assistant quote cannot have a group admin role")
 		}
 		if err := validateMentionBindings(message.Quote.Text, message.Quote.Mentions); err != nil {
 			return fmt.Errorf("quoted message: %w", err)

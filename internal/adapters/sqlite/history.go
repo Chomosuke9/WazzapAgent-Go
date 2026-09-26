@@ -97,9 +97,9 @@ func (store *HistoryStore) list(
 	}
 	args = append(args, int64(query.Limit)+1)
 	rows, err := tx.QueryContext(ctx, `SELECT sequence, message_id, invocation_id, causation_kind,
-        causation_id, role, participant_id, sender_ref, sender_name, quoted_message_id,
-        quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, content_text,
-        content_digest, delivery_status, created_at_ms
+	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin, quoted_message_id,
+	    quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
+	    content_digest, delivery_status, created_at_ms
       FROM history_entries
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sequence > ?`+bound+`
       ORDER BY sequence DESC LIMIT ?`, args...)
@@ -234,7 +234,9 @@ func (store *Store) appendHistoryEntryTx(
 	}
 	var participantID, senderRef any
 	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
+	var quotedSenderIsAdmin, quotedSenderIsSuperAdmin int
 	senderName := ""
+	senderIsAdmin, senderIsSuperAdmin := 0, 0
 	if entry.Sender != nil {
 		if err := ensureInternalSender(ctx, tx, key, *entry.Sender, nowMS); err != nil {
 			return err
@@ -242,6 +244,12 @@ func (store *Store) appendHistoryEntryTx(
 		participantID = entry.Sender.ParticipantID.String()
 		senderRef = entry.Sender.Ref.String()
 		senderName = entry.Sender.DisplayName
+		if entry.Sender.IsAdmin {
+			senderIsAdmin = 1
+		}
+		if entry.Sender.IsSuperAdmin {
+			senderIsSuperAdmin = 1
+		}
 	}
 	if entry.Quote != nil {
 		quotedMessageID = entry.Quote.MessageID.String()
@@ -253,17 +261,23 @@ func (store *Store) appendHistoryEntryTx(
 		if !entry.Quote.SenderRef.IsZero() {
 			quotedSenderRef = entry.Quote.SenderRef.String()
 		}
+		if entry.Quote.SenderIsAdmin {
+			quotedSenderIsAdmin = 1
+		}
+		if entry.Quote.SenderIsSuperAdmin {
+			quotedSenderIsSuperAdmin = 1
+		}
 	}
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO history_entries(
-        tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
-        causation_id, role, participant_id, sender_ref, sender_name,
-		quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, content_text,
-        content_digest, delivery_status, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	    tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
+	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin,
+		quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
+	    content_digest, delivery_status, created_at_ms, updated_at_ms
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 		entry.MessageID.String(), entry.InvocationID.String(), uint8(entry.Causation.Kind),
-		entry.Causation.ID.String(), uint8(entry.Role), participantID, senderRef, senderName,
-		quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText,
+		entry.Causation.ID.String(), uint8(entry.Role), participantID, senderRef, senderName, senderIsAdmin, senderIsSuperAdmin,
+		quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText, quotedSenderIsAdmin, quotedSenderIsSuperAdmin,
 		flattenText(entry.Content), digest[:], uint8(entry.Delivery), entry.CreatedAt.UTC().UnixMilli(), nowMS,
 	)
 	if err != nil {
@@ -449,28 +463,31 @@ type historyScanner interface {
 
 func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte, error) {
 	var (
-		sequence        int64
-		messageValue    string
-		invocationValue string
-		causationKind   uint8
-		causationValue  string
-		role            uint8
-		participant     sql.NullString
-		senderRefValue  sql.NullString
-		senderName      string
-		quotedMessage   sql.NullString
-		quotedSequence  sql.NullInt64
-		quotedRole      sql.NullInt64
-		quotedSenderRef sql.NullString
-		quotedText      sql.NullString
-		content         string
-		contentDigest   []byte
-		delivery        uint8
-		createdAtMS     int64
+		sequence                                      int64
+		messageValue                                  string
+		invocationValue                               string
+		causationKind                                 uint8
+		causationValue                                string
+		role                                          uint8
+		participant                                   sql.NullString
+		senderRefValue                                sql.NullString
+		senderName                                    string
+		senderIsAdmin, senderIsSuperAdmin             int64
+		quotedMessage                                 sql.NullString
+		quotedSequence                                sql.NullInt64
+		quotedRole                                    sql.NullInt64
+		quotedSenderRef                               sql.NullString
+		quotedText                                    sql.NullString
+		quotedSenderIsAdmin, quotedSenderIsSuperAdmin int64
+		content                                       string
+		contentDigest                                 []byte
+		delivery                                      uint8
+		createdAtMS                                   int64
 	)
 	if err := scanner.Scan(&sequence, &messageValue, &invocationValue, &causationKind, &causationValue,
-		&role, &participant, &senderRefValue, &senderName, &quotedMessage, &quotedSequence, &quotedRole,
-		&quotedSenderRef, &quotedText, &content, &contentDigest, &delivery, &createdAtMS); err != nil {
+		&role, &participant, &senderRefValue, &senderName, &senderIsAdmin, &senderIsSuperAdmin,
+		&quotedMessage, &quotedSequence, &quotedRole, &quotedSenderRef, &quotedText,
+		&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &content, &contentDigest, &delivery, &createdAtMS); err != nil {
 		return agent.HistoryEntry{}, 0, nil, storageError("scan history entry", err)
 	}
 	messageID, err := identity.ParseMessageID(messageValue)
@@ -491,7 +508,7 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		Role:      agent.HistoryRole(role), Content: []agent.ContentPart{agent.TextPart{Text: content}},
 		Delivery: agent.DeliveryStatus(delivery), CreatedAt: time.UnixMilli(createdAtMS).UTC(),
 	}
-	if participant.Valid != senderRefValue.Valid {
+	if participant.Valid != senderRefValue.Valid || (!participant.Valid && (senderIsAdmin != 0 || senderIsSuperAdmin != 0)) {
 		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
 	}
 	if participant.Valid {
@@ -503,9 +520,12 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		if parseErr != nil {
 			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
-		entry.Sender = &agent.SenderContext{ParticipantID: participantID, Ref: senderRef, DisplayName: senderName}
+		entry.Sender = &agent.SenderContext{
+			ParticipantID: participantID, Ref: senderRef, DisplayName: senderName,
+			IsAdmin: senderIsAdmin == 1, IsSuperAdmin: senderIsSuperAdmin == 1,
+		}
 	}
-	if quotedMessage.Valid || quotedRole.Valid || quotedSenderRef.Valid || quotedText.Valid {
+	if quotedMessage.Valid || quotedRole.Valid || quotedSenderRef.Valid || quotedText.Valid || quotedSenderIsAdmin != 0 || quotedSenderIsSuperAdmin != 0 {
 		if !quotedMessage.Valid || !quotedRole.Valid || !quotedText.Valid {
 			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
 		}
@@ -517,7 +537,10 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		if quotedSequence.Valid && quotedSequence.Int64 > 0 {
 			quoteSequence = uint64(quotedSequence.Int64)
 		}
-		entry.Quote = &agent.QuoteContext{Sequence: quoteSequence, MessageID: quotedMessageID, Role: agent.HistoryRole(quotedRole.Int64), Text: quotedText.String}
+		entry.Quote = &agent.QuoteContext{
+			Sequence: quoteSequence, MessageID: quotedMessageID, Role: agent.HistoryRole(quotedRole.Int64), Text: quotedText.String,
+			SenderIsAdmin: quotedSenderIsAdmin == 1, SenderIsSuperAdmin: quotedSenderIsSuperAdmin == 1,
+		}
 		if quotedSenderRef.Valid {
 			ref, parseErr := identity.ParseSenderRef(quotedSenderRef.String)
 			if parseErr != nil {

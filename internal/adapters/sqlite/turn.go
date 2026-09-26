@@ -375,15 +375,16 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 func resolveHistoryQuote(ctx context.Context, query actionQuerier, key agent.Key, messageID identity.MessageID) (*agent.QuoteContext, error) {
 	var sequence int64
 	var role, delivery uint8
+	var senderIsAdmin, senderIsSuperAdmin int64
 	var senderRefValue sql.NullString
 	var text string
-	err := query.QueryRowContext(ctx, `SELECT h.sequence, h.role, h.sender_ref, h.content_text, h.delivery_status
+	err := query.QueryRowContext(ctx, `SELECT h.sequence, h.role, h.sender_ref, h.sender_is_admin, h.sender_is_super_admin, h.content_text, h.delivery_status
 	    FROM history_entries h
 	    WHERE h.tenant_id = ? AND h.account_id = ? AND h.chat_id = ? AND h.message_id = ?
 	      AND h.sequence > COALESCE((SELECT r.cutoff_sequence FROM history_resets r
 	        WHERE r.tenant_id = h.tenant_id AND r.account_id = h.account_id AND r.chat_id = h.chat_id), 0)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), messageID.String(),
-	).Scan(&sequence, &role, &senderRefValue, &text, &delivery)
+	).Scan(&sequence, &role, &senderRefValue, &senderIsAdmin, &senderIsSuperAdmin, &text, &delivery)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, agent.NewError(agent.ErrorNotFound, "resolve reply target", errors.New("reply target is not available in the saved history"))
 	}
@@ -392,6 +393,7 @@ func resolveHistoryQuote(ctx context.Context, query actionQuerier, key agent.Key
 	}
 	quote := &agent.QuoteContext{
 		MessageID: messageID, Sequence: uint64(sequence), Role: agent.HistoryRole(role), Text: text,
+		SenderIsAdmin: senderIsAdmin == 1, SenderIsSuperAdmin: senderIsSuperAdmin == 1,
 	}
 	switch quote.Role {
 	case agent.HistoryUser:

@@ -205,6 +205,8 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 			message.Sender = "Contact"
 			if entry.Sender != nil {
 				message.SenderRef = entry.Sender.Ref
+				message.IsAdmin = entry.Sender.IsAdmin
+				message.IsSuperAdmin = entry.Sender.IsSuperAdmin
 				if strings.TrimSpace(entry.Sender.DisplayName) != "" {
 					message.Sender = entry.Sender.DisplayName
 				}
@@ -249,10 +251,12 @@ func transcriptQuote(quote *agent.QuoteContext, senderNames map[identity.SenderR
 	}
 	result := &control.BotQuote{
 		MessageID: quote.MessageID, Role: "user", Sender: "Contact", Content: quote.Text,
+		IsAdmin: quote.SenderIsAdmin, IsSuperAdmin: quote.SenderIsSuperAdmin,
 		Mentions: transcriptMentions(quote.Mentions),
 	}
 	if quote.Role == agent.HistoryAssistant {
 		result.Role, result.Sender = "assistant", "You"
+		result.IsAdmin, result.IsSuperAdmin = false, false
 	} else if name := strings.TrimSpace(senderNames[quote.SenderRef]); name != "" {
 		result.Sender = name
 	}

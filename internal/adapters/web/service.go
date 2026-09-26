@@ -89,24 +89,28 @@ type WhatsAppMentionDTO struct {
 }
 
 type WhatsAppQuoteDTO struct {
-	MessageID string               `json:"messageID"`
-	Role      string               `json:"role"`
-	Sender    string               `json:"sender"`
-	Content   string               `json:"content"`
-	Mentions  []WhatsAppMentionDTO `json:"mentions"`
+	MessageID    string               `json:"messageID"`
+	Role         string               `json:"role"`
+	Sender       string               `json:"sender"`
+	Content      string               `json:"content"`
+	IsAdmin      bool                 `json:"isAdmin"`
+	IsSuperAdmin bool                 `json:"isSuperAdmin"`
+	Mentions     []WhatsAppMentionDTO `json:"mentions"`
 }
 
 type WhatsAppMessageDTO struct {
-	ID        string               `json:"id"`
-	Role      string               `json:"role"`
-	Sender    string               `json:"sender"`
-	SenderRef string               `json:"senderRef"`
-	Content   string               `json:"content"`
-	CreatedAt string               `json:"createdAt"`
-	Delivery  string               `json:"delivery"`
-	Deleted   bool                 `json:"deleted"`
-	Mentions  []WhatsAppMentionDTO `json:"mentions"`
-	Quote     *WhatsAppQuoteDTO    `json:"quote"`
+	ID           string               `json:"id"`
+	Role         string               `json:"role"`
+	Sender       string               `json:"sender"`
+	SenderRef    string               `json:"senderRef"`
+	Content      string               `json:"content"`
+	IsAdmin      bool                 `json:"isAdmin"`
+	IsSuperAdmin bool                 `json:"isSuperAdmin"`
+	CreatedAt    string               `json:"createdAt"`
+	Delivery     string               `json:"delivery"`
+	Deleted      bool                 `json:"deleted"`
+	Mentions     []WhatsAppMentionDTO `json:"mentions"`
+	Quote        *WhatsAppQuoteDTO    `json:"quote"`
 }
 
 type WhatsAppGroupMemberDTO struct {
@@ -318,6 +322,7 @@ func (s *AppService) GetWhatsAppMessages(chatID string) ([]WhatsAppMessageDTO, e
 func whatsAppMessage(item control.BotMessage) WhatsAppMessageDTO {
 	result := WhatsAppMessageDTO{
 		ID: item.ID.String(), Role: item.Role, Sender: item.Sender, Content: item.Content,
+		IsAdmin: item.IsAdmin, IsSuperAdmin: item.IsSuperAdmin,
 		CreatedAt: item.CreatedAt, Delivery: item.Delivery, Deleted: item.Deleted,
 		Mentions: whatsAppMentions(item.Mentions),
 	}
@@ -328,6 +333,7 @@ func whatsAppMessage(item control.BotMessage) WhatsAppMessageDTO {
 		result.Quote = &WhatsAppQuoteDTO{
 			MessageID: item.Quote.MessageID.String(), Role: item.Quote.Role,
 			Sender: item.Quote.Sender, Content: item.Quote.Content,
+			IsAdmin: item.Quote.IsAdmin, IsSuperAdmin: item.Quote.IsSuperAdmin,
 			Mentions: whatsAppMentions(item.Quote.Mentions),
 		}
 	}

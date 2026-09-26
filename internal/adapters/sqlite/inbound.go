@@ -84,15 +84,19 @@ func (store *InboundStore) ClaimAndResolveSender(
 		return inbound.ClaimedMessage{}, agent.NewError(agent.ErrorInternal, "create incoming causation ID", err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO inbound_events(
-        tenant_id, account_id, chat_id, invocation_id, message_id, causation_id,
-		provider_message_id, participant_id, sender_lid, sender_ref, sender_name, input_text,
-        quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
-        chat_kind, mentions_bot, from_me, owner, allowlisted, occurred_at_ms,
-        received_at_ms, turn_state, updated_at_ms
-	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		tenant_id, account_id, chat_id, invocation_id, message_id, causation_id,
+		provider_message_id, participant_id, sender_lid, sender_ref, sender_name,
+		sender_is_admin, sender_is_super_admin, input_text,
+		quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text,
+		quoted_sender_is_admin, quoted_sender_is_super_admin, replied_to_bot,
+		chat_kind, mentions_bot, from_me, owner, allowlisted, occurred_at_ms,
+		received_at_ms, turn_state, updated_at_ms
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		candidate.TenantID.String(), candidate.AccountID.String(), chatID.String(), invocationID.String(), messageID.String(), causationID.String(),
-		candidate.ProviderMessageID, participantID.String(), candidate.SenderLID.String(), senderRef.String(), candidate.SenderName, candidate.Text,
-		quotedID(quote), quotedSequence(quote), quotedRole(quote), quotedSenderRef(quote), quotedText(quote), boolInt(quote != nil && quote.Role == conversation.QuoteAssistant),
+		candidate.ProviderMessageID, participantID.String(), candidate.SenderLID.String(), senderRef.String(), candidate.SenderName,
+		boolInt(candidate.SenderIsAdmin), boolInt(candidate.SenderIsSuperAdmin), candidate.Text,
+		quotedID(quote), quotedSequence(quote), quotedRole(quote), quotedSenderRef(quote), quotedText(quote),
+		boolInt(quote != nil && quote.SenderIsAdmin), boolInt(quote != nil && quote.SenderIsSuperAdmin), boolInt(quote != nil && quote.Role == conversation.QuoteAssistant),
 		uint8(candidate.ChatKind), boolInt(candidate.MentionsBot), boolInt(candidate.FromMe), boolInt(candidate.Owner), boolInt(candidate.Allowlisted),
 		candidate.OccurredAt.UTC().UnixMilli(), nowMS, nowMS,
 	)
@@ -123,16 +127,17 @@ func (store *InboundStore) ClaimAndResolveSender(
 	}
 	handled := !shouldRecord && candidate.Allowlisted && candidate.ChatKind != conversation.ChatStatus && !candidate.FromMe
 	return inbound.ClaimedMessage{Message: conversation.IncomingMessage{
-		ID:           messageID,
-		InvocationID: invocationID,
-		CausationID:  causationID,
-		TenantID:     candidate.TenantID,
-		AccountID:    candidate.AccountID,
-		ChatID:       chatID,
-		SenderID:     participantID,
-		SenderLID:    candidate.SenderLID,
-		SenderRef:    senderRef,
-		SenderName:   candidate.SenderName,
+		ID:            messageID,
+		InvocationID:  invocationID,
+		CausationID:   causationID,
+		TenantID:      candidate.TenantID,
+		AccountID:     candidate.AccountID,
+		ChatID:        chatID,
+		SenderID:      participantID,
+		SenderLID:     candidate.SenderLID,
+		SenderRef:     senderRef,
+		SenderName:    candidate.SenderName,
+		SenderIsAdmin: candidate.SenderIsAdmin, SenderIsSuperAdmin: candidate.SenderIsSuperAdmin,
 		ChatKind:     candidate.ChatKind,
 		Text:         candidate.Text,
 		Mentions:     resolvedMentions,
@@ -187,6 +192,7 @@ func inboundTranscriptEntry(
 		}
 		historyQuote = &agent.QuoteContext{
 			Sequence: quote.Sequence, MessageID: quote.ID, Role: role, SenderRef: quote.SenderRef, Text: quote.Text,
+			SenderIsAdmin: quote.SenderIsAdmin, SenderIsSuperAdmin: quote.SenderIsSuperAdmin,
 			Mentions: agentMentionContexts(quote.Mentions),
 		}
 	}
@@ -196,6 +202,7 @@ func inboundTranscriptEntry(
 		Role:      agent.HistoryUser,
 		Sender: &agent.SenderContext{
 			ParticipantID: participantID, Ref: senderRef, DisplayName: candidate.SenderName,
+			IsAdmin: candidate.SenderIsAdmin, IsSuperAdmin: candidate.SenderIsSuperAdmin,
 		},
 		Quote:    historyQuote,
 		Content:  []agent.ContentPart{agent.TextPart{Text: candidate.Text}},
@@ -498,8 +505,9 @@ func (store *InboundStore) ListRecoverableInbound(
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
-		e.participant_id, e.sender_lid, e.sender_ref, e.sender_name, e.input_text,
-        e.quoted_message_id, e.quoted_sequence, e.quoted_role, e.quoted_sender_ref, e.quoted_text, e.replied_to_bot, e.chat_kind,
+		e.participant_id, e.sender_lid, e.sender_ref, e.sender_name, e.sender_is_admin, e.sender_is_super_admin, e.input_text,
+		e.quoted_message_id, e.quoted_sequence, e.quoted_role, e.quoted_sender_ref, e.quoted_text,
+		e.quoted_sender_is_admin, e.quoted_sender_is_super_admin, e.replied_to_bot, e.chat_kind,
         e.mentions_bot, e.from_me, p.owner, c.allowlisted, e.occurred_at_ms, e.received_at_ms
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
@@ -522,16 +530,19 @@ func (store *InboundStore) ListRecoverableInbound(
 	messages := make([]conversation.IncomingMessage, 0)
 	for rows.Next() {
 		var (
-			messageValue, invocationValue, causationValue, accountValue, chatValue string
-			participantValue, senderLIDValue, senderRefValue, senderName, text     string
-			quotedMessage, quotedSender, quotedTextValue                           sql.NullString
-			quotedSequenceValue, quotedRoleValue                                   sql.NullInt64
-			repliedToBot, chatKind, mentionsBot, fromMe, owner, allowlisted        int64
-			occurredAt, receivedAt                                                 int64
+			messageValue, invocationValue, causationValue, accountValue, chatValue           string
+			participantValue, senderLIDValue, senderRefValue, senderName, text               string
+			quotedMessage, quotedSender, quotedTextValue                                     sql.NullString
+			quotedSequenceValue, quotedRoleValue                                             sql.NullInt64
+			senderIsAdmin, senderIsSuperAdmin, quotedSenderIsAdmin, quotedSenderIsSuperAdmin int64
+			repliedToBot, chatKind, mentionsBot, fromMe, owner, allowlisted                  int64
+			occurredAt, receivedAt                                                           int64
 		)
 		if err := rows.Scan(&messageValue, &invocationValue, &causationValue, &accountValue, &chatValue,
-			&participantValue, &senderLIDValue, &senderRefValue, &senderName, &text,
-			&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot, &chatKind, &mentionsBot,
+			&participantValue, &senderLIDValue, &senderRefValue, &senderName,
+			&senderIsAdmin, &senderIsSuperAdmin, &text,
+			&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue,
+			&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &repliedToBot, &chatKind, &mentionsBot,
 			&fromMe, &owner, &allowlisted, &occurredAt, &receivedAt); err != nil {
 			return nil, storageError("scan recoverable inbound", err)
 		}
@@ -567,7 +578,8 @@ func (store *InboundStore) ListRecoverableInbound(
 		if err != nil {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
 		}
-		quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue)
+		quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue,
+			quotedSenderIsAdmin == 1, quotedSenderIsSuperAdmin == 1)
 		if err != nil {
 			return nil, err
 		}
@@ -575,6 +587,7 @@ func (store *InboundStore) ListRecoverableInbound(
 			ID: messageID, InvocationID: invocationID, CausationID: causationID,
 			TenantID: tenantID, AccountID: accountID, ChatID: chatID,
 			SenderID: participantID, SenderLID: senderLID, SenderRef: senderRef, SenderName: senderName,
+			SenderIsAdmin: senderIsAdmin == 1, SenderIsSuperAdmin: senderIsSuperAdmin == 1,
 			ChatKind: conversation.ChatKind(chatKind), Text: text,
 			Quote: quote, RepliedToBot: repliedToBot == 1,
 			MentionsBot: mentionsBot == 1, FromMe: fromMe == 1, Owner: owner == 1, Allowlisted: allowlisted == 1,
@@ -902,19 +915,23 @@ func loadInboundByProvider(
 		senderName, text                                                                                string
 		quotedMessage, quotedSender, quotedTextValue                                                    sql.NullString
 		quotedSequenceValue, quotedRoleValue                                                            sql.NullInt64
+		senderIsAdmin, senderIsSuperAdmin, quotedSenderIsAdmin, quotedSenderIsSuperAdmin                int64
 		chatKind, mentionsBot, fromMe, owner, allowlisted, occurredAt, receivedAt                       int64
 		repliedToBot                                                                                    int64
 		state                                                                                           int64
 	)
 	err := query.QueryRowContext(ctx, `SELECT message_id, invocation_id, causation_id,
-		participant_id, sender_lid, sender_ref, sender_name, input_text,
-        quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, replied_to_bot,
+		participant_id, sender_lid, sender_ref, sender_name, sender_is_admin, sender_is_super_admin, input_text,
+        quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text,
+        quoted_sender_is_admin, quoted_sender_is_super_admin, replied_to_bot,
         chat_kind, mentions_bot,
         from_me, owner, allowlisted, occurred_at_ms, received_at_ms, turn_state
       FROM inbound_events WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_message_id = ?`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
 	).Scan(&messageValue, &invocationValue, &causationValue, &participantValue, &senderLIDValue, &senderRefValue,
-		&senderName, &text, &quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue, &repliedToBot,
+		&senderName, &senderIsAdmin, &senderIsSuperAdmin, &text,
+		&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue,
+		&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &repliedToBot,
 		&chatKind, &mentionsBot, &fromMe, &owner, &allowlisted, &occurredAt, &receivedAt, &state)
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, err
@@ -943,7 +960,8 @@ func loadInboundByProvider(
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode inbound sender ref", err)
 	}
-	quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue)
+	quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue,
+		quotedSenderIsAdmin == 1, quotedSenderIsSuperAdmin == 1)
 	if err != nil {
 		return conversation.IncomingMessage{}, 0, err
 	}
@@ -958,16 +976,17 @@ func loadInboundByProvider(
 		}
 	}
 	return conversation.IncomingMessage{
-		ID:           messageID,
-		InvocationID: invocationID,
-		CausationID:  causationID,
-		TenantID:     tenantID,
-		AccountID:    accountID,
-		ChatID:       chatID,
-		SenderID:     participantID,
-		SenderLID:    senderLID,
-		SenderRef:    senderRef,
-		SenderName:   senderName,
+		ID:            messageID,
+		InvocationID:  invocationID,
+		CausationID:   causationID,
+		TenantID:      tenantID,
+		AccountID:     accountID,
+		ChatID:        chatID,
+		SenderID:      participantID,
+		SenderLID:     senderLID,
+		SenderRef:     senderRef,
+		SenderName:    senderName,
+		SenderIsAdmin: senderIsAdmin == 1, SenderIsSuperAdmin: senderIsSuperAdmin == 1,
 		ChatKind:     conversation.ChatKind(chatKind),
 		Text:         text,
 		Mentions:     bindings,
@@ -1111,7 +1130,10 @@ func resolveQuotedMessage(
 	}
 	var messageValue, senderRefValue string
 	var messageSequence sql.NullInt64
+	var senderIsAdmin, senderIsSuperAdmin int64
 	err = query.QueryRowContext(ctx, `SELECT e.message_id, h.sequence, e.sender_ref,
+        COALESCE(h.sender_is_admin, e.sender_is_admin, 0),
+        COALESCE(h.sender_is_super_admin, e.sender_is_super_admin, 0),
         CASE
           WHEN r.reset_at_ms IS NOT NULL AND e.received_at_ms <= r.reset_at_ms
             THEN '[konten pesan sebelum reset tidak disertakan]'
@@ -1125,7 +1147,7 @@ func resolveQuotedMessage(
         AND e.sender_ref IS NOT NULL
       ORDER BY e.received_at_ms DESC LIMIT 1`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
-	).Scan(&messageValue, &messageSequence, &senderRefValue, &text)
+	).Scan(&messageValue, &messageSequence, &senderRefValue, &senderIsAdmin, &senderIsSuperAdmin, &text)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1143,7 +1165,10 @@ func resolveQuotedMessage(
 	if text == "" {
 		return nil, nil
 	}
-	quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteUser, SenderRef: senderRef, Text: text}
+	quote := &conversation.QuotedMessage{
+		ID: messageID, Role: conversation.QuoteUser, SenderRef: senderRef, Text: text,
+		SenderIsAdmin: senderIsAdmin == 1, SenderIsSuperAdmin: senderIsSuperAdmin == 1,
+	}
 	if messageSequence.Valid && messageSequence.Int64 > 0 {
 		quote.Sequence = uint64(messageSequence.Int64)
 	}
@@ -1213,8 +1238,10 @@ func decodeQuotedMessage(
 	role sql.NullInt64,
 	sender sql.NullString,
 	text sql.NullString,
+	senderIsAdmin bool,
+	senderIsSuperAdmin bool,
 ) (*conversation.QuotedMessage, error) {
-	if !message.Valid && !role.Valid && !sender.Valid && !text.Valid {
+	if !message.Valid && !role.Valid && !sender.Valid && !text.Valid && !senderIsAdmin && !senderIsSuperAdmin {
 		return nil, nil
 	}
 	if !message.Valid || !role.Valid || !text.Valid {
@@ -1224,7 +1251,10 @@ func decodeQuotedMessage(
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", err)
 	}
-	quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteRole(role.Int64), Text: text.String}
+	quote := &conversation.QuotedMessage{
+		ID: messageID, Role: conversation.QuoteRole(role.Int64), Text: text.String,
+		SenderIsAdmin: senderIsAdmin, SenderIsSuperAdmin: senderIsSuperAdmin,
+	}
 	if sequence.Valid && sequence.Int64 > 0 {
 		quote.Sequence = uint64(sequence.Int64)
 	}
@@ -1238,6 +1268,10 @@ func decodeQuotedMessage(
 	if (quote.Role == conversation.QuoteUser) != sender.Valid ||
 		(quote.Role != conversation.QuoteUser && quote.Role != conversation.QuoteAssistant) {
 		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", errors.New("quote role and sender do not match"))
+	}
+	if quote.SenderIsSuperAdmin && !quote.SenderIsAdmin ||
+		(quote.Role == conversation.QuoteAssistant && (quote.SenderIsAdmin || quote.SenderIsSuperAdmin)) {
+		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode quoted message", errors.New("quote role and group admin flags do not match"))
 	}
 	return quote, nil
 }

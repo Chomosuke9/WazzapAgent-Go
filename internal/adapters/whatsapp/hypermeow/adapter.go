@@ -700,6 +700,23 @@ func (adapter *Adapter) ReadChatAuthority(ctx context.Context, principal policy.
 	return authority, authority.Validate()
 }
 
+func (adapter *Adapter) groupRoleFlags(ctx context.Context, chat, sender types.JID) (bool, bool) {
+	if chat.Server != types.GroupServer || sender.IsEmpty() {
+		return false, false
+	}
+	info, _, err := adapter.readGroupSnapshot(ctx, chat)
+	if err != nil {
+		return false, false
+	}
+	for _, participant := range info.Participants {
+		if participantMatches(participant, sender) {
+			isSuperAdmin := participant.IsSuperAdmin
+			return participant.IsAdmin || isSuperAdmin, isSuperAdmin
+		}
+	}
+	return false, false
+}
+
 func participantMatches(participant types.GroupParticipant, wanted types.JID) bool {
 	if wanted.IsEmpty() {
 		return false
@@ -948,6 +965,7 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 	if chatKind == conversation.ChatGroup && contextInfo != nil {
 		mentioned = adapter.mentionsOwnAccount(contextInfo.GetMentionedJID())
 	}
+	senderIsAdmin, senderIsSuperAdmin := adapter.groupRoleFlags(ctx, chat, sender)
 	if contextInfo != nil {
 		mentions = adapter.extractInboundMentions(ctx, text, contextInfo.GetMentionedJID())
 	}
@@ -964,6 +982,8 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 		SenderLID:               mustLID(senderLID),
 		ProviderSenderPhone:     jidString(senderPhone),
 		SenderName:              senderName,
+		SenderIsAdmin:           senderIsAdmin,
+		SenderIsSuperAdmin:      senderIsSuperAdmin,
 		ChatKind:                chatKind,
 		Text:                    text,
 		Mentions:                mentions,

@@ -336,8 +336,12 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	lines := []string{fmt.Sprintf("【#%s】 %s", contextID, timestamp)}
 	if entry.Quote != nil {
 		quotedName := entry.Quote.SenderRef.String()
+		quotedRole := groupRoleLabel(entry.Quote.SenderIsAdmin, entry.Quote.SenderIsSuperAdmin)
 		if entry.Quote.Role == HistoryAssistant {
 			quotedName = "You"
+			quotedRole = ""
+		} else {
+			quotedName += quotedRole
 		}
 		lines = append(lines, fmt.Sprintf("REPLYING TO 【#%s】 %s: %q", formatCompactContextID(entry.Quote.Sequence), quotedName, entry.Quote.Text))
 	}
@@ -357,8 +361,22 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 			senderRef = value
 		}
 	}
-	lines = append(lines, fmt.Sprintf("%s 【%s】: %s", displayName, senderRef, text))
+	roleLabel := ""
+	if entry.Sender != nil {
+		roleLabel = groupRoleLabel(entry.Sender.IsAdmin, entry.Sender.IsSuperAdmin)
+	}
+	lines = append(lines, fmt.Sprintf("%s 【%s】%s: %s", displayName, senderRef, roleLabel, text))
 	return strings.Join(lines, "\n")
+}
+
+func groupRoleLabel(isAdmin, isSuperAdmin bool) string {
+	if isSuperAdmin {
+		return "【superadmin】"
+	}
+	if isAdmin {
+		return "【admin】"
+	}
+	return ""
 }
 
 // Compact context IDs are six decimal digits and wrap at 999999. The durable

@@ -403,6 +403,7 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 		quote = &agent.QuoteContext{
 			Sequence: message.Quote.Sequence, MessageID: message.Quote.ID, Role: role,
 			SenderRef: message.Quote.SenderRef, Text: message.Quote.Text,
+			SenderIsAdmin: message.Quote.SenderIsAdmin, SenderIsSuperAdmin: message.Quote.SenderIsSuperAdmin,
 			Mentions: conversationMentions(message.Quote.Mentions),
 		}
 	}
@@ -414,6 +415,8 @@ func invocationFromMessage(message conversation.IncomingMessage, version agent.C
 			ParticipantID: message.SenderID,
 			Ref:           message.SenderRef,
 			DisplayName:   message.SenderName,
+			IsAdmin:       message.SenderIsAdmin,
+			IsSuperAdmin:  message.SenderIsSuperAdmin,
 		},
 		Quote:         quote,
 		Input:         []agent.ContentPart{agent.TextPart{Text: message.Text}},

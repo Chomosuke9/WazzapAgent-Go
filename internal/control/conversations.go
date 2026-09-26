@@ -62,24 +62,28 @@ type BotMention struct {
 }
 
 type BotQuote struct {
-	MessageID identity.MessageID
-	Role      string
-	Sender    string
-	Content   string
-	Mentions  []BotMention
+	MessageID    identity.MessageID
+	Role         string
+	Sender       string
+	Content      string
+	IsAdmin      bool
+	IsSuperAdmin bool
+	Mentions     []BotMention
 }
 
 type BotMessage struct {
-	ID        identity.MessageID
-	Role      string
-	Sender    string
-	SenderRef identity.SenderRef
-	Content   string
-	CreatedAt string
-	Delivery  string
-	Deleted   bool
-	Mentions  []BotMention
-	Quote     *BotQuote
+	ID           identity.MessageID
+	Role         string
+	Sender       string
+	SenderRef    identity.SenderRef
+	Content      string
+	IsAdmin      bool
+	IsSuperAdmin bool
+	CreatedAt    string
+	Delivery     string
+	Deleted      bool
+	Mentions     []BotMention
+	Quote        *BotQuote
 }
 
 type ConversationRepository interface {

@@ -61,6 +61,8 @@ type SenderContext struct {
 	ParticipantID identity.ParticipantID
 	Ref           identity.SenderRef
 	DisplayName   string
+	IsAdmin       bool
+	IsSuperAdmin  bool
 }
 
 // MentionContext binds one raw WhatsApp token to a model-safe identity. The
@@ -124,12 +126,14 @@ type Invocation struct {
 type QuoteContext struct {
 	// Sequence is optional transcript ordering metadata. It is deliberately not
 	// part of invocation identity so quoted Part 2 turns remain replayable.
-	Sequence  uint64
-	MessageID identity.MessageID
-	Role      HistoryRole
-	SenderRef identity.SenderRef
-	Text      string
-	Mentions  []MentionContext
+	Sequence           uint64
+	MessageID          identity.MessageID
+	Role               HistoryRole
+	SenderRef          identity.SenderRef
+	SenderIsAdmin      bool
+	SenderIsSuperAdmin bool
+	Text               string
+	Mentions           []MentionContext
 }
 
 type ModelRole uint8
@@ -300,12 +304,14 @@ func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) 
 		writeField(&canonical, invocation.Sender.ParticipantID.String())
 		writeField(&canonical, invocation.Sender.Ref.String())
 		writeField(&canonical, invocation.Sender.DisplayName)
+		writeGroupRoleDigest(&canonical, invocation.Sender.IsAdmin, invocation.Sender.IsSuperAdmin)
 	}
 	if invocation.Quote != nil {
 		writeField(&canonical, invocation.Quote.MessageID.String())
 		canonical.WriteByte(byte(invocation.Quote.Role))
 		writeField(&canonical, invocation.Quote.SenderRef.String())
 		writeField(&canonical, invocation.Quote.Text)
+		writeGroupRoleDigest(&canonical, invocation.Quote.SenderIsAdmin, invocation.Quote.SenderIsSuperAdmin)
 	}
 	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Input)))
 	for _, part := range invocation.Input {
@@ -357,6 +363,9 @@ func validateInvocation(key Key, invocation Invocation) error {
 	}
 	if invocation.Sender != nil && (!utf8.ValidString(invocation.Sender.DisplayName) || len(invocation.Sender.DisplayName) > MaxDisplayNameBytes) {
 		return Errorf(ErrorInvalidArgument, "validate invocation", "invalid sender display name")
+	}
+	if invocation.Sender != nil && invocation.Sender.IsSuperAdmin && !invocation.Sender.IsAdmin {
+		return Errorf(ErrorInvalidArgument, "validate invocation", "superadmin sender must also be an admin")
 	}
 	if err := validateQuoteContext(invocation.Quote); err != nil {
 		return NewError(ErrorInvalidArgument, "validate invocation", err)
@@ -456,6 +465,25 @@ func quoteMentions(quote *QuoteContext) []MentionContext {
 		return nil
 	}
 	return quote.Mentions
+}
+
+// writeGroupRoleDigest adds trusted role metadata without changing the digest
+// of existing messages that have neither admin flag set.
+func writeGroupRoleDigest(buffer *bytes.Buffer, isAdmin, isSuperAdmin bool) {
+	if !isAdmin && !isSuperAdmin {
+		return
+	}
+	writeField(buffer, "wazzapagent.group-role.v1")
+	if isAdmin {
+		buffer.WriteByte(1)
+	} else {
+		buffer.WriteByte(0)
+	}
+	if isSuperAdmin {
+		buffer.WriteByte(1)
+	} else {
+		buffer.WriteByte(0)
+	}
 }
 
 func writeMentionDigestExtension(buffer *bytes.Buffer, content, quoted []MentionContext) {
