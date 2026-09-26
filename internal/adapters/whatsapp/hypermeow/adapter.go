@@ -23,6 +23,7 @@ import (
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	waLog "github.com/polymorfa/hypermeow/util/log"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
@@ -959,8 +960,18 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 	mentioned := false
 	mentions := []conversation.IncomingMention(nil)
 	quotedMessageID := ""
+	quotedMessageJSON := []byte(nil)
+	var quotedMessageFromMe *bool
 	if contextInfo != nil {
 		quotedMessageID = contextInfo.GetStanzaID()
+		if strings.EqualFold(strings.TrimSpace(text), "/catch") && quotedMessageID != "" && contextInfo.GetQuotedMessage() != nil {
+			quotedMessageJSON, _ = protojson.Marshal(contextInfo.GetQuotedMessage())
+			if len(quotedMessageJSON) == 0 {
+				quotedMessageFromMe = nil
+			} else {
+				quotedMessageFromMe = adapter.quotedMessageFromMe(contextInfo.GetParticipant())
+			}
+		}
 	}
 	if chatKind == conversation.ChatGroup && contextInfo != nil {
 		mentioned = adapter.mentionsOwnAccount(contextInfo.GetMentionedJID())
@@ -974,26 +985,39 @@ func (adapter *Adapter) normalizeMessage(ctx context.Context, event *events.Mess
 		senderName = adapter.contactPushName(ctx, sender, event.Info.SenderAlt, senderPhone)
 	}
 	return conversation.IncomingCandidate{
-		TenantID:                adapter.tenantID,
-		AccountID:               adapter.accountID,
-		ProviderMessageID:       string(event.Info.ID),
-		ProviderQuotedMessageID: quotedMessageID,
-		ProviderChatAddress:     chatAddress,
-		SenderLID:               mustLID(senderLID),
-		ProviderSenderPhone:     jidString(senderPhone),
-		SenderName:              senderName,
-		SenderIsAdmin:           senderIsAdmin,
-		SenderIsSuperAdmin:      senderIsSuperAdmin,
-		ChatKind:                chatKind,
-		Text:                    text,
-		Mentions:                mentions,
-		MentionsBot:             mentioned,
-		FromMe:                  event.Info.IsFromMe,
-		Owner:                   adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
-		Allowlisted:             allowlisted,
-		OccurredAt:              event.Info.Timestamp.UTC(),
-		ReceivedAt:              time.Now().UTC(),
+		TenantID:                  adapter.tenantID,
+		AccountID:                 adapter.accountID,
+		ProviderMessageID:         string(event.Info.ID),
+		ProviderQuotedMessageID:   quotedMessageID,
+		ProviderQuotedMessageJSON: quotedMessageJSON,
+		ProviderQuotedFromMe:      quotedMessageFromMe,
+		ProviderChatAddress:       chatAddress,
+		SenderLID:                 mustLID(senderLID),
+		ProviderSenderPhone:       jidString(senderPhone),
+		SenderName:                senderName,
+		SenderIsAdmin:             senderIsAdmin,
+		SenderIsSuperAdmin:        senderIsSuperAdmin,
+		ChatKind:                  chatKind,
+		Text:                      text,
+		Mentions:                  mentions,
+		MentionsBot:               mentioned,
+		FromMe:                    event.Info.IsFromMe,
+		Owner:                     adapter.isConfiguredOwner(sender, event.Info.SenderAlt),
+		Allowlisted:               allowlisted,
+		OccurredAt:                event.Info.Timestamp.UTC(),
+		ReceivedAt:                time.Now().UTC(),
 	}, true
+}
+
+func (adapter *Adapter) quotedMessageFromMe(participant string) *bool {
+	if participant == "" {
+		return nil
+	}
+	if _, err := types.ParseJID(participant); err != nil {
+		return nil
+	}
+	fromMe := adapter.mentionsOwnAccount([]string{participant})
+	return &fromMe
 }
 
 func (adapter *Adapter) contactPushName(ctx context.Context, addresses ...types.JID) string {

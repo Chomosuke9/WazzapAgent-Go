@@ -94,6 +94,13 @@ Jangan menandai command selesai sebelum `SendText` berhasil. Mengirim tanpa
 `MarkCommandHandled` akan meninggalkan command dalam keadaan belum selesai dan
 dapat membuat recovery memprosesnya kembali.
 
+Handler command menerima teks dan quote yang sudah dinormalisasi. Payload
+protobuf provider tidak diteruskan sebagai parameter handler. `/catch` adalah
+pengecualian yang sempit: adapter menangkap `ContextInfo.QuotedMessage` hanya
+untuk invocation `/catch`, menyimpannya terpisah dari transcript, lalu handler
+membacanya melalui `command.RawQuotedMessageReader` agar bisa dipulihkan setelah
+restart.
+
 Keluarga `/group` memiliki descriptor inbound di `group.go` dan handler yang
 menerima `command.Adapter` untuk respons teks. Handler tersebut memperluas
 adapter menjadi `WhatsAppCommandAdapter` untuk memperoleh akses native client

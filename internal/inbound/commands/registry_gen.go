@@ -5,6 +5,7 @@ package commands
 import "github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 
 var Descriptors = []command.Descriptor{
+	CatchCommand,
 	DumpCommand,
 	GroupCommand,
 	HelpCommand,

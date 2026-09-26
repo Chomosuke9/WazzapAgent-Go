@@ -98,6 +98,7 @@ const (
 	CapabilityCommandHelp     Capability = "chat.command.help"
 	CapabilityCommandInfo     Capability = "chat.command.info"
 	CapabilityCommandGroup    Capability = "chat.command.group"
+	CapabilityCommandCatch    Capability = "chat.command.catch"
 	CapabilityHistoryReset    Capability = "chat.history.reset"
 	CapabilityPromptWrite     Capability = "chat.prompt.write"
 	CapabilityPermissionWrite Capability = "chat.permission.write"
@@ -142,7 +143,7 @@ func (set CapabilitySet) Values() []Capability { return append([]Capability(nil)
 
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityCommandGroup, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite, CapabilityTriggerWrite, CapabilityCommandExecute,
+	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityCommandGroup, CapabilityCommandCatch, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite, CapabilityTriggerWrite, CapabilityCommandExecute,
 		CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageMarkRead, CapabilityChatPresence, CapabilityChatContextRead:
 		return true
 	case CapabilityGroupDelete, CapabilityGroupMute, CapabilityGroupKick, CapabilityGroupClose, CapabilityGroupOpen, CapabilityGroupDescription:

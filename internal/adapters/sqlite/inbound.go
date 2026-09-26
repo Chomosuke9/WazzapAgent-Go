@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
@@ -103,6 +104,21 @@ func (store *InboundStore) ClaimAndResolveSender(
 	if err != nil {
 		return inbound.ClaimedMessage{}, storageError("insert incoming event", err)
 	}
+	if len(candidate.ProviderQuotedMessageJSON) > 0 {
+		var fromMe any
+		if candidate.ProviderQuotedFromMe != nil {
+			fromMe = boolInt(*candidate.ProviderQuotedFromMe)
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO catch_raw_quotes(
+			tenant_id, account_id, chat_id, invocation_id, provider_message_id, from_me, message_json
+		  ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			candidate.TenantID.String(), candidate.AccountID.String(), chatID.String(), invocationID.String(),
+			candidate.ProviderQuotedMessageID, fromMe, candidate.ProviderQuotedMessageJSON,
+		)
+		if err != nil {
+			return inbound.ClaimedMessage{}, storageError("persist /catch quoted message", err)
+		}
+	}
 	if err := persistInboundMentions(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, messageID, resolvedMentions); err != nil {
 		return inbound.ClaimedMessage{}, err
 	}
@@ -150,6 +166,52 @@ func (store *InboundStore) ClaimAndResolveSender(
 		OccurredAt:   candidate.OccurredAt.UTC(),
 		ReceivedAt:   candidate.ReceivedAt.UTC(),
 	}, Handled: handled}, nil
+}
+
+// ReadRawQuotedMessage returns the provider snapshot captured with this /catch
+// invocation. Sender origin comes from the resolved quote when available, with
+// the provider participant identity as a fallback for messages absent from the
+// normal text transcript.
+func (store *InboundStore) ReadRawQuotedMessage(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+) (command.RawQuotedMessage, error) {
+	if message.TenantID.IsZero() || message.AccountID.IsZero() || message.ChatID.IsZero() || message.InvocationID.IsZero() {
+		return command.RawQuotedMessage{}, agent.NewError(agent.ErrorInvalidArgument, "read /catch quoted message", errors.New("valid inbound message identity is required"))
+	}
+	var result command.RawQuotedMessage
+	var capturedFromMe, quoteRole sql.NullInt64
+	err := store.db.QueryRowContext(ctx, `SELECT
+		q.provider_message_id, c.provider_address, q.from_me, e.quoted_role, q.message_json
+	  FROM catch_raw_quotes q
+	  JOIN inbound_events e ON e.tenant_id = q.tenant_id AND e.account_id = q.account_id
+		AND e.chat_id = q.chat_id AND e.invocation_id = q.invocation_id
+	  JOIN chats c ON c.tenant_id = q.tenant_id AND c.account_id = q.account_id AND c.id = q.chat_id
+	  WHERE q.tenant_id = ? AND q.account_id = ? AND q.chat_id = ? AND q.invocation_id = ?`,
+		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
+	).Scan(&result.ProviderMessageID, &result.RemoteJID, &capturedFromMe, &quoteRole, &result.MessageJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return command.RawQuotedMessage{}, agent.NewError(agent.ErrorNotFound, "read /catch quoted message", err)
+	}
+	if err != nil {
+		return command.RawQuotedMessage{}, storageError("read /catch quoted message", err)
+	}
+	if result.ProviderMessageID == "" || result.RemoteJID == "" || len(result.MessageJSON) == 0 {
+		return command.RawQuotedMessage{}, agent.NewError(agent.ErrorIntegrityFailure, "read /catch quoted message", errors.New("captured provider payload is incomplete"))
+	}
+	switch {
+	case quoteRole.Valid && quoteRole.Int64 == int64(conversation.QuoteAssistant):
+		result.FromMe = true
+	case quoteRole.Valid && quoteRole.Int64 == int64(conversation.QuoteUser):
+		result.FromMe = false
+	case quoteRole.Valid:
+		return command.RawQuotedMessage{}, agent.NewError(agent.ErrorIntegrityFailure, "read /catch quoted message", errors.New("quoted message role is invalid"))
+	case capturedFromMe.Valid && (capturedFromMe.Int64 == 0 || capturedFromMe.Int64 == 1):
+		result.FromMe = capturedFromMe.Int64 == 1
+	default:
+		return command.RawQuotedMessage{}, agent.NewError(agent.ErrorNotFound, "read /catch quoted message", errors.New("quoted message sender could not be determined"))
+	}
+	return result, nil
 }
 
 func shouldRecordInboundHistory(

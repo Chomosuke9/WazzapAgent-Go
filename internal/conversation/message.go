@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 const MaxTextBytes = 32 * 1024
 const MaxMentions = mention.MaxBindings
+const MaxRawQuotedMessageBytes = 1024 * 1024
 
 type ChatKind uint8
 
@@ -46,8 +48,13 @@ type IncomingCandidate struct {
 	AccountID               identity.AccountID
 	ProviderMessageID       string
 	ProviderQuotedMessageID string
-	ProviderChatAddress     string
-	SenderLID               identity.LID
+	// These fields are populated only for /catch invocations. They carry the
+	// provider's serialized quoted message to the command store and never enter
+	// the model context.
+	ProviderQuotedMessageJSON []byte
+	ProviderQuotedFromMe      *bool
+	ProviderChatAddress       string
+	SenderLID                 identity.LID
 	// ProviderSenderPhone is an optional delivery/addressing alias, never identity.
 	ProviderSenderPhone string
 	SenderName          string
@@ -73,6 +80,14 @@ func (candidate IncomingCandidate) Validate() error {
 	}
 	if len(candidate.ProviderQuotedMessageID) > 512 {
 		return fmt.Errorf("provider quoted message ID is invalid")
+	}
+	if len(candidate.ProviderQuotedMessageJSON) > MaxRawQuotedMessageBytes ||
+		(len(candidate.ProviderQuotedMessageJSON) > 0 &&
+			(strings.TrimSpace(candidate.ProviderQuotedMessageID) == "" || !json.Valid(candidate.ProviderQuotedMessageJSON))) {
+		return fmt.Errorf("provider quoted message payload is invalid")
+	}
+	if candidate.ProviderQuotedFromMe != nil && len(candidate.ProviderQuotedMessageJSON) == 0 {
+		return fmt.Errorf("provider quoted message origin has no payload")
 	}
 	if strings.TrimSpace(candidate.ProviderChatAddress) == "" || len(candidate.ProviderChatAddress) > 512 {
 		return fmt.Errorf("provider chat address is invalid")
