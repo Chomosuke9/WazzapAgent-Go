@@ -1,3 +1,4 @@
 *.go text eol=lf
 # Migration checksums are calculated from the embedded SQL bytes.
 *.sql text eol=lf
+internal/app/systemprompt.txt text eol=lf

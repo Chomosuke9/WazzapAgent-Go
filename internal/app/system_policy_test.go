@@ -25,6 +25,7 @@ func TestRenderSystemPolicyRendersSupportedPlaceholders(t *testing.T) {
 
 func TestRenderSystemPolicyExplainsPromptAndHistoryBoundaries(t *testing.T) {
 	rendered := RenderSystemPolicy("Wazzap", time.Date(2026, 9, 15, 1, 2, 3, 0, time.UTC))
+	rendered = strings.ReplaceAll(rendered, "\r\n", "\n")
 	for _, value := range []string{
 		"<prompt_handling>",
 		"<prompt_override>",
