@@ -103,7 +103,9 @@ restart.
 
 Keluarga `/group` memiliki descriptor inbound di `group.go` dan handler yang
 menerima `command.Adapter` untuk respons teks. Handler tersebut memperluas
-adapter menjadi `WhatsAppCommandAdapter` untuk memperoleh akses native client
-dan target store. File yang sama juga menjadi executor bagi command yang dibawa
+adapter menjadi port `GroupModerator` yang hanya memakai tipe domain
+(`agent.Key`, `identity.MessageID`, `identity.SenderRef`); resolusi alamat dan
+panggilan hypermeow tinggal di adapter WhatsApp, sehingga package ini tidak
+mengimpor tipe provider. File yang sama juga menjadi executor bagi command yang dibawa
 secara internal oleh `reply_message`; `groupcmd` hanya menyimpan grammar bersama
 untuk validasi pada setiap boundary sebelum efek durable dieksekusi.

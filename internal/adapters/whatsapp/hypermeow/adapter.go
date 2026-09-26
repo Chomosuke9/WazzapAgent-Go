@@ -33,7 +33,6 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	inboundcommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
@@ -616,10 +615,6 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 	}
 	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
 }
-
-func (adapter *Adapter) CommandClient() inboundcommands.WhatsAppCommandClient { return adapter.client }
-
-func (adapter *Adapter) CommandTargets() inboundcommands.GroupTargetStore { return adapter.targets }
 
 // ReadChatContext returns only the provider-neutral details used in the model's
 // chat-information block. It does not grant authority for native effects.
