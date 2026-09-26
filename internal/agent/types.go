@@ -164,6 +164,9 @@ type ModelMessage struct {
 	Role       ModelRole
 	Provenance ModelProvenance
 	Content    string
+	// AdditionalPrompt fills the immutable system policy's per-request
+	// {{additional_prompt}} placeholder and is valid only for the base prompt.
+	AdditionalPrompt string
 }
 
 type ModelRequest struct {

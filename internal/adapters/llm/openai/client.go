@@ -187,11 +187,24 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 		return nil, nil, err
 	}
 	systemContent := client.systemPolicy
+	additionalPromptCount := strings.Count(systemContent, "{{additional_prompt}}")
+	if additionalPromptCount > 1 {
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "build model request", fmt.Errorf("system policy has duplicate additional prompt placeholders"))
+	}
+	var basePrompt, additionalPrompt string
 	for _, message := range request.Messages {
 		if message.Provenance == agent.ProvenanceBasePrompt {
-			systemContent = appendSystemPromptContent(systemContent, message.Content)
+			basePrompt = message.Content
+			additionalPrompt = message.AdditionalPrompt
 		}
 	}
+	if additionalPromptCount == 0 && additionalPrompt != "" {
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "build model request", fmt.Errorf("system policy is missing its additional prompt placeholder"))
+	}
+	if additionalPromptCount == 1 {
+		systemContent = strings.Replace(systemContent, "{{additional_prompt}}", additionalPrompt, 1)
+	}
+	systemContent = appendBasePromptContent(systemContent, basePrompt)
 	messages := []completionMessage{{Role: "system", Content: systemContent}}
 	for _, message := range request.Messages {
 		if message.Provenance == agent.ProvenanceBasePrompt {
@@ -213,13 +226,21 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	return messages, tools, nil
 }
 
-func appendSystemPromptContent(systemPolicy, promptContent string) string {
-	const rootCloseTag = "</main>"
-	closingIndex := strings.LastIndex(systemPolicy, rootCloseTag)
-	if closingIndex < 0 || strings.TrimSpace(systemPolicy[closingIndex+len(rootCloseTag):]) != "" {
-		return systemPolicy + "\n\n" + promptContent
+func appendBasePromptContent(systemPolicy, basePrompt string) string {
+	if basePrompt == "" {
+		return systemPolicy
 	}
-	return strings.TrimRight(systemPolicy[:closingIndex], "\r\n") + "\n\n" + promptContent + "\n" + systemPolicy[closingIndex:]
+	const additionalOpenTag = "<additional>"
+	insertionIndex := strings.Index(systemPolicy, additionalOpenTag)
+	if insertionIndex < 0 {
+		const rootCloseTag = "</main>"
+		closingIndex := strings.LastIndex(systemPolicy, rootCloseTag)
+		if closingIndex < 0 || strings.TrimSpace(systemPolicy[closingIndex+len(rootCloseTag):]) != "" {
+			return systemPolicy + "\n\n" + basePrompt
+		}
+		insertionIndex = closingIndex
+	}
+	return strings.TrimRight(systemPolicy[:insertionIndex], "\r\n") + "\n\n" + basePrompt + "\n\n" + systemPolicy[insertionIndex:]
 }
 
 type completionRequest struct {

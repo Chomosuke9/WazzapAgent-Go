@@ -124,11 +124,11 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
-	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "<main>\nSAFETY\n</main>", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
+	client, _ := New(Config{Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "<main>\nSAFETY\n<additional>\n{{additional_prompt}}\n</additional>\n</main>", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry()})
 	request := modelRequest(t, providerID)
 	current := request.Messages[len(request.Messages)-1]
 	request.Messages = []agent.ModelMessage{
-		{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "<additional>\nreplacement\n</additional>"},
+		{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, AdditionalPrompt: "replacement"},
 		{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>"},
 		current,
 	}
@@ -136,7 +136,7 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 	encoded := <-requestChannel
-	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "<main>\nSAFETY\n\n<additional>\nreplacement\n</additional>\n</main>" ||
+	if len(encoded.Messages) != 3 || encoded.Messages[0].Content != "<main>\nSAFETY\n<additional>\nreplacement\n</additional>\n</main>" ||
 		!strings.Contains(encoded.Messages[1].Content, "<prompt_override>") || strings.Contains(encoded.Messages[1].Content, "replacement") {
 		t.Fatalf("replace message sequence = %#v", encoded.Messages)
 	}
@@ -144,6 +144,30 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 		if message.Content == "base prompt" {
 			t.Fatal("replace mode retained configurable base prompt")
 		}
+	}
+}
+
+func TestPromptAppendInjectsAdditionalThroughSystemPolicyPlaceholder(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	client, err := New(Config{
+		Endpoint: "https://provider.invalid/v1", APIKey: "secret", ProviderID: providerID,
+		SystemPolicy: "<main>\nSAFETY\n<additional>\n{{additional_prompt}}\n</additional>\n</main>",
+		Timeout:      time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	request := modelRequest(t, providerID)
+	request.Messages[0].Content = "base prompt"
+	request.Messages[0].AdditionalPrompt = "chat-specific addition"
+
+	messages, _, err := client.messages(request)
+	if err != nil {
+		t.Fatalf("build messages: %v", err)
+	}
+	want := "<main>\nSAFETY\n\nbase prompt\n\n<additional>\nchat-specific addition\n</additional>\n</main>"
+	if len(messages) == 0 || messages[0].Content != want {
+		t.Fatalf("system message = %#v, want %q", messages, want)
 	}
 }
 

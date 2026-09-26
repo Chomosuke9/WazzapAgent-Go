@@ -71,7 +71,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		t.Fatalf("build context: %v", err)
 	}
 	want := []ModelMessage{
-		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base\n\n<additional>\noverride\n</additional>"},
+		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base", AdditionalPrompt: "override"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\n" + defaultPromptOverride + "\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nYou 【You】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
@@ -98,10 +98,10 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build replacement context: %v", err)
 	}
-	if len(replaced) != 4 || replaced[0].Role != ModelSystem ||
-		replaced[0].Content != "<additional>\nreplacement\n</additional>" ||
+	if len(replaced) != 4 || replaced[0].Role != ModelSystem || replaced[0].Content != "" ||
+		replaced[0].AdditionalPrompt != "replacement" ||
 		replaced[1].Content != "<prompt_override>\n"+defaultPromptOverride+"\n</prompt_override>" ||
-		strings.Contains(replaced[0].Content, "base") || strings.Contains(replaced[1].Content, "replacement") {
+		strings.Contains(replaced[1].Content, "replacement") {
 		t.Fatalf("replace mode did not replace the system prompt with additional content: %#v", replaced)
 	}
 }

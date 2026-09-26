@@ -37,8 +37,8 @@ func TestRenderSystemPolicyExplainsPromptAndHistoryBoundaries(t *testing.T) {
 			t.Fatalf("rendered policy lacks prompt boundary guidance %q", value)
 		}
 	}
-	if strings.Contains(rendered, "<additional>") {
-		t.Fatal("rendered policy contains a static additional prompt placeholder")
+	if !strings.Contains(rendered, "<additional>\n{{additional_prompt}}\n</additional>\n</main>") {
+		t.Fatal("rendered policy is missing the additional prompt injection block at its end")
 	}
 }
 

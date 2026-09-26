@@ -61,4 +61,8 @@ Use WhatsApp formatting only: *bold*, _italic_, ~strike~, `mono`, and > quote. D
 <identity>
 Display name: `{{assistant_name}}`. Bot mention: `@{{assistant_name}} (bot)`. Use natural first-person language. Do not mention identity unless relevant.
 </identity>
+
+<additional>
+{{additional_prompt}}
+</additional>
 </main>

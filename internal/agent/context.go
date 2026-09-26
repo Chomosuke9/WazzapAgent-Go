@@ -89,16 +89,15 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	// changes the compact prompt shape selected for this project.
 	messages := make([]ModelMessage, 0, 4)
 	basePrompt := request.Config.Prompt
+	additionalPrompt := ""
 	if request.Config.PromptOverride != nil {
-		additional := "<additional>\n" + replaceReservedContextBrackets(request.Config.PromptOverride.Text) + "\n</additional>"
+		additionalPrompt = replaceReservedContextBrackets(request.Config.PromptOverride.Text)
 		if request.Config.PromptOverride.Mode == PromptReplace {
-			basePrompt = additional
-		} else {
-			basePrompt += "\n\n" + additional
+			basePrompt = ""
 		}
 	}
 	messages = append(messages, ModelMessage{
-		Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: basePrompt,
+		Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: basePrompt, AdditionalPrompt: additionalPrompt,
 	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenancePromptOverride,
@@ -401,6 +400,12 @@ func modelMessagesBytes(messages []ModelMessage) int {
 	total := 0
 	for _, message := range messages {
 		total += len(message.Content) + 8
+		if message.AdditionalPrompt != "" {
+			total += len(message.AdditionalPrompt) + len("<additional>\n") + len("\n</additional>")
+			if message.Content != "" {
+				total += len("\n\n")
+			}
+		}
 	}
 	return total
 }
@@ -423,7 +428,14 @@ func SerializeModelMessages(messages []ModelMessage) string {
 		case ModelAssistant:
 			role = "ASSISTANT"
 		}
-		sections = append(sections, fmt.Sprintf("=== %s ===\n%s", role, message.Content))
+		content := message.Content
+		if message.Provenance == ProvenanceBasePrompt && message.AdditionalPrompt != "" {
+			if content != "" {
+				content += "\n\n"
+			}
+			content += "<additional>\n" + message.AdditionalPrompt + "\n</additional>"
+		}
+		sections = append(sections, fmt.Sprintf("=== %s ===\n%s", role, content))
 	}
 	return strings.Join(sections, "\n\n")
 }
@@ -441,7 +453,14 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
-		if strings.TrimSpace(message.Content) == "" {
+		if message.Provenance != ProvenanceBasePrompt && message.AdditionalPrompt != "" {
+			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("additional prompt must be on the base prompt message"))
+		}
+		if message.AdditionalPrompt != "" && !utf8.ValidString(message.AdditionalPrompt) {
+			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("additional prompt is invalid"))
+		}
+		if strings.TrimSpace(message.Content) == "" &&
+			!(message.Provenance == ProvenanceBasePrompt && strings.TrimSpace(message.AdditionalPrompt) != "") {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model message content is required"))
 		}
 		valid := false

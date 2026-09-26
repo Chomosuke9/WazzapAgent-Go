@@ -9,9 +9,9 @@ import (
 //go:embed systemprompt.txt
 var systemPolicySource string
 
-// RenderSystemPolicy renders the immutable system policy for one invocation.
-// Only the supported placeholders are replaced; literal braces in examples
-// remain unchanged.
+// RenderSystemPolicy renders assistant and date placeholders for one
+// invocation. The additional prompt placeholder is reserved for per-request
+// substitution by the model adapter; literal braces in examples remain unchanged.
 func RenderSystemPolicy(assistantName string, now time.Time) string {
 	return renderSystemPolicy(systemPolicySource, assistantName, now)
 }
