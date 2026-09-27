@@ -352,9 +352,52 @@ func (adapter *Adapter) Fatal() <-chan error                    { return adapter
 func (adapter *Adapter) QueueUsage() (int, int)                 { return len(adapter.queue), cap(adapter.queue) }
 
 func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	if len(request.Choices) > 0 {
+		return adapter.sendQuiz(ctx, request)
+	}
 	return adapter.send(ctx, request.Key, "send WhatsApp text", func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
 		return adapter.textMessage(sendCtx, request, address, target)
 	})
+}
+
+// sendQuiz sends the text with one quick-reply button per choice. When the
+// server rejects the buttons (some accounts get 405 for every native-flow
+// message) nothing was delivered, so the quiz goes out again as plain text
+// with numbered choices.
+func (adapter *Adapter) sendQuiz(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
+	result, err := adapter.send(ctx, request.Key, "send WhatsApp quiz", func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
+		text, err := adapter.textMessage(sendCtx, request, address, target)
+		if err != nil {
+			return nil, err
+		}
+		return quizMessage(text.GetExtendedTextMessage(), request.Choices), nil
+	})
+	if !errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		return result, err
+	}
+	adapter.logger.Warn("WhatsApp rejected quiz buttons; sending the quiz as text", "error", err)
+	fallback := request
+	fallback.Text, fallback.Choices = quizFallbackText(request.Text, request.Choices), nil
+	return adapter.SendText(ctx, fallback)
+}
+
+// SendCopyCode sends code behind a single cta_copy button. When the server
+// rejects the button, the code goes out alone as plain text so a long press
+// still copies exactly the code.
+func (adapter *Adapter) SendCopyCode(ctx context.Context, request action.SendCopyCodeRequest) error {
+	_, err := adapter.send(ctx, request.Key, "send WhatsApp copy button", func(_ context.Context, _ string, target types.JID) (*waE2E.Message, error) {
+		return copyCodeMessage(request.Code, target, adapter.ownJID())
+	})
+	if errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		adapter.logger.Warn("WhatsApp rejected the copy button; sending the code as text", "error", err)
+		_, err = adapter.send(ctx, request.Key, "send WhatsApp code text", func(context.Context, string, types.JID) (*waE2E.Message, error) {
+			return plainTextMessage(request.Code), nil
+		})
+	}
+	if err != nil {
+		adapter.logger.Warn("could not send the copy-code message", "error", err)
+	}
+	return err
 }
 
 // SendButtons sends text with quick-reply buttons. A tap comes back as an

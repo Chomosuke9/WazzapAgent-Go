@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -174,6 +175,13 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
+	if len(text) > int(client.maxResponseBytes) {
+		// Quiz choices must not push a reply over the configured limit; the
+		// reply still goes out, as plain text.
+		if plain, choices := action.SplitChoices(text); len(choices) > 0 {
+			text = plain
+		}
+	}
 	return agent.ModelResult{Text: text, ReplyToMessageID: replyTo, Effects: effects}, nil
 }
 
@@ -320,7 +328,13 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 			"text": map[string]any{
 				"type":        "string",
 				"minLength":   1,
-				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (bot)` using the configured assistant name from the system prompt.",
+				"description": "Visible reply text. Put anything the user may want to copy (code, commands, templates) in one fenced ``` block: the first block is also sent with a Copy button. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (bot)` using the configured assistant name from the system prompt.",
+			},
+			"choices": map[string]any{
+				"type":        []string{"array", "null"},
+				"items":       map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxChoiceRunes},
+				"maxItems":    action.MaxChoices,
+				"description": "Quiz buttons under the reply: 2 to 5 short, mutually exclusive answers (max 20 characters each). Use them whenever you ask a question whose answer is one of a few known options (yes/no, A/B, a quiz, a poll); keep any explanation of the options in text. A tapped button comes back as the user's message with that choice's text. Otherwise null.",
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},
@@ -335,7 +349,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 				"description": "Optional per-command anchors; use none when a command has no message anchor.",
 			},
 		},
-		"required":             []string{"context_msg_id", "text", "command", "command_context_msg_id"},
+		"required":             []string{"context_msg_id", "text", "choices", "command", "command_context_msg_id"},
 		"additionalProperties": false,
 	})
 	if err != nil {
@@ -423,12 +437,16 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 			if replySeen {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reply_message may only be called once"))
 			}
-			text, target, commands, err := decodeReplyMessage(call, request, registry)
+			text, choices, target, commands, err := decodeReplyMessage(call, request, registry)
 			if err != nil {
 				return "", identity.MessageID{}, nil, err
 			}
 			if strings.TrimSpace(content) != "" && content != text {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("content conflicts with reply_message text"))
+			}
+			// Quiz choices ride in the stored text; see action.WithChoices.
+			if withChoices := action.WithChoices(text, choices); len(withChoices) <= agent.MaxResponseBytes {
+				text = withChoices
 			}
 			replyText, replyTo, replySeen = text, target, true
 			effects = append(effects, commands...)
@@ -466,23 +484,24 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 	}
 }
 
-func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, identity.MessageID, []agent.ModelEffect, error) {
+func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, []string, identity.MessageID, []agent.ModelEffect, error) {
 	var args struct {
 		ContextMessageID        string          `json:"context_msg_id"`
 		Text                    string          `json:"text"`
+		Choices                 []string        `json:"choices"`
 		Commands                []string        `json:"command"`
 		CommandContextMessageID json.RawMessage `json:"command_context_msg_id"`
 	}
 	if err := decodeArguments(call.Function.Arguments, &args); err != nil {
-		return "", identity.MessageID{}, nil, err
+		return "", nil, identity.MessageID{}, nil, err
 	}
 	if strings.TrimSpace(args.Text) == "" || len(args.Text) > agent.MaxResponseBytes {
-		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
+		return "", nil, identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
 	}
 	// Unknown anchors do not suppress a visible reply; they simply omit the quote.
 	replyTo := request.ContextMessages[args.ContextMessageID]
 	if len(args.Commands) > agent.MaxModelEffects {
-		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands exceed the allowed limit"))
+		return "", nil, identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands exceed the allowed limit"))
 	}
 	// Models send command_context_msg_id as an array, a single string, or null.
 	var anchors []string
@@ -515,12 +534,12 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, reg
 		if anchor != "none" {
 			var ok bool
 			if commandTarget, ok = request.ContextMessages[anchor]; !ok {
-				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
+				return "", nil, identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
 			}
 		}
 		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunCommand, TargetMessageID: commandTarget, Command: canonical}})
 	}
-	return args.Text, replyTo, effects, nil
+	return args.Text, args.Choices, replyTo, effects, nil
 }
 
 func decodeArguments(raw json.RawMessage, value any) error {
