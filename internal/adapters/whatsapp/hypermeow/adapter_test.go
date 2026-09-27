@@ -716,3 +716,54 @@ func (contactStore *testContactStore) GetContact(context.Context, types.JID) (ty
 func (contactStore *testContactStore) GetAllContacts(context.Context) (map[types.JID]types.ContactInfo, error) {
 	return nil, nil
 }
+
+func TestNormalizeCaptionedMediaLikeText(t *testing.T) {
+	adapter, ownJID := normalizationAdapter(t)
+	chat := types.NewJID("120363000000000011", types.GroupServer)
+	sender := types.NewJID("15550000003", types.DefaultUserServer)
+	setInboundGate(t, adapter, "", chat.String())
+	normalize := func(message *waE2E.Message) conversation.IncomingCandidate {
+		t.Helper()
+		candidate, ok := adapter.normalizer.normalizeMessage(context.Background(), &events.Message{
+			Info: types.MessageInfo{
+				MessageSource: types.MessageSource{Chat: chat, Sender: sender, SenderAlt: types.NewJID("10000000003", types.HiddenUserServer), IsGroup: true},
+				ID:            types.MessageID("media-message"), Timestamp: time.Now().UTC(),
+			},
+			Message: message,
+		})
+		if !ok {
+			t.Fatalf("media message was not normalized: %#v", message)
+		}
+		return candidate
+	}
+	botToken := "@" + ownJID.User
+	mentionsBot := &waE2E.ContextInfo{MentionedJID: []string{ownJID.String()}, StanzaID: proto.String("quoted-id")}
+
+	image := normalize(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String(botToken + " what is this?"), ContextInfo: mentionsBot}})
+	if image.Text != "【image】 "+botToken+" what is this?" || !image.MentionsBot || image.ProviderQuotedMessageID != "quoted-id" {
+		t.Fatalf("image candidate = %#v", image)
+	}
+	if len(image.Mentions) != 1 || !image.Mentions[0].Bot {
+		t.Fatalf("image mentions = %#v", image.Mentions)
+	}
+	video := normalize(&waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: proto.String("look " + botToken), ContextInfo: mentionsBot}})
+	if video.Text != "【video】 look "+botToken || !video.MentionsBot {
+		t.Fatalf("video candidate = %#v", video)
+	}
+	document := normalize(&waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: proto.String(botToken), ContextInfo: mentionsBot}})
+	if document.Text != "【document】 "+botToken || !document.MentionsBot {
+		t.Fatalf("document candidate = %#v", document)
+	}
+	if command := normalize(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String(" /help ")}}); command.Text != "/help" {
+		t.Fatalf("captioned command text = %q", command.Text)
+	}
+	if bare := normalize(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}); bare.Text != "【image】" || bare.MentionsBot {
+		t.Fatalf("uncaptioned image candidate = %#v", bare)
+	}
+	if gif := normalize(&waE2E.Message{VideoMessage: &waE2E.VideoMessage{GifPlayback: proto.Bool(true)}}); gif.Text != "【gif】" {
+		t.Fatalf("gif text = %q", gif.Text)
+	}
+	if voice := normalize(&waE2E.Message{AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(true), ContextInfo: mentionsBot}}); voice.Text != "【voice note】" || voice.ProviderQuotedMessageID != "quoted-id" {
+		t.Fatalf("voice note candidate = %#v", voice)
+	}
+}
