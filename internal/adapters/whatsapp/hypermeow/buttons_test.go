@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
@@ -116,5 +117,43 @@ func TestWrapNativeFlowWrapsBareBroadcastPayload(t *testing.T) {
 	text := &waE2E.Message{Conversation: proto.String("hi")}
 	if wrapNativeFlow(text) != text {
 		t.Fatal("a plain text message was wrapped")
+	}
+}
+
+func TestNativeFlowSendReplacesHypermeowBizNode(t *testing.T) {
+	message, err := buttonsMessage(action.SendButtonsRequest{Text: "Pick", Buttons: []action.Button{{ID: "/test-button a", Label: "A"}}})
+	if err != nil {
+		t.Fatalf("build buttons: %v", err)
+	}
+	user := types.NewJID("15550000001", types.DefaultUserServer)
+	outgoing, extra := nativeFlowSend(message, user)
+	// hypermeow only adds its own biz node for buttons it finds directly or
+	// inside viewOnce/ephemeral wrappers, so the top level must be neither.
+	if outgoing.GetViewOnceMessage() != nil || outgoing.GetEphemeralMessage() != nil || outgoing.GetInteractiveMessage() != nil {
+		t.Fatalf("buttons are still visible to hypermeow's detection: %v", outgoing)
+	}
+	buttons := outgoing.GetDocumentWithCaptionMessage().GetMessage().GetViewOnceMessage().GetMessage().GetInteractiveMessage().GetNativeFlowMessage().GetButtons()
+	if len(buttons) != 1 {
+		t.Fatalf("wrapped message lost its buttons: %v", outgoing)
+	}
+	if len(extra) != 1 || extra[0].AdditionalNodes == nil {
+		t.Fatalf("extra = %#v", extra)
+	}
+	nodes := *extra[0].AdditionalNodes
+	if len(nodes) != 2 || nodes[0].Tag != "biz" || len(nodes[0].Attrs) != 0 || nodes[1].Tag != "bot" || nodes[1].Attrs["biz_bot"] != "1" {
+		t.Fatalf("direct chat nodes = %#v", nodes)
+	}
+	flow := nodes[0].Content.([]waBinary.Node)[0].Content.([]waBinary.Node)[0]
+	if flow.Tag != "native_flow" || flow.Attrs["name"] != "mixed" || flow.Attrs["v"] != "9" {
+		t.Fatalf("native_flow node = %#v", flow)
+	}
+
+	group := types.NewJID("120363000000000001", types.GroupServer)
+	if _, extra := nativeFlowSend(message, group); len(*extra[0].AdditionalNodes) != 1 {
+		t.Fatalf("group nodes = %#v", *extra[0].AdditionalNodes)
+	}
+	text := &waE2E.Message{Conversation: proto.String("hi")}
+	if outgoing, extra := nativeFlowSend(text, user); outgoing != text || extra != nil {
+		t.Fatal("a plain text message was changed")
 	}
 }

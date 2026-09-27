@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	whatsmeow "github.com/polymorfa/hypermeow"
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
@@ -84,6 +86,42 @@ func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
 		},
 	}}), nil
+}
+
+// nativeFlowSend prepares a native-flow (button) message and the stanza nodes
+// to send it with. Other messages are returned unchanged with no extras.
+//
+// hypermeow tags every native-flow message it recognises with a
+// business-hosting biz node (actual_actors, host_storage, quality_control)
+// that WhatsApp rejects from an ordinary account with 405, and it has no
+// option to change that node. It only looks for buttons inside viewOnce and
+// ephemeral wrappers, so the message goes out inside documentWithCaption,
+// a generic future-proof envelope clients unwrap, and the nodes the original
+// Baileys bot sent successfully are passed instead:
+//
+//	biz > interactive(type=native_flow, v=1) > native_flow(name=mixed, v=9)
+//	bot(biz_bot=1), outside groups
+func nativeFlowSend(message *waE2E.Message, to types.JID) (*waE2E.Message, []whatsmeow.SendRequestExtra) {
+	wrapped := wrapNativeFlow(message)
+	if wrapped.GetViewOnceMessage().GetMessage().GetInteractiveMessage().GetNativeFlowMessage() == nil {
+		return message, nil
+	}
+	nodes := []waBinary.Node{{
+		Tag: "biz",
+		Content: []waBinary.Node{{
+			Tag:   "interactive",
+			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{
+				Tag:   "native_flow",
+				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+			}},
+		}},
+	}}
+	if to.Server != types.GroupServer {
+		nodes = append(nodes, waBinary.Node{Tag: "bot", Attrs: waBinary.Attrs{"biz_bot": "1"}})
+	}
+	outgoing := &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{Message: wrapped}}
+	return outgoing, []whatsmeow.SendRequestExtra{{AdditionalNodes: &nodes}}
 }
 
 // wrapNativeFlow puts a bare native-flow InteractiveMessage inside the

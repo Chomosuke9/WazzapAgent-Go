@@ -399,7 +399,8 @@ func (adapter *Adapter) send(ctx context.Context, key agent.Key, operation strin
 	if err != nil {
 		return action.SendTextResult{}, err
 	}
-	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), message)
+	message, extra := nativeFlowSend(message, target.ToNonAD())
+	response, err := adapter.client.SendMessage(sendCtx, target.ToNonAD(), message, extra...)
 	if err != nil {
 		if sendCtx.Err() == context.DeadlineExceeded {
 			return action.SendTextResult{}, agent.NewError(agent.ErrorTimeout, operation, sendCtx.Err())

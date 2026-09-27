@@ -157,7 +157,6 @@ func (adapter *Adapter) joinedBroadcastGroups(ctx context.Context, operation str
 }
 
 func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broadcastGroupTarget, ids []string, joinedSet map[types.JID]struct{}, message *waE2E.Message, batchSize, batchDelaySeconds int) []BroadcastGroupResult {
-	message = wrapNativeFlow(message)
 	results := make([]BroadcastGroupResult, len(targets))
 	for start := 0; start < len(targets); start += batchSize {
 		end := start + batchSize
@@ -189,7 +188,8 @@ func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broa
 				defer sendCancel()
 				stripe := adapter.sendStripe(target.address.String())
 				stripe.Lock()
-				response, sendErr := adapter.client.SendMessage(sendCtx, target.address, proto.Clone(message).(*waE2E.Message))
+				outgoing, extra := nativeFlowSend(proto.Clone(message).(*waE2E.Message), target.address)
+				response, sendErr := adapter.client.SendMessage(sendCtx, target.address, outgoing, extra...)
 				stripe.Unlock()
 				if sendErr != nil {
 					result.ErrorCode = agent.CodeOf(nativeEffectError(sendCtx, "send WhatsApp broadcast", sendErr))
