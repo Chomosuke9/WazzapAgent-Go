@@ -513,7 +513,7 @@ func TestTextMessageRendersBotMentionLikeLIDMention(t *testing.T) {
 		t.Fatal(err)
 	}
 	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
-		Text: "Halo @Wazzap (bot)",
+		Text: "Halo @Wazzap (Bot)",
 	}, chat, target)
 	if err != nil {
 		t.Fatal(err)

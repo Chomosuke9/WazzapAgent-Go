@@ -328,7 +328,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	if len(tools) != 2 || tools[0].Function.Name != "reply_message" || tools[1].Function.Name != "react_to_message" {
 		t.Fatalf("provider tools = %#v", tools)
 	}
-	if bytes.Contains(tools[0].Function.Parameters, []byte("@Bot (bot)")) ||
+	if bytes.Contains(tools[0].Function.Parameters, []byte("@Bot (Bot)")) ||
 		!bytes.Contains(tools[0].Function.Parameters, []byte("configured assistant name")) {
 		t.Fatalf("reply tool bot mention guidance = %s", tools[0].Function.Parameters)
 	}

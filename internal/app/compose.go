@@ -179,6 +179,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	commandPlatform := command.Platform{
 		Text: waAdapter, Buttons: waAdapter, Group: waAdapter,
 		Media: waAdapter, Stickers: waAdapter, Catalog: store.Stickers(),
+		AssistantName: application.config.AssistantName(),
 	}
 	registry, err := agent.NewRegistry(factory)
 	if err != nil {

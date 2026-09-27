@@ -22,7 +22,7 @@ func TestRenderOutboundMentionsResolvesMarkup(t *testing.T) {
 	group := types.NewJID("120363000000000001", types.GroupServer)
 	resolve := func(got identity.SenderRef) (types.JID, bool) { return member, got == ref }
 
-	text := "hi @Budi (" + ref.String() + ") and @Budi (" + ref.String() + "), @me (bot) @everyone (all) @ghost (zzzzzzzz)"
+	text := "hi @Budi (" + ref.String() + ") and @Budi (" + ref.String() + "), @me (Bot) @everyone (all) @ghost (zzzzzzzz)"
 	noAdmins := func() ([]types.JID, error) { return nil, nil }
 	result, _ := renderOutboundMentions(text, group, bot, resolve, noAdmins)
 	if result.text != "hi @10000000077 and @10000000077, @15550000099 @all @ghost" {
