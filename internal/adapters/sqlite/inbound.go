@@ -287,7 +287,7 @@ func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, ignored_reason = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = 0 AND invocation_digest IS NULL`,
+        AND turn_state = 0 AND turn_claimed = 0`,
 		ignoredTurnState, string(reason), store.clock.Now().UnixMilli(), message.TenantID.String(), message.AccountID.String(),
 		message.ChatID.String(), message.InvocationID.String(),
 	)
@@ -320,7 +320,7 @@ func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation
 func (store *InboundStore) MarkCommandHandled(ctx context.Context, message conversation.IncomingMessage) error {
 	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = 0 AND invocation_digest IS NULL`,
+        AND turn_state = 0 AND turn_claimed = 0`,
 		uint8(agent.TurnSucceeded), store.clock.Now().UnixMilli(), message.TenantID.String(), message.AccountID.String(),
 		message.ChatID.String(), message.InvocationID.String(),
 	)

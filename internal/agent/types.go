@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -256,59 +255,6 @@ type ModelInvoker interface {
 	Generate(context.Context, ModelRequest) (ModelResult, error)
 }
 
-type InvocationDigest [32]byte
-
-func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) {
-	if err := validateInvocation(key, invocation); err != nil {
-		return InvocationDigest{}, NewError(ErrorIntegrityFailure, "digest invocation", err)
-	}
-	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.invocation.v3")
-	writeField(&canonical, key.TenantID.String())
-	writeField(&canonical, key.AccountID.String())
-	writeField(&canonical, key.ChatID.String())
-	canonical.WriteByte(byte(invocation.Cause))
-	canonical.WriteByte(byte(invocation.Causation.Kind))
-	writeField(&canonical, invocation.Causation.ID.String())
-	if invocation.Sender == nil {
-		canonical.WriteByte(0)
-	} else {
-		canonical.WriteByte(1)
-		writeField(&canonical, invocation.Sender.ParticipantID.String())
-		writeField(&canonical, invocation.Sender.Ref.String())
-		writeField(&canonical, invocation.Sender.DisplayName)
-		writeGroupRoleDigest(&canonical, invocation.Sender.IsAdmin, invocation.Sender.IsSuperAdmin)
-	}
-	if invocation.Quote != nil {
-		writeField(&canonical, invocation.Quote.MessageID.String())
-		canonical.WriteByte(byte(invocation.Quote.Role))
-		writeField(&canonical, invocation.Quote.SenderRef.String())
-		writeField(&canonical, invocation.Quote.Text)
-		writeGroupRoleDigest(&canonical, invocation.Quote.SenderIsAdmin, invocation.Quote.SenderIsSuperAdmin)
-	}
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Input)))
-	for _, part := range invocation.Input {
-		switch typed := part.(type) {
-		case TextPart:
-			canonical.WriteByte(1)
-			writeField(&canonical, typed.Text)
-		default:
-			return InvocationDigest{}, NewError(ErrorUnsupported, "digest invocation", fmt.Errorf("unsupported content part"))
-		}
-	}
-	values := invocation.Capabilities.Values()
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(values)))
-	for _, capability := range values {
-		writeField(&canonical, string(capability))
-	}
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Commands)))
-	for _, name := range invocation.Commands {
-		writeField(&canonical, name)
-	}
-	writeMentionDigestExtension(&canonical, invocation.Mentions, quoteMentions(invocation.Quote))
-	return sha256.Sum256(canonical.Bytes()), nil
-}
-
 func validateInvocation(key Key, invocation Invocation) error {
 	if err := key.Validate(); err != nil {
 		return NewError(ErrorInvalidArgument, "validate invocation", err)
@@ -435,53 +381,6 @@ func quoteMentions(quote *QuoteContext) []MentionContext {
 		return nil
 	}
 	return quote.Mentions
-}
-
-// writeGroupRoleDigest adds trusted role metadata without changing the digest
-// of existing messages that have neither admin flag set.
-func writeGroupRoleDigest(buffer *bytes.Buffer, isAdmin, isSuperAdmin bool) {
-	if !isAdmin && !isSuperAdmin {
-		return
-	}
-	writeField(buffer, "wazzapagent.group-role.v1")
-	if isAdmin {
-		buffer.WriteByte(1)
-	} else {
-		buffer.WriteByte(0)
-	}
-	if isSuperAdmin {
-		buffer.WriteByte(1)
-	} else {
-		buffer.WriteByte(0)
-	}
-}
-
-func writeMentionDigestExtension(buffer *bytes.Buffer, content, quoted []MentionContext) {
-	if len(content) == 0 && len(quoted) == 0 {
-		// Keep the established digest byte-for-byte stable for pre-migration
-		// entries, which necessarily have no trusted mention bindings.
-		return
-	}
-	buffer.WriteString("\x00wazzapagent.mentions.v1")
-	writeMentionIdentities(buffer, content)
-	writeMentionIdentities(buffer, quoted)
-}
-
-func writeMentionIdentities(buffer *bytes.Buffer, mentions []MentionContext) {
-	canonical := cloneMentions(mentions)
-	sort.Slice(canonical, func(left, right int) bool {
-		return canonical[left].Token < canonical[right].Token
-	})
-	_ = binary.Write(buffer, binary.BigEndian, uint32(len(canonical)))
-	for _, binding := range canonical {
-		writeField(buffer, binding.Token)
-		if binding.Bot {
-			buffer.WriteByte(1)
-		} else {
-			buffer.WriteByte(0)
-		}
-		writeField(buffer, binding.SenderRef.String())
-	}
 }
 
 func writeField(buffer *bytes.Buffer, value string) {

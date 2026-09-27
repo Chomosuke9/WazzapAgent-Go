@@ -35,7 +35,6 @@ const (
 type ClaimTurnRequest struct {
 	Key        Key
 	Invocation Invocation
-	Digest     InvocationDigest
 	Now        time.Time
 }
 
@@ -100,7 +99,6 @@ type TurnRecord struct {
 	Key          Key
 	InvocationID identity.InvocationID
 	MessageID    identity.MessageID
-	Digest       InvocationDigest
 	State        TurnState
 	Plan         *StoredPlan
 	Delivery     DeliveryStatus

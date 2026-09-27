@@ -187,7 +187,7 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 				  AND inbound_events.chat_id = typed_effects.chat_id
 				  AND inbound_events.invocation_id = typed_effects.invocation_id
 				  AND inbound_events.turn_state = ?
-				  AND inbound_events.invocation_digest IS NOT NULL
+				  AND inbound_events.turn_claimed = 1
 				  AND `+noOutboundAction("inbound_events")+`
 			)
 		)
@@ -259,7 +259,7 @@ func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref 
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
         AND invocation_id = (SELECT invocation_id FROM typed_effects
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?)
-		AND turn_state = ? AND invocation_digest IS NOT NULL
+		AND turn_state = ? AND turn_claimed = 1
 		AND `+noOutboundAction("inbound_events")+``,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(agent.TurnSucceeded),

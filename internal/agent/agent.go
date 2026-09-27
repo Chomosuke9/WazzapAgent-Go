@@ -161,9 +161,8 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	}
 	defer agent.gate.release()
 
-	digest, err := DigestInvocation(agent.key, invocation)
-	if err != nil {
-		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", err)
+	if err := validateInvocation(agent.key, invocation); err != nil {
+		return InvokeResult{}, err
 	}
 
 	// Looking up an existing plan before validating the current policy version
@@ -172,9 +171,6 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	record, loadErr := agent.turns.Load(ctx, agent.key, invocation.ID)
 	switch {
 	case loadErr == nil:
-		if record.Digest != digest {
-			return InvokeResult{}, NewError(ErrorConflict, "invoke agent", fmt.Errorf("invocation ID is bound to different input"))
-		}
 		if record.Plan != nil {
 			if err := agent.ensureInvocationHistory(ctx, record.MessageID, invocation, record.Plan, record.Delivery); err != nil {
 				return InvokeResult{}, err
@@ -201,7 +197,6 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	claim, err := agent.turns.Claim(ctx, ClaimTurnRequest{
 		Key:        agent.key,
 		Invocation: cloneInvocation(invocation),
-		Digest:     digest,
 		Now:        agent.clock.Now(),
 	})
 	if err != nil {

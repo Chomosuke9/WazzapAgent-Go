@@ -1,10 +1,7 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -109,7 +106,7 @@ func (history *History) Append(ctx context.Context, entry HistoryEntry) error {
 	if entry.Sequence != 0 {
 		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
 	}
-	if err := validateHistoryEntry(entry); err != nil {
+	if err := ValidateHistoryEntry(entry); err != nil {
 		return NewError(ErrorInvalidArgument, "append history", err)
 	}
 	if err := history.gate.acquire(ctx); err != nil {
@@ -143,7 +140,7 @@ func (history *History) appendWithinGate(ctx context.Context, entry HistoryEntry
 	if entry.Sequence != 0 {
 		return NewError(ErrorInvalidArgument, "append history", fmt.Errorf("history sequence is store-assigned"))
 	}
-	if err := validateHistoryEntry(entry); err != nil {
+	if err := ValidateHistoryEntry(entry); err != nil {
 		return NewError(ErrorInvalidArgument, "append history", err)
 	}
 	return history.store.Append(ctx, history.key, cloneHistoryEntry(entry))
@@ -174,7 +171,7 @@ func validateRetentionPolicy(policy RetentionPolicy) error {
 	return nil
 }
 
-func validateHistoryEntry(entry HistoryEntry) error {
+func ValidateHistoryEntry(entry HistoryEntry) error {
 	if entry.MessageID.IsZero() || entry.InvocationID.IsZero() || entry.Causation.ID.IsZero() || entry.CreatedAt.IsZero() {
 		return NewError(ErrorInvalidArgument, "validate history entry", fmt.Errorf("message, invocation, causation, and creation time are required"))
 	}
@@ -242,48 +239,6 @@ func validateHistoryEntry(entry HistoryEntry) error {
 		}
 	}
 	return nil
-}
-
-// DigestHistoryEntry returns the canonical immutable identity/content digest
-// used by durable stores to distinguish idempotent replay from a collision.
-func DigestHistoryEntry(entry HistoryEntry) ([32]byte, error) {
-	if err := validateHistoryEntry(entry); err != nil {
-		return [32]byte{}, NewError(ErrorIntegrityFailure, "digest history entry", err)
-	}
-	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.history.v1")
-	writeField(&canonical, entry.MessageID.String())
-	writeField(&canonical, entry.InvocationID.String())
-	canonical.WriteByte(byte(entry.Causation.Kind))
-	writeField(&canonical, entry.Causation.ID.String())
-	canonical.WriteByte(byte(entry.Role))
-	if entry.Sender == nil {
-		canonical.WriteByte(0)
-	} else {
-		canonical.WriteByte(1)
-		writeField(&canonical, entry.Sender.ParticipantID.String())
-		writeField(&canonical, entry.Sender.Ref.String())
-		writeField(&canonical, entry.Sender.DisplayName)
-		writeGroupRoleDigest(&canonical, entry.Sender.IsAdmin, entry.Sender.IsSuperAdmin)
-	}
-	if entry.Quote == nil {
-		canonical.WriteByte(0)
-	} else {
-		canonical.WriteByte(1)
-		writeField(&canonical, entry.Quote.MessageID.String())
-		canonical.WriteByte(byte(entry.Quote.Role))
-		writeField(&canonical, entry.Quote.SenderRef.String())
-		writeField(&canonical, entry.Quote.Text)
-		writeGroupRoleDigest(&canonical, entry.Quote.SenderIsAdmin, entry.Quote.SenderIsSuperAdmin)
-	}
-	_ = binary.Write(&canonical, binary.BigEndian, entry.CreatedAt.UTC().UnixMilli())
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(entry.Content)))
-	for _, part := range entry.Content {
-		canonical.WriteByte(1)
-		writeField(&canonical, part.(TextPart).Text)
-	}
-	writeMentionDigestExtension(&canonical, entry.Mentions, quoteMentions(entry.Quote))
-	return sha256.Sum256(canonical.Bytes()), nil
 }
 
 func formatHistoryCursor(sequence int64) HistoryCursor {

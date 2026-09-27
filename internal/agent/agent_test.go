@@ -41,11 +41,6 @@ func TestAgentInvokePersistsPlanAndSkipsModelOnReplay(t *testing.T) {
 		t.Fatalf("dispatcher observations = %d, want 2", dispatcher.calls.Load())
 	}
 
-	changed := invocation
-	changed.Input = []agent.ContentPart{agent.TextPart{Text: "changed"}}
-	if _, err := current.Invoke(context.Background(), changed); !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("changed replay error = %v, want conflict", err)
-	}
 }
 
 func TestInvokeWithChatContextReusesObservedMetadata(t *testing.T) {
