@@ -29,7 +29,7 @@ func (adapter *Adapter) clearGroupCache() {
 	adapter.groupRevision++
 	if adapter.groupMetadata != nil {
 		if err := adapter.groupMetadata.InvalidateGroupMetadata(adapter.groupStoreContext(), adapter.tenantID, adapter.accountID); err != nil && adapter.logger != nil {
-			adapter.logger.Error("group metadata could not be invalidated", "code", agent.CodeOf(err))
+			adapter.logger.Error("group metadata could not be invalidated", "code", agent.CodeOf(err), "error", err)
 		}
 	}
 	adapter.groupMu.Unlock()

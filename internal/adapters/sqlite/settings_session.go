@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -202,7 +203,7 @@ func loadSessionBinding(ctx context.Context, query sessionBindingQuerier) (contr
 			binding.ActiveScope.AccountID, err = identity.ParseAccountID(activeAccount.String)
 		}
 		if err != nil {
-			return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode active session scope", errors.New("active session identity is invalid"))
+			return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode active session scope", fmt.Errorf("active session identity is invalid: %w", err))
 		}
 		binding.HasActiveScope = true
 	}
@@ -212,7 +213,7 @@ func loadSessionBinding(ctx context.Context, query sessionBindingQuerier) (contr
 			binding.PendingScope.AccountID, err = identity.ParseAccountID(pendingAccount.String)
 		}
 		if err != nil {
-			return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode pending session scope", errors.New("pending session identity is invalid"))
+			return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode pending session scope", fmt.Errorf("pending session identity is invalid: %w", err))
 		}
 		binding.HasPendingScope = true
 	}

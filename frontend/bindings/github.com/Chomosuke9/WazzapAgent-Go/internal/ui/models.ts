@@ -48,6 +48,8 @@ export interface LogEntryDTO {
     "level": string;
     "message": string;
     "details": string;
+    "id": number;
+    "hasFull": boolean;
 }
 
 export interface ReadinessIssueDTO {

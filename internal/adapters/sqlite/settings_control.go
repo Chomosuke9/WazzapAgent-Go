@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
@@ -36,7 +37,7 @@ func (repository *ControlSettingsRepository) Load(ctx context.Context) (control.
 	}
 	values := config.DefaultSettings()
 	if err := json.Unmarshal(snapshot.Values, &values); err != nil {
-		return control.SettingsSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "decode settings", errors.New("settings data is invalid"))
+		return control.SettingsSnapshot{}, agent.NewError(agent.ErrorIntegrityFailure, "decode settings", fmt.Errorf("settings data is invalid: %w", err))
 	}
 	return control.SettingsSnapshot{Revision: snapshot.Revision, Values: values, UpdatedAt: snapshot.UpdatedAt}, nil
 }

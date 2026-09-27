@@ -61,7 +61,7 @@ func run() error {
 	}
 	defer func() {
 		if err := app.Close(); err != nil {
-			app.Logger.Error("stop application", "code", agent.CodeOf(err))
+			app.Logger.Error("stop application", "code", agent.CodeOf(err), "error", err)
 		}
 	}()
 	logger := app.Logger

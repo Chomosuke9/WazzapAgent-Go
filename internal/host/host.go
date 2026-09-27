@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -65,6 +66,9 @@ func Open(ctx context.Context, paths platform.Paths, version string) (_ *Host, r
 	}
 	host.Logger = slog.New(observability.NewMultiHandler(consoleLogger.Handler(), logs.Handler()))
 	slog.SetDefault(host.Logger)
+	if err := logs.Persist(filepath.Join(lease.Root(), observability.ProblemLogFile)); err != nil {
+		host.Logger.Warn("earlier warnings and errors could not be loaded", "error", err)
+	}
 
 	settingsStore, err := appsqlite.OpenSettings(ctx, appsqlite.SettingsPath(lease.Root()))
 	if err != nil {
@@ -121,7 +125,7 @@ func Open(ctx context.Context, paths platform.Paths, version string) (_ *Host, r
 func (host *Host) StartOnLaunch(ctx context.Context) {
 	current, err := host.settings.GetSettings(ctx)
 	if err != nil {
-		host.Logger.Warn("read start-on-launch preference", "code", agent.CodeOf(err))
+		host.Logger.Warn("read start-on-launch preference", "code", agent.CodeOf(err), "error", err)
 		return
 	}
 	if !current.Values.Settings.StartOnLaunch {
@@ -131,7 +135,7 @@ func (host *Host) StartOnLaunch(ctx context.Context) {
 	host.stopStart = cancel
 	go func() {
 		if _, err := host.agents.Start(startCtx); err != nil {
-			host.Logger.Warn("start Agent on launch", "code", agent.CodeOf(err))
+			host.Logger.Warn("start Agent on launch", "code", agent.CodeOf(err), "error", err)
 		}
 	}()
 }

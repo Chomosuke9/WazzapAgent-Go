@@ -86,21 +86,21 @@ func readRuntimeIdentity(path string) (identity.TenantID, identity.AccountID, bo
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&document); err != nil {
-		return identity.TenantID{}, identity.AccountID{}, false, errors.New("runtime identity contains invalid JSON")
+		return identity.TenantID{}, identity.AccountID{}, false, fmt.Errorf("runtime identity contains invalid JSON: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return identity.TenantID{}, identity.AccountID{}, false, errors.New("runtime identity contains trailing data")
+		return identity.TenantID{}, identity.AccountID{}, false, fmt.Errorf("runtime identity contains trailing data: %w", err)
 	}
 	if document.SchemaVersion != runtimeIdentityVersion {
 		return identity.TenantID{}, identity.AccountID{}, false, fmt.Errorf("unsupported runtime identity schema version %d", document.SchemaVersion)
 	}
 	tenantID, err := identity.ParseTenantID(document.TenantID)
 	if err != nil {
-		return identity.TenantID{}, identity.AccountID{}, false, errors.New("runtime identity contains an invalid tenant ID")
+		return identity.TenantID{}, identity.AccountID{}, false, fmt.Errorf("runtime identity contains an invalid tenant ID: %w", err)
 	}
 	accountID, err := identity.ParseAccountID(document.AccountID)
 	if err != nil {
-		return identity.TenantID{}, identity.AccountID{}, false, errors.New("runtime identity contains an invalid account ID")
+		return identity.TenantID{}, identity.AccountID{}, false, fmt.Errorf("runtime identity contains an invalid account ID: %w", err)
 	}
 	return tenantID, accountID, true, nil
 }

@@ -52,7 +52,7 @@ func (adapter *Adapter) refreshJoinedGroupNames() bool {
 		code := agent.CodeOf(nativeEffectError(readCtx, "read joined groups", err))
 		cancel()
 		if adapter.rootCtx.Err() == nil {
-			adapter.logger.Warn("WhatsApp group names could not be refreshed", "code", code)
+			adapter.logger.Warn("WhatsApp group names could not be refreshed", "code", code, "error", err)
 		}
 		return false
 	}
@@ -64,6 +64,7 @@ func (adapter *Adapter) refreshJoinedGroupNames() bool {
 		if group != nil && group.JID.Server == types.GroupServer {
 			payload, marshalErr := json.Marshal(group)
 			if marshalErr != nil {
+				adapter.logger.Warn("WhatsApp group metadata could not be encoded", "error", marshalErr)
 				return false
 			}
 			encoded[group.JID.ToNonAD().String()] = payload
@@ -71,6 +72,7 @@ func (adapter *Adapter) refreshJoinedGroupNames() bool {
 		}
 	}
 	updated, failed := 0, 0
+	var firstFailure error
 	for _, group := range groups {
 		if adapter.rootCtx.Err() != nil {
 			return false
@@ -80,6 +82,9 @@ func (adapter *Adapter) refreshJoinedGroupNames() bool {
 		}
 		if err := adapter.groupNames.SaveGroupName(adapter.rootCtx, adapter.tenantID, adapter.accountID, group.JID.ToNonAD().String(), group.Name); err != nil {
 			failed++
+			if firstFailure == nil {
+				firstFailure = err
+			}
 			continue
 		}
 		updated++
@@ -91,14 +96,14 @@ func (adapter *Adapter) refreshJoinedGroupNames() bool {
 	}
 	if err := adapter.groupMetadata.ReplaceGroupMetadata(adapter.rootCtx, adapter.tenantID, adapter.accountID, encoded, observedAt); err != nil {
 		adapter.groupMu.Unlock()
-		adapter.logger.Warn("WhatsApp group metadata could not be stored", "code", agent.CodeOf(err))
+		adapter.logger.Warn("WhatsApp group metadata could not be stored", "code", agent.CodeOf(err), "error", err)
 		return false
 	}
 	adapter.groups = snapshot
 	adapter.groupsReady = true
 	adapter.groupMu.Unlock()
 	if failed > 0 {
-		adapter.logger.Warn("Some WhatsApp group names could not be stored", "groups", failed)
+		adapter.logger.Warn("Some WhatsApp group names could not be stored", "groups", failed, "error", firstFailure)
 	}
 	adapter.logger.Info("WhatsApp group names refreshed", "groups", updated)
 	return true
@@ -109,6 +114,6 @@ func (adapter *Adapter) cacheGroupName(ctx context.Context, group types.JID, nam
 		return
 	}
 	if err := adapter.groupNames.SaveGroupName(ctx, adapter.tenantID, adapter.accountID, group.ToNonAD().String(), name); err != nil && ctx.Err() == nil {
-		adapter.logger.Warn("WhatsApp group name could not be stored", "code", agent.CodeOf(err))
+		adapter.logger.Warn("WhatsApp group name could not be stored", "code", agent.CodeOf(err), "error", err)
 	}
 }

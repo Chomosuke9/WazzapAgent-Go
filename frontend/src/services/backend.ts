@@ -38,6 +38,7 @@ export const getSettingsSchema = () => call("GetSettingsSchema");
 export const validateSettings = (...args: Parameters<Service["ValidateSettings"]>) => call("ValidateSettings", ...args);
 export const saveSettings = (...args: Parameters<Service["SaveSettings"]>) => call("SaveSettings", ...args);
 export const getLogs = () => call("GetLogs").then(list);
+export const getLogDetails = (id: number) => call("GetLogDetails", id);
 export const getAgentRuntimeStatus = (): Promise<AgentRuntimeStatusDTO> => call("GetAgentRuntimeStatus");
 export const startAgent = () => call("StartAgent");
 export const stopAgent = () => call("StopAgent");
