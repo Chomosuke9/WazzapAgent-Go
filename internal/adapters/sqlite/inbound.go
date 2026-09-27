@@ -1196,18 +1196,26 @@ func resolveQuotedMessage(
 		return nil, storageError("resolve quoted assistant", err)
 	}
 	var stickerName string
-	err = query.QueryRowContext(ctx, `SELECT message_id, name FROM sent_stickers
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_receipt = ?`,
+	var beforeReset bool
+	err = query.QueryRowContext(ctx, `SELECT s.message_id, s.name,
+        r.reset_at_ms IS NOT NULL AND s.sent_at_ms <= r.reset_at_ms
+      FROM sent_stickers s
+      LEFT JOIN history_resets r ON r.tenant_id = s.tenant_id AND r.account_id = s.account_id AND r.chat_id = s.chat_id
+      WHERE s.tenant_id = ? AND s.account_id = ? AND s.chat_id = ? AND s.provider_receipt = ?`,
 		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
-	).Scan(&responseValue, &stickerName)
+	).Scan(&responseValue, &stickerName, &beforeReset)
 	if err == nil {
 		messageID, parseErr := identity.ParseMessageID(responseValue)
 		if parseErr != nil {
 			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve quoted sticker", parseErr)
 		}
-		text = "[sticker]"
-		if stickerName != "" {
+		switch {
+		case beforeReset:
+			text = "[konten balasan sebelum reset tidak disertakan]"
+		case stickerName != "":
 			text = "[sticker: " + stickerName + "]"
+		default:
+			text = "[sticker]"
 		}
 		return &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}, nil
 	}

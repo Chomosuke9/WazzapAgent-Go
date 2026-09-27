@@ -12,3 +12,4 @@ CREATE TABLE sent_stickers (
     FOREIGN KEY (tenant_id, account_id, chat_id)
         REFERENCES chats(tenant_id, account_id, id) ON DELETE CASCADE
 ) STRICT;
+CREATE INDEX sent_stickers_age_idx ON sent_stickers(tenant_id, sent_at_ms);
