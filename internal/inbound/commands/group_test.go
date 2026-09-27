@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
@@ -52,30 +51,6 @@ func (fake *fakeGroupModerator) MuteGroupMember(_ context.Context, key agent.Key
 	return fake.record("mute", key)
 }
 
-type recordingText struct{ sent []string }
-
-func (text *recordingText) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
-	text.sent = append(text.sent, request.Text)
-	return action.SendTextResult{}, nil
-}
-
-type recordingButtons struct{ sent []action.SendButtonsRequest }
-
-func (buttons *recordingButtons) SendButtons(_ context.Context, request action.SendButtonsRequest) (action.SendTextResult, error) {
-	buttons.sent = append(buttons.sent, request)
-	return action.SendTextResult{}, nil
-}
-
-type handledStore struct {
-	command.Store
-	handled int
-}
-
-func (store *handledStore) MarkCommandHandled(context.Context, conversation.IncomingMessage) error {
-	store.handled++
-	return nil
-}
-
 type groupRun struct {
 	moderator *fakeGroupModerator
 	text      *recordingText
@@ -91,7 +66,7 @@ func runGroupCommand(t *testing.T, text string, quote *conversation.QuotedMessag
 	if !recognized {
 		t.Fatalf("%q was not recognized", text)
 	}
-	key := groupCommandKey(t)
+	key := testChatKey(t)
 	run := groupRun{moderator: moderator, text: &recordingText{}, store: &handledStore{}, key: key}
 	platform := command.Platform{Text: run.text}
 	if moderator != nil {
@@ -227,12 +202,4 @@ func TestGroupCommandDoesNotMarkHandledOnModeratorFailure(t *testing.T) {
 	if !errors.Is(run.err, want) || run.store.handled != 0 || len(run.text.sent) != 0 {
 		t.Fatalf("error/handled/sent = %v/%d/%d", run.err, run.store.handled, len(run.text.sent))
 	}
-}
-
-func groupCommandKey(t *testing.T) agent.Key {
-	t.Helper()
-	tenantID, _ := identity.NewTenantID()
-	accountID, _ := identity.NewAccountID()
-	chatID, _ := identity.NewChatID()
-	return agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}
 }

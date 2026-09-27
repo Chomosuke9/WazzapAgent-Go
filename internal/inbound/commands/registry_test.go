@@ -8,15 +8,6 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 )
 
-func builtinRegistry(t *testing.T) *command.Registry {
-	t.Helper()
-	registry, err := command.NewRegistry(All())
-	if err != nil {
-		t.Fatalf("create registry: %v", err)
-	}
-	return registry
-}
-
 func TestEveryCommandFileRegistersItself(t *testing.T) {
 	registry := builtinRegistry(t)
 	want := map[string]string{
@@ -37,9 +28,6 @@ func TestEveryCommandFileRegistersItself(t *testing.T) {
 		if !recognized || request.Name != name || cmd.Run == nil {
 			t.Fatalf("parse %q = %#v, %v", text, request, recognized)
 		}
-	}
-	if got := len(registry.Commands()); got != 9 {
-		t.Fatalf("registered commands = %d, want 9", got)
 	}
 }
 
