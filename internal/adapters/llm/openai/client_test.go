@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
@@ -650,5 +651,24 @@ func TestSystemPolicyDateIsRenderedPerRequest(t *testing.T) {
 			t.Fatalf("system message = %q, want date %s", messages[0].Content, want)
 		}
 		day = day.Add(2 * time.Hour)
+	}
+}
+
+func TestReplyMessageChoicesRideInTheReplyText(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	raw := json.RawMessage(`[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Capital of Indonesia?\",\"choices\":[\"Jakarta\",\"Bandung\"],\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	text, _, _, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
+	if err != nil {
+		t.Fatalf("decode quiz reply: %v", err)
+	}
+	body, choices := action.SplitChoices(text)
+	if body != "Capital of Indonesia?" || len(choices) != 2 || choices[0] != "Jakarta" || choices[1] != "Bandung" {
+		t.Fatalf("quiz reply = %q", text)
+	}
+
+	plain := json.RawMessage(`[{"id":"reply_plain","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"hi\",\"choices\":null,\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	if text, _, _, err := decodeModelOutput("", plain, request, inbound.CommandRegistry()); err != nil || text != "hi" {
+		t.Fatalf("plain reply = %q, %v", text, err)
 	}
 }
