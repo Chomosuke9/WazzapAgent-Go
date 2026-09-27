@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   beginWhatsAppPairing,
@@ -8,7 +8,6 @@ import {
   reconnectWhatsAppSession,
   resumeWhatsAppSession,
   stopWhatsAppSession,
-  subscribeToBackendWhatsAppSession,
   type WhatsAppSessionOperationDTO,
   type WhatsAppSessionStatusDTO,
 } from "../services/backend";
@@ -36,34 +35,18 @@ export function WhatsAppPage() {
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const activeOperationID = useRef<string | null>(null);
-  const ignoredOperationIDs = useRef(new Set<string>());
-  const eventRevision = useRef(0);
 
-  function applyStatus(next: WhatsAppSessionStatusDTO) {
-    activeOperationID.current = next.operationID || null;
-    setStatus(next);
+  // The page polls the backend for session status; there is no push channel.
+  function refreshStatus() {
+    void getWhatsAppSessionStatus()
+      .then(setStatus)
+      .catch(() => setError("Could not load session status. Try restarting the app."));
   }
 
   useEffect(() => {
-    const unsubscribe = subscribeToBackendWhatsAppSession((event) => {
-      eventRevision.current += 1;
-      if (ignoredOperationIDs.current.has(event.operationID)) return;
-      if (activeOperationID.current && activeOperationID.current !== event.operationID) return;
-      activeOperationID.current = event.operationID;
-      setStatus(event.status);
-    });
-    const refreshStatus = () => {
-      const initialRevision = eventRevision.current;
-      void getWhatsAppSessionStatus()
-        .then((snapshot) => {
-          if (eventRevision.current === initialRevision) applyStatus(snapshot);
-        })
-        .catch(() => setError("Could not load session status. Try restarting the app."));
-    };
     refreshStatus();
     const timer = window.setInterval(refreshStatus, 1500);
-    return () => { window.clearInterval(timer); unsubscribe(); };
+    return () => window.clearInterval(timer);
   }, []);
 
   const running = status !== null && activeRuntimeStates.has(status.runtimeState);
@@ -73,39 +56,26 @@ export function WhatsAppPage() {
   async function runOperation(action: () => Promise<WhatsAppSessionOperationDTO>) {
     setBusy(true);
     setError("");
-    const revisionAtStart = eventRevision.current;
     try {
-      const result = await action();
-      if (eventRevision.current === revisionAtStart || activeOperationID.current !== result.operationID) {
-        activeOperationID.current = result.operationID;
-        setStatus(result.status);
-      }
+      setStatus((await action()).status);
     } catch {
       setError("The session operation failed. Check your internet connection and try again.");
     } finally {
       setBusy(false);
-      const refreshRevision = eventRevision.current;
-      void getWhatsAppSessionStatus().then((snapshot) => {
-        if (eventRevision.current === refreshRevision) applyStatus(snapshot);
-      }).catch(() => undefined);
+      refreshStatus();
     }
   }
 
-  async function runStatusOperation(action: () => Promise<WhatsAppSessionStatusDTO>, applyResult = false) {
+  async function runStatusOperation(action: () => Promise<WhatsAppSessionStatusDTO>) {
     setBusy(true);
     setError("");
-    const revisionAtStart = eventRevision.current;
     try {
-      const result = await action();
-      if (applyResult || eventRevision.current === revisionAtStart) applyStatus(result);
+      setStatus(await action());
     } catch {
       setError("The session operation failed. Try again after the status refreshes.");
     } finally {
       setBusy(false);
-      const refreshRevision = eventRevision.current;
-      void getWhatsAppSessionStatus().then((snapshot) => {
-        if (eventRevision.current === refreshRevision) applyStatus(snapshot);
-      }).catch(() => undefined);
+      refreshStatus();
     }
   }
 
@@ -115,27 +85,18 @@ export function WhatsAppPage() {
 
   function logout() {
     if (window.confirm("Remove the WazzapAgent device from this WhatsApp account?")) {
-      retireCurrentOperation();
       void runOperation(logoutWhatsAppSession);
     }
-  }
-
-  function retireCurrentOperation() {
-    if (activeOperationID.current) ignoredOperationIDs.current.add(activeOperationID.current);
-    activeOperationID.current = null;
   }
 
   function cancelPairing() {
     const operationID = status?.operationID;
     if (!operationID) return;
-    ignoredOperationIDs.current.add(operationID);
-    activeOperationID.current = null;
-    void runStatusOperation(() => cancelWhatsAppPairing(operationID), true);
+    void runStatusOperation(() => cancelWhatsAppPairing(operationID));
   }
 
   function stopSession() {
-    retireCurrentOperation();
-    void runStatusOperation(stopWhatsAppSession, true);
+    void runStatusOperation(stopWhatsAppSession);
   }
 
   return <div className="page">

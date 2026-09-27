@@ -13,7 +13,6 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/wails"
 	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	coreapp "github.com/Chomosuke9/WazzapAgent-Go/internal/app"
@@ -67,11 +66,8 @@ func main() {
 		_ = lease.Close()
 		log.Fatal(err)
 	}
-	application.RegisterEvent[ui.PingEvent]("app:ping")
-	application.RegisterEvent[ui.WhatsAppSessionEventDTO](ui.WhatsAppSessionEventName)
-
 	app := application.New(application.Options{
-		Name:        wails.AppName,
+		Name:        ui.AppName,
 		Description: "WazzapAgent desktop application",
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(frontend.Assets),
@@ -87,8 +83,7 @@ func main() {
 		_ = lease.Close()
 		log.Fatal(err)
 	}
-	eventSink := wails.NewSessionEventSink(app, logBuffer)
-	sessionController, err := control.NewSessionController(repository, sessionBindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), eventSink, lease.Root())
+	sessionController, err := control.NewSessionController(repository, sessionBindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), ui.SessionLog{Logs: logBuffer}, lease.Root())
 	if err != nil {
 		_ = settingsStore.Close()
 		_ = lease.Close()
@@ -155,7 +150,7 @@ func main() {
 	}
 	defer cleanup()
 
-	appService := wails.NewAppService(app, ui.NewAppService(ui.Options{
+	appService := ui.NewAppService(ui.Options{
 		Version:       version,
 		Settings:      controller,
 		Sessions:      sessionController,
@@ -163,12 +158,12 @@ func main() {
 		Conversations: conversationController,
 		DataRoot:      lease.Root(),
 		Logs:          logBuffer,
-	}))
+	})
 	app.RegisterService(application.NewService(appService))
 	logger.Info("desktop application started", "platform", runtime.GOOS)
 	app.OnShutdown(cleanup)
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:     wails.AppName,
+		Title:     ui.AppName,
 		URL:       "/",
 		Width:     1160,
 		Height:    800,

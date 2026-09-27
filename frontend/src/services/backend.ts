@@ -1,17 +1,17 @@
-import { Events } from "@wailsio/runtime";
-import { ApplyAgentSettings, BeginWhatsAppPairing, CancelWhatsAppBroadcastSchedule, CancelWhatsAppPairing, DeleteWhatsAppMessage, GetAgentRuntimeStatus, GetAppInfo, GetLogs, GetSettings, GetSettingsSchema, GetWhatsAppBroadcastGroups, GetWhatsAppBroadcastSchedules, GetWhatsAppChatSettings, GetWhatsAppConversations, GetWhatsAppGroupMembers, GetWhatsAppMessages, GetWhatsAppSessionStatus, GetWhatsAppUsage, KickWhatsAppGroupMember, LogoutWhatsAppSession, NormalizeWhatsAppBroadcastPayload, Ping, ReconnectWhatsAppSession, ResetWhatsAppChatSettings, ResumeWhatsAppSession, SaveSettings, SaveWhatsAppChatSettings, ScheduleWhatsAppBroadcast, SendWhatsAppBroadcast, SendWhatsAppMessage, StartAgent, StopAgent, StopWhatsAppSession, ValidateSettings } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/wails/appservice";
-import type { AgentRuntimeStatusDTO, ApplyAgentSettingsRequestDTO, AppInfo, BeginWhatsAppPairingRequestDTO, FieldDescriptorDTO, LogEntryDTO, PingEvent, ResetWhatsAppChatSettingsRequestDTO, ResetWhatsAppChatSettingsResultDTO, SaveSettingsRequestDTO, SaveSettingsResultDTO, SaveWhatsAppChatSettingsRequestDTO, ScheduleWhatsAppBroadcastRequestDTO, SendWhatsAppBroadcastRequestDTO, SettingsPatchDTO, SettingsValuesDTO, SettingsViewDTO, ValidationResultDTO, WhatsAppBroadcastGroupDTO, WhatsAppBroadcastGroupResultDTO, WhatsAppBroadcastScheduleDTO, WhatsAppChatSettingsDTO, WhatsAppConversationDTO, WhatsAppGroupMemberDTO, WhatsAppGroupMembersDTO, WhatsAppMentionDTO, WhatsAppMessageDTO, WhatsAppQuoteDTO, WhatsAppSessionEventDTO, WhatsAppSessionOperationDTO, WhatsAppSessionStatusDTO, WhatsAppUsageDTO, WhatsAppDailyUsageDTO, WhatsAppGroupUsageDTO } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
-export type { AgentRuntimeStatusDTO, ApplyAgentSettingsRequestDTO, AppInfo, BeginWhatsAppPairingRequestDTO, FieldDescriptorDTO, LogEntryDTO, PingEvent, ResetWhatsAppChatSettingsRequestDTO, ResetWhatsAppChatSettingsResultDTO, SaveSettingsRequestDTO, SaveSettingsResultDTO, SaveWhatsAppChatSettingsRequestDTO, ScheduleWhatsAppBroadcastRequestDTO, SendWhatsAppBroadcastRequestDTO, SettingsPatchDTO, SettingsValuesDTO, SettingsViewDTO, ValidationResultDTO, WhatsAppBroadcastGroupDTO, WhatsAppBroadcastGroupResultDTO, WhatsAppBroadcastScheduleDTO, WhatsAppChatSettingsDTO, WhatsAppConversationDTO, WhatsAppGroupMemberDTO, WhatsAppGroupMembersDTO, WhatsAppMentionDTO, WhatsAppMessageDTO, WhatsAppQuoteDTO, WhatsAppSessionEventDTO, WhatsAppSessionOperationDTO, WhatsAppSessionStatusDTO, WhatsAppUsageDTO, WhatsAppDailyUsageDTO, WhatsAppGroupUsageDTO };
+import { AppService } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui";
+import type { AgentRuntimeStatusDTO, AppInfo, WhatsAppSessionOperationDTO, WhatsAppSessionStatusDTO } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
+export type * from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
 
-type EventEnvelope = { data?: unknown };
-export type EventSource = {
-  On: (name: string, callback: (event: EventEnvelope) => void) => () => void;
-};
+// Every backend operation is a method on the Go ui.AppService. The desktop app
+// calls it through the generated Wails binding; the browser build posts the
+// same method name and arguments to /api/call.
+type Service = typeof AppService;
+type Method = keyof Service;
+type Result<M extends Method> = Awaited<ReturnType<Service[M]>>;
 
 const webMode = import.meta.env.MODE === "web";
-const pingListeners = new Set<(event: PingEvent) => void>();
 
-async function webCall<T>(method: string, args: unknown[] = []): Promise<T> {
+async function webCall<T>(method: string, args: unknown[]): Promise<T> {
   const response = await fetch("/api/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -23,84 +23,45 @@ async function webCall<T>(method: string, args: unknown[] = []): Promise<T> {
   return payload.result as T;
 }
 
-function call<T>(method: string, native: () => Promise<T>, ...args: unknown[]): Promise<T> {
-  return webMode ? webCall<T>(method, args) : native();
+function call<M extends Method>(method: M, ...args: Parameters<Service[M]>): Promise<Result<M>> {
+  if (webMode) return webCall<Result<M>>(method, args);
+  const native = AppService[method] as unknown as (...values: Parameters<Service[M]>) => Promise<Result<M>>;
+  return native(...args);
 }
 
-export const getAppInfo = (): Promise<AppInfo> => call("GetAppInfo", GetAppInfo);
-export const ping = async (): Promise<void> => {
-  if (!webMode) return Ping();
-  const event = await webCall<PingEvent>("Ping");
-  pingListeners.forEach((listener) => listener(event));
-};
-export const getSettings = (): Promise<SettingsViewDTO> => call("GetSettings", GetSettings);
-export const getSettingsSchema = (): Promise<FieldDescriptorDTO[] | null> => call("GetSettingsSchema", GetSettingsSchema);
-export const validateSettings = (request: SettingsPatchDTO): Promise<ValidationResultDTO> => call("ValidateSettings", () => ValidateSettings(request), request);
-export const saveSettings = (request: SaveSettingsRequestDTO): Promise<SaveSettingsResultDTO> => call("SaveSettings", () => SaveSettings(request), request);
-export const getAgentRuntimeStatus = (): Promise<AgentRuntimeStatusDTO> => call("GetAgentRuntimeStatus", GetAgentRuntimeStatus);
-export const getLogs = (): Promise<LogEntryDTO[]> => call<LogEntryDTO[] | null>("GetLogs", GetLogs).then((entries) => entries ?? []);
-export const startAgent = (): Promise<AgentRuntimeStatusDTO> => call("StartAgent", StartAgent);
-export const stopAgent = (): Promise<AgentRuntimeStatusDTO> => call("StopAgent", StopAgent);
-export const applyAgentSettings = (request: ApplyAgentSettingsRequestDTO): Promise<AgentRuntimeStatusDTO> => call("ApplyAgentSettings", () => ApplyAgentSettings(request), request);
-export const getWhatsAppSessionStatus = (): Promise<WhatsAppSessionStatusDTO> => call("GetWhatsAppSessionStatus", GetWhatsAppSessionStatus);
-export const beginWhatsAppPairing = (request: BeginWhatsAppPairingRequestDTO): Promise<WhatsAppSessionOperationDTO> => call("BeginWhatsAppPairing", () => BeginWhatsAppPairing(request), request);
-export const resumeWhatsAppSession = (): Promise<WhatsAppSessionOperationDTO> => call("ResumeWhatsAppSession", ResumeWhatsAppSession);
-export const stopWhatsAppSession = (): Promise<WhatsAppSessionStatusDTO> => call("StopWhatsAppSession", StopWhatsAppSession);
-export const cancelWhatsAppPairing = (operationID: string): Promise<WhatsAppSessionStatusDTO> => call("CancelWhatsAppPairing", () => CancelWhatsAppPairing(operationID), operationID);
-export const reconnectWhatsAppSession = (): Promise<WhatsAppSessionOperationDTO> => call("ReconnectWhatsAppSession", ReconnectWhatsAppSession);
-export const logoutWhatsAppSession = (): Promise<WhatsAppSessionOperationDTO> => call("LogoutWhatsAppSession", LogoutWhatsAppSession);
-export const getWhatsAppConversations = (): Promise<WhatsAppConversationDTO[]> => call<WhatsAppConversationDTO[] | null>("GetWhatsAppConversations", GetWhatsAppConversations).then((items) => items ?? []);
-export const getWhatsAppUsage = (periodDays = 7): Promise<WhatsAppUsageDTO> => call("GetWhatsAppUsage", () => GetWhatsAppUsage(periodDays), periodDays);
-export const getWhatsAppMessages = (chatID: string): Promise<WhatsAppMessageDTO[]> => call<WhatsAppMessageDTO[] | null>("GetWhatsAppMessages", () => GetWhatsAppMessages(chatID), chatID).then((items) => items ?? []);
-export const getWhatsAppGroupMembers = (chatID: string): Promise<WhatsAppGroupMembersDTO> => call("GetWhatsAppGroupMembers", () => GetWhatsAppGroupMembers(chatID), chatID);
-export const getWhatsAppBroadcastGroups = (): Promise<WhatsAppBroadcastGroupDTO[]> => call<WhatsAppBroadcastGroupDTO[] | null>("GetWhatsAppBroadcastGroups", GetWhatsAppBroadcastGroups).then((groups) => groups ?? []);
-export const normalizeWhatsAppBroadcastPayload = (payload: string): Promise<string> => call("NormalizeWhatsAppBroadcastPayload", () => NormalizeWhatsAppBroadcastPayload(payload), payload);
-export const getWhatsAppBroadcastSchedules = (): Promise<WhatsAppBroadcastScheduleDTO[]> => call<WhatsAppBroadcastScheduleDTO[] | null>("GetWhatsAppBroadcastSchedules", GetWhatsAppBroadcastSchedules).then((items) => items ?? []);
-export const scheduleWhatsAppBroadcast = (request: ScheduleWhatsAppBroadcastRequestDTO): Promise<WhatsAppBroadcastScheduleDTO> => call("ScheduleWhatsAppBroadcast", () => ScheduleWhatsAppBroadcast(request), request);
-export const cancelWhatsAppBroadcastSchedule = (id: string): Promise<void> => call("CancelWhatsAppBroadcastSchedule", () => CancelWhatsAppBroadcastSchedule(id), id);
-export const sendWhatsAppBroadcast = (request: SendWhatsAppBroadcastRequestDTO): Promise<WhatsAppBroadcastGroupResultDTO[]> => call<WhatsAppBroadcastGroupResultDTO[] | null>("SendWhatsAppBroadcast", () => SendWhatsAppBroadcast(request), request).then((results) => results ?? []);
-export const getWhatsAppChatSettings = (chatID: string): Promise<WhatsAppChatSettingsDTO> => call("GetWhatsAppChatSettings", () => GetWhatsAppChatSettings(chatID), chatID);
-export const saveWhatsAppChatSettings = (request: SaveWhatsAppChatSettingsRequestDTO): Promise<WhatsAppChatSettingsDTO> => call("SaveWhatsAppChatSettings", () => SaveWhatsAppChatSettings(request), request);
-export const resetWhatsAppChatSettings = (request: ResetWhatsAppChatSettingsRequestDTO): Promise<ResetWhatsAppChatSettingsResultDTO> => call("ResetWhatsAppChatSettings", () => ResetWhatsAppChatSettings(request), request);
-export const sendWhatsAppMessage = (chatID: string, text: string, replyToMessageID = ""): Promise<WhatsAppMessageDTO> => call("SendWhatsAppMessage", () => SendWhatsAppMessage(chatID, text, replyToMessageID), chatID, text, replyToMessageID);
-export const deleteWhatsAppMessage = (chatID: string, messageID: string): Promise<void> => call("DeleteWhatsAppMessage", () => DeleteWhatsAppMessage(chatID, messageID), chatID, messageID);
-export const kickWhatsAppGroupMember = (chatID: string, memberID: string): Promise<void> => call("KickWhatsAppGroupMember", () => KickWhatsAppGroupMember(chatID, memberID), chatID, memberID);
+// Go returns nil slices as null; the pages expect arrays.
+const list = <T>(items: T[] | null): T[] => items ?? [];
 
-export function normalisePingEvent(value: unknown): PingEvent | null {
-  const data = (value as EventEnvelope | null)?.data;
-  if (!data || typeof data !== "object") return null;
-  const candidate = data as Record<string, unknown>;
-  if (typeof candidate.message !== "string" || typeof candidate.sequence !== "number") return null;
-  return { message: candidate.message, sequence: candidate.sequence };
-}
-
-export function subscribeToPing(source: EventSource, onPing: (event: PingEvent) => void): () => void {
-  return source.On("app:ping", (event) => {
-    const parsed = normalisePingEvent(event);
-    if (parsed) onPing(parsed);
-  });
-}
-
-export const subscribeToBackendPing = (onPing: (event: PingEvent) => void): (() => void) =>
-  webMode ? (pingListeners.add(onPing), () => { pingListeners.delete(onPing); }) : subscribeToPing(Events, onPing);
-
-export function normaliseWhatsAppSessionEvent(value: unknown): WhatsAppSessionEventDTO | null {
-  const data = (value as EventEnvelope | null)?.data;
-  if (!data || typeof data !== "object") return null;
-  const candidate = data as Record<string, unknown>;
-  const status = candidate.status;
-  if (typeof candidate.operationID !== "string" || !status || typeof status !== "object") return null;
-  const valueStatus = status as Record<string, unknown>;
-  if (typeof valueStatus.bindingState !== "string" || typeof valueStatus.runtimeState !== "string" || typeof valueStatus.sessionPresent !== "boolean") return null;
-  return { operationID: candidate.operationID, status: valueStatus as unknown as WhatsAppSessionStatusDTO };
-}
-
-export function subscribeToWhatsAppSession(source: EventSource, onEvent: (event: WhatsAppSessionEventDTO) => void): () => void {
-  return source.On("whatsapp:session", (event) => {
-    const parsed = normaliseWhatsAppSessionEvent(event);
-    if (parsed) onEvent(parsed);
-  });
-}
-
-export const subscribeToBackendWhatsAppSession = (onEvent: (event: WhatsAppSessionEventDTO) => void): (() => void) =>
-  webMode ? () => {} : subscribeToWhatsAppSession(Events, onEvent);
+export const getAppInfo = (): Promise<AppInfo> => call("GetAppInfo");
+export const getSettings = () => call("GetSettings");
+export const getSettingsSchema = () => call("GetSettingsSchema");
+export const validateSettings = (...args: Parameters<Service["ValidateSettings"]>) => call("ValidateSettings", ...args);
+export const saveSettings = (...args: Parameters<Service["SaveSettings"]>) => call("SaveSettings", ...args);
+export const getLogs = () => call("GetLogs").then(list);
+export const getAgentRuntimeStatus = (): Promise<AgentRuntimeStatusDTO> => call("GetAgentRuntimeStatus");
+export const startAgent = () => call("StartAgent");
+export const stopAgent = () => call("StopAgent");
+export const applyAgentSettings = (...args: Parameters<Service["ApplyAgentSettings"]>) => call("ApplyAgentSettings", ...args);
+export const getWhatsAppSessionStatus = (): Promise<WhatsAppSessionStatusDTO> => call("GetWhatsAppSessionStatus");
+export const beginWhatsAppPairing = (...args: Parameters<Service["BeginWhatsAppPairing"]>): Promise<WhatsAppSessionOperationDTO> => call("BeginWhatsAppPairing", ...args);
+export const resumeWhatsAppSession = () => call("ResumeWhatsAppSession");
+export const stopWhatsAppSession = () => call("StopWhatsAppSession");
+export const cancelWhatsAppPairing = (operationID: string) => call("CancelWhatsAppPairing", operationID);
+export const reconnectWhatsAppSession = () => call("ReconnectWhatsAppSession");
+export const logoutWhatsAppSession = () => call("LogoutWhatsAppSession");
+export const getWhatsAppConversations = () => call("GetWhatsAppConversations").then(list);
+export const getWhatsAppUsage = (periodDays = 7) => call("GetWhatsAppUsage", periodDays);
+export const getWhatsAppMessages = (chatID: string) => call("GetWhatsAppMessages", chatID).then(list);
+export const getWhatsAppGroupMembers = (chatID: string) => call("GetWhatsAppGroupMembers", chatID);
+export const getWhatsAppBroadcastGroups = () => call("GetWhatsAppBroadcastGroups").then(list);
+export const normalizeWhatsAppBroadcastPayload = (payload: string) => call("NormalizeWhatsAppBroadcastPayload", payload);
+export const getWhatsAppBroadcastSchedules = () => call("GetWhatsAppBroadcastSchedules").then(list);
+export const scheduleWhatsAppBroadcast = (...args: Parameters<Service["ScheduleWhatsAppBroadcast"]>) => call("ScheduleWhatsAppBroadcast", ...args);
+export const cancelWhatsAppBroadcastSchedule = (id: string) => call("CancelWhatsAppBroadcastSchedule", id);
+export const sendWhatsAppBroadcast = (...args: Parameters<Service["SendWhatsAppBroadcast"]>) => call("SendWhatsAppBroadcast", ...args).then(list);
+export const getWhatsAppChatSettings = (chatID: string) => call("GetWhatsAppChatSettings", chatID);
+export const saveWhatsAppChatSettings = (...args: Parameters<Service["SaveWhatsAppChatSettings"]>) => call("SaveWhatsAppChatSettings", ...args);
+export const resetWhatsAppChatSettings = (...args: Parameters<Service["ResetWhatsAppChatSettings"]>) => call("ResetWhatsAppChatSettings", ...args);
+export const sendWhatsAppMessage = (chatID: string, text: string, replyToMessageID = "") => call("SendWhatsAppMessage", chatID, text, replyToMessageID);
+export const deleteWhatsAppMessage = (chatID: string, messageID: string) => call("DeleteWhatsAppMessage", chatID, messageID);
+export const kickWhatsAppGroupMember = (chatID: string, memberID: string) => call("KickWhatsAppGroupMember", chatID, memberID);

@@ -50,14 +50,6 @@ export interface LogEntryDTO {
     "details": string;
 }
 
-/**
- * PingEvent is emitted on app:ping when Ping is called by the frontend.
- */
-export interface PingEvent {
-    "message": string;
-    "sequence": number;
-}
-
 export interface ReadinessIssueDTO {
     "field": string;
     "code": string;
@@ -328,11 +320,6 @@ export interface WhatsAppQuoteDTO {
     "isAdmin": boolean;
     "isSuperAdmin": boolean;
     "mentions": WhatsAppMentionDTO[] | null;
-}
-
-export interface WhatsAppSessionEventDTO {
-    "operationID": string;
-    "status": WhatsAppSessionStatusDTO;
 }
 
 export interface WhatsAppSessionOperationDTO {

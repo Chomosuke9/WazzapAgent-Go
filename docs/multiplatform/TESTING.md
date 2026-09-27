@@ -18,7 +18,6 @@ $pnpm = "C:\Users\bagus\.cache\codex-runtimes\codex-primary-runtime\dependencies
 Push-Location "$repo\frontend"
 & $node $pnpm dlx npm@11.6.2 ci
 & $node $pnpm dlx npm@11.6.2 run typecheck
-& $node $pnpm dlx npm@11.6.2 test -- --run
 & $node $pnpm dlx npm@11.6.2 run build
 Pop-Location
 
@@ -27,8 +26,8 @@ go test -tags gui ./...
 go build -tags gui,production -trimpath -ldflags="-s -w -H windowsgui" -o bin/WazzapAgent.exe ./cmd/app
 ```
 
-Jika Node dan npm sudah tersedia di `PATH`, empat perintah frontend dapat
-diganti dengan `npm ci`, `npm run typecheck`, `npm test -- --run`, dan
+Jika Node dan npm sudah tersedia di `PATH`, tiga perintah frontend dapat
+diganti dengan `npm ci`, `npm run typecheck`, dan
 `npm run build`. `wails3 task package` juga dapat digunakan pada host yang
 memenuhi precondition npm.
 
