@@ -45,7 +45,7 @@ func runScheduleTask(ctx context.Context, c *command.Context) error {
 	if requested.IsZero() {
 		requested = time.Now()
 	}
-	err := c.ScheduleTask(ctx, requested.Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions))
+	err := c.ScheduleTask(ctx, requested.Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions, c.AssistantName()))
 	if agent.IsCode(err, agent.ErrorInvalidArgument) {
 		return c.Reply(ctx, "The task is too long. Keep it under 4,000 characters.")
 	}
@@ -80,11 +80,11 @@ func parseScheduleTaskArgs(args string) (time.Duration, string, bool) {
 
 // scheduleTaskMentions rewrites the raw WhatsApp mentions a person typed
 // into the @Name (senderRef) form the model uses to tag someone.
-func scheduleTaskMentions(prompt string, bindings []conversation.MentionBinding) string {
+func scheduleTaskMentions(prompt string, bindings []conversation.MentionBinding, assistantName string) string {
 	replacements := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
 		if binding.Bot {
-			replacements[binding.Token] = "@bot (bot)"
+			replacements[binding.Token] = "@" + assistantName + " (Bot)"
 		} else {
 			replacements[binding.Token] = "@member (" + binding.SenderRef.String() + ")"
 		}

@@ -112,3 +112,10 @@ func TestScheduleTaskCountsFromWhenTheMessageArrived(t *testing.T) {
 		t.Fatalf("err=%v fireAt=%v, want %v", err, tasks.fireAt, received.Add(time.Hour))
 	}
 }
+
+func TestScheduleTaskMentionsUsesAssistantNameForBot(t *testing.T) {
+	got := scheduleTaskMentions("Ping @628111 later", []conversation.MentionBinding{{Token: "@628111", Bot: true}}, "Vivy")
+	if want := "Ping @Vivy (Bot) later"; got != want {
+		t.Fatalf("scheduleTaskMentions = %q, want %q", got, want)
+	}
+}

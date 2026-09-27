@@ -256,11 +256,11 @@ func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, a
 	}
 	switch entry.Role {
 	case HistoryUser:
-		return formatCompactHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text, assistantName), nil
 	case HistoryAssistant:
-		return formatCompactHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text, assistantName), nil
 	case HistorySystem:
-		return formatCompactHistoryEntry(entry, text), nil
+		return formatCompactHistoryEntry(entry, text, assistantName), nil
 	default:
 		return "", NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
 	}
@@ -286,7 +286,7 @@ func renderMentionView(text string, bindings []MentionContext, names map[string]
 	replacements := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
 		if binding.Bot {
-			replacements[binding.Token] = "@" + assistantName + " (bot)"
+			replacements[binding.Token] = "@" + assistantName + " (Bot)"
 			continue
 		}
 		name := cleanMentionName(names[binding.SenderRef.String()])
@@ -321,9 +321,11 @@ func cleanMentionName(name string) string {
 // Example:
 //
 //	【#000040】 12:56
-//	REPLYING TO 【#000038】 Alice: "earlier text"
+//	REPLYING TO 【#000038】 012345: "earlier text"
 //	Alice 【012345】: lanjutkan
-func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
+//
+// The bot's own messages, and quotes of them, use "<assistant name> 【Bot】".
+func formatCompactHistoryEntry(entry HistoryEntry, text, assistantName string) string {
 	timestamp := entry.CreatedAt.UTC().Format("15:04")
 	if entry.Role == HistorySystem {
 		return fmt.Sprintf("【#system】 %s\nSYSTEM: %s", timestamp, text)
@@ -341,7 +343,7 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 		quotedName := entry.Quote.SenderRef.String()
 		quotedRole := groupRoleLabel(entry.Quote.SenderIsAdmin, entry.Quote.SenderIsSuperAdmin)
 		if entry.Quote.Role == HistoryAssistant {
-			quotedName = "You"
+			quotedName = assistantName + " 【Bot】"
 			quotedRole = ""
 		} else {
 			quotedName += quotedRole
@@ -350,7 +352,7 @@ func formatCompactHistoryEntry(entry HistoryEntry, text string) string {
 	}
 
 	if entry.Role == HistoryAssistant {
-		lines = append(lines, fmt.Sprintf("You 【You】: %s", text))
+		lines = append(lines, fmt.Sprintf("%s 【Bot】: %s", assistantName, text))
 		return strings.Join(lines, "\n")
 	}
 

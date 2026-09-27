@@ -74,7 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
-		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nYou 【You】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
+		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
 		t.Fatalf("message count = %d, want %d: %#v", len(messages), len(want), messages)
@@ -208,7 +208,7 @@ func TestContextBuilderRendersBoundMentionMetadataOnDemand(t *testing.T) {
 		t.Fatalf("build mention context: %v", err)
 	}
 	transcript := messages[len(messages)-1].Content
-	if strings.Count(transcript, "@Alice Ops (abcdef)") != 2 || strings.Count(transcript, "@Vivy (bot)") != 3 || strings.Contains(transcript, "@Bot (bot)") {
+	if strings.Count(transcript, "@Alice Ops (abcdef)") != 2 || strings.Count(transcript, "@Vivy (Bot)") != 3 || strings.Contains(transcript, "@Bot (Bot)") {
 		t.Fatalf("canonical mentions were not rendered: %s", transcript)
 	}
 	if !strings.Contains(transcript, "@1234") || !strings.Contains(transcript, "x@123") || strings.Contains(transcript, "tolong @123 dan") {

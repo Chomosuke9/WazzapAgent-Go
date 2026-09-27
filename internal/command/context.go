@@ -38,6 +38,9 @@ func (c *Context) Key() agent.Key {
 	return agent.Key{TenantID: c.Message.TenantID, AccountID: c.Message.AccountID, ChatID: c.Message.ChatID}
 }
 
+// AssistantName is the bot's configured display name.
+func (c *Context) AssistantName() string { return c.invocation.Platform.AssistantName }
+
 // Commands lists every registered command, sorted by name.
 func (c *Context) Commands() []Command { return c.registry.Commands() }
 

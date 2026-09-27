@@ -55,6 +55,9 @@ type Platform struct {
 	Stickers StickerSender
 	Catalog  sticker.Catalog
 	Tasks    TaskScheduler
+	// AssistantName is the bot's configured display name, used to write
+	// its "@Name (Bot)" mention.
+	AssistantName string
 }
 
 type TextSender interface {
