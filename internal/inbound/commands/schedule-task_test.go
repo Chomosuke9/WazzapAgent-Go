@@ -104,3 +104,11 @@ func TestScheduleTaskIsOwnerOrBotOnly(t *testing.T) {
 		t.Fatalf("admin: err=%v calls=%d", err, tasks.calls)
 	}
 }
+
+func TestScheduleTaskCountsFromWhenTheMessageArrived(t *testing.T) {
+	received := time.Now().Add(-2 * time.Hour)
+	tasks, _, err := dispatchScheduleTask(t, "/schedule-task 1H late", command.PermissionFacts{IsOwner: true}, conversation.IncomingMessage{ReceivedAt: received})
+	if err != nil || !tasks.fireAt.Equal(received.Add(time.Hour)) {
+		t.Fatalf("err=%v fireAt=%v, want %v", err, tasks.fireAt, received.Add(time.Hour))
+	}
+}

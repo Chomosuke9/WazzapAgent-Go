@@ -60,8 +60,8 @@ type TaskStore interface {
 // ScheduleTask saves a task and arms its timer. It implements
 // command.TaskScheduler for /schedule-task.
 func (dispatcher *Dispatcher) ScheduleTask(ctx context.Context, key agent.Key, source identity.MessageID, fireAt time.Time, prompt string) error {
-	now := dispatcher.options.Clock.Now()
-	if fireAt.Before(now) || fireAt.After(now.Add(MaxTaskDelay+time.Minute)) {
+	// A fire time already past (a command recovered late) runs at once.
+	if fireAt.After(dispatcher.options.Clock.Now().Add(MaxTaskDelay + time.Minute)) {
 		return agent.NewError(agent.ErrorInvalidArgument, "schedule task", fmt.Errorf("fire time must be within %s", MaxTaskDelay))
 	}
 	id, err := identity.NewCausationID()

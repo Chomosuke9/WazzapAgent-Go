@@ -39,7 +39,13 @@ func runScheduleTask(ctx context.Context, c *command.Context) error {
 	if delay > maxScheduleTaskDelay {
 		return c.Reply(ctx, "A task can be scheduled at most 24 hours ahead.")
 	}
-	err := c.ScheduleTask(ctx, time.Now().Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions))
+	// Count from when the message arrived, so a command recovered after a
+	// crash keeps its original time (and runs at once if already due).
+	requested := c.Message.ReceivedAt
+	if requested.IsZero() {
+		requested = time.Now()
+	}
+	err := c.ScheduleTask(ctx, requested.Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions))
 	if agent.IsCode(err, agent.ErrorInvalidArgument) {
 		return c.Reply(ctx, "The task is too long. Keep it under 4,000 characters.")
 	}

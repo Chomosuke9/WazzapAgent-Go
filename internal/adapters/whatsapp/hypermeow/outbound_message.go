@@ -19,7 +19,10 @@ import (
 var outboundMentionPattern = regexp.MustCompile(`@([^@()\r\n]+?)\s*\(([0-9A-Za-z]{3,16})\)`)
 
 func (adapter *Adapter) textMessage(ctx context.Context, request action.SendTextRequest, address string, target types.JID) (*waE2E.Message, error) {
-	rendered := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key), adapter.groupAdmins(ctx, target))
+	rendered, err := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key), adapter.groupAdmins(ctx, target))
+	if err != nil {
+		return nil, err
+	}
 	mentionedJIDs := rendered.jids
 	message := &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
@@ -127,15 +130,13 @@ func (adapter *Adapter) mentionResolver(ctx context.Context, key agent.Key) func
 }
 
 // groupAdmins lists the admins of a group chat from the synchronized group
-// snapshot, or nothing when chat is not a group or its snapshot is not ready.
-func (adapter *Adapter) groupAdmins(ctx context.Context, chat types.JID) func() []types.JID {
-	return func() []types.JID {
-		if chat.Server != types.GroupServer {
-			return nil
-		}
+// snapshot. It fails while the snapshot is not ready, so the send is tried
+// again later instead of showing "@admin" that notifies nobody.
+func (adapter *Adapter) groupAdmins(ctx context.Context, chat types.JID) func() ([]types.JID, error) {
+	return func() ([]types.JID, error) {
 		info, err := adapter.readGroupInfo(ctx, chat)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		admins := make([]types.JID, 0, 4)
 		for _, participant := range info.Participants {
@@ -148,7 +149,7 @@ func (adapter *Adapter) groupAdmins(ctx context.Context, chat types.JID) func() 
 				admins = append(admins, participant.JID)
 			}
 		}
-		return admins
+		return admins, nil
 	}
 }
 
@@ -165,10 +166,10 @@ type renderedMentions struct {
 // group mention that tags every admin listed by admins, "bot" the account
 // itself, and any other ref is resolved to a member JID; unresolved refs
 // degrade to plain "@Name" text rather than failing the send.
-func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool), admins func() []types.JID) renderedMentions {
+func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool), admins func() ([]types.JID, error)) (renderedMentions, error) {
 	matches := outboundMentionPattern.FindAllStringSubmatchIndex(rawText, -1)
 	if len(matches) == 0 {
-		return renderedMentions{text: rawText}
+		return renderedMentions{text: rawText}, nil
 	}
 	var rendered strings.Builder
 	result := renderedMentions{jids: make([]string, 0, len(matches))}
@@ -203,7 +204,11 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 				// with the group mention's subject.
 				replacement = "@" + target.ToNonAD().String()
 				result.admins = true
-				for _, admin := range admins() {
+				list, err := admins()
+				if err != nil {
+					return renderedMentions{}, err
+				}
+				for _, admin := range list {
 					addMention(admin)
 				}
 			}
@@ -226,5 +231,5 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 	}
 	rendered.WriteString(rawText[cursor:])
 	result.text = rendered.String()
-	return result
+	return result, nil
 }
