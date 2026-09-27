@@ -29,7 +29,7 @@ type Effect interface {
 	isEffect()
 	Validate() error
 	Kind() Kind
-	Capability() policy.Capability
+	Capability() agent.Capability
 }
 
 type React struct {
@@ -37,9 +37,9 @@ type React struct {
 	Emoji           string
 }
 
-func (React) isEffect()                     {}
-func (effect React) Kind() Kind             { return KindReact }
-func (React) Capability() policy.Capability { return policy.CapabilityMessageReact }
+func (React) isEffect()                    {}
+func (effect React) Kind() Kind            { return KindReact }
+func (React) Capability() agent.Capability { return agent.CapabilityMessageReact }
 func (effect React) Validate() error {
 	if effect.TargetMessageID.IsZero() || strings.TrimSpace(effect.Emoji) == "" || !utf8.ValidString(effect.Emoji) || len(effect.Emoji) > MaxEmojiBytes {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate reaction effect", errors.New("target and bounded emoji are required"))
@@ -49,9 +49,9 @@ func (effect React) Validate() error {
 
 type DeleteMessage struct{ TargetMessageID identity.MessageID }
 
-func (DeleteMessage) isEffect()                     {}
-func (DeleteMessage) Kind() Kind                    { return KindDeleteMessage }
-func (DeleteMessage) Capability() policy.Capability { return policy.CapabilityMessageDelete }
+func (DeleteMessage) isEffect()                    {}
+func (DeleteMessage) Kind() Kind                   { return KindDeleteMessage }
+func (DeleteMessage) Capability() agent.Capability { return agent.CapabilityMessageDelete }
 func (effect DeleteMessage) Validate() error {
 	if effect.TargetMessageID.IsZero() {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate delete effect", errors.New("target message is required"))
@@ -64,9 +64,9 @@ type RunCommand struct {
 	TargetMessageID identity.MessageID
 }
 
-func (RunCommand) isEffect()                     {}
-func (RunCommand) Kind() Kind                    { return KindRunCommand }
-func (RunCommand) Capability() policy.Capability { return policy.CapabilityCommandExecute }
+func (RunCommand) isEffect()                    {}
+func (RunCommand) Kind() Kind                   { return KindRunCommand }
+func (RunCommand) Capability() agent.Capability { return agent.CapabilityCommandExecute }
 func (command RunCommand) Validate() error {
 	if strings.TrimSpace(command.Command) != command.Command || !strings.HasPrefix(command.Command, "/") ||
 		len(command.Command) == 0 || len(command.Command) > agent.MaxInputBytes || !utf8.ValidString(command.Command) {

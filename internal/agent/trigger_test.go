@@ -37,3 +37,16 @@ func TestTriggerConfigRejectsInvalidRegexAndOversizedPattern(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilitySetRejectsUnknownAndDuplicateValues(t *testing.T) {
+	if _, err := NewCapabilitySet(CapabilityMessageReact, CapabilityMessageReact); err == nil {
+		t.Fatal("duplicate capability was accepted")
+	}
+	if _, err := NewCapabilitySet(Capability("all.powerful")); err == nil {
+		t.Fatal("unknown capability was accepted")
+	}
+	set, err := NewCapabilitySet(CapabilityCommandExecute, CapabilityMessageReact)
+	if err != nil || !set.Has(CapabilityMessageReact) || set.Has(CapabilityMessageDelete) {
+		t.Fatalf("capability set = %#v, %v", set.Values(), err)
+	}
+}

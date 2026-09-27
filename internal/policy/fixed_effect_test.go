@@ -28,7 +28,7 @@ func TestFixedGateAlwaysAllowsReactionCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create model principal: %v", err)
 	}
-	request := policy.EffectAuthorization{Key: key, Principal: principal, Capability: policy.CapabilityMessageReact}
+	request := policy.EffectAuthorization{Key: key, Principal: principal, Capability: agent.CapabilityMessageReact}
 	if err := gate.AuthorizeEffect(context.Background(), request); err != nil {
 		t.Fatalf("authorize opted-in effect: %v", err)
 	}

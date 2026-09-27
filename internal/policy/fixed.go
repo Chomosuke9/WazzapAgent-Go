@@ -183,7 +183,7 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	if err := gate.requirePolicy(snapshot.Permission); err != nil {
 		return err
 	}
-	if !snapshot.Permission.ModelToolCapabilities().Has(agent.Capability(request.Capability)) {
+	if !snapshot.Permission.ModelToolCapabilities().Has(request.Capability) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("model capability is not currently granted"))
 	}
 	return nil
@@ -194,7 +194,7 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 // provider adapter rechecks group-admin authority before revoking another
 // participant's message.
 func (gate *FixedGate) authorizeDesktopEffect(ctx context.Context, request EffectAuthorization) error {
-	if request.Capability != CapabilityMessageDelete {
+	if request.Capability != agent.CapabilityMessageDelete {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize desktop effect", errors.New("desktop effect capability is not supported"))
 	}
 	allowed, err := gate.chats.IsChatAllowlisted(ctx, request.Key)
