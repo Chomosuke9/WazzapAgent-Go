@@ -31,6 +31,10 @@ const (
 	Emoji    = "🤖"
 )
 
+// ErrTooLarge means the image or animation would take too much memory to
+// decode.
+var ErrTooLarge = errors.New("image or animation is too large")
+
 // ErrUnsupported means the input is not an image this package can read.
 var ErrUnsupported = errors.New("unsupported image format")
 
@@ -78,6 +82,9 @@ type animation struct {
 }
 
 func decodeFrames(data []byte) (animation, error) {
+	if err := checkDecodedSize(data); err != nil {
+		return animation{}, err
+	}
 	switch {
 	case isWebP(data):
 		decoded, err := webp.DecodeAll(bytes.NewReader(data))
@@ -180,8 +187,8 @@ func encodeFrames(input animation, text Text) (Result, error) {
 			if err := webp.Encode(&encoded, canvases[0], webp.Options{Quality: quality, Method: 4}); err != nil {
 				return Result{}, fmt.Errorf("encode webp: %w", err)
 			}
-			if encoded.Len() <= MaxBytes {
-				return finish(encoded.Bytes(), false)
+			if result, err := finish(encoded.Bytes(), false); err != nil || len(result.WebP) <= MaxBytes {
+				return result, err
 			}
 		}
 		return Result{}, errors.New("sticker is still too large at the lowest quality")
@@ -203,8 +210,8 @@ func encodeFrames(input animation, text Text) (Result, error) {
 		if err := webp.EncodeAll(&encoded, anim, webp.Options{Quality: attempt.quality, Method: 4}); err != nil {
 			return Result{}, fmt.Errorf("encode animated webp: %w", err)
 		}
-		if encoded.Len() <= MaxBytes {
-			return finish(encoded.Bytes(), true)
+		if result, err := finish(encoded.Bytes(), true); err != nil || len(result.WebP) <= MaxBytes {
+			return result, err
 		}
 	}
 	return Result{}, errors.New("animated sticker is still too large at the lowest quality")
@@ -256,6 +263,8 @@ func Problem(err error) string {
 	switch {
 	case errors.Is(err, ErrFFmpegMissing):
 		return "Making stickers from videos and GIFs needs ffmpeg installed on the computer running the bot."
+	case errors.Is(err, ErrTooLarge):
+		return "That image or animation is too large to turn into a sticker."
 	case errors.Is(err, ErrUnsupported):
 		return "That file is not an image this bot can read."
 	default:

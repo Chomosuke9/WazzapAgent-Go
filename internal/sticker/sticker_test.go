@@ -105,3 +105,42 @@ func TestFitRectCentersAndKeepsAspect(t *testing.T) {
 		t.Fatalf("fitRect = %v", got)
 	}
 }
+
+func testGIF(t *testing.T, frames, size int) []byte {
+	t.Helper()
+	palette := color.Palette{color.Black, color.White}
+	animated := &gif.GIF{}
+	for index := 0; index < frames; index++ {
+		frame := image.NewPaletted(image.Rect(0, 0, size, size), palette)
+		frame.SetColorIndex(index%size, 0, 1)
+		animated.Image = append(animated.Image, frame)
+		animated.Delay = append(animated.Delay, 5)
+	}
+	var encoded bytes.Buffer
+	if err := gif.EncodeAll(&encoded, animated); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
+
+func TestCountGIFFramesReadsOnlyTheBlockStructure(t *testing.T) {
+	for _, frames := range []int{1, 3, 17} {
+		if got := countGIFFrames(testGIF(t, frames, 16)); got != frames {
+			t.Errorf("countGIFFrames = %d, want %d", got, frames)
+		}
+	}
+}
+
+func TestHugeAnimationsAreRefusedBeforeDecoding(t *testing.T) {
+	// 600 frames of 256x256 compress to little but decode to 39M pixels.
+	if _, err := FromImage(testGIF(t, 600, 256), Text{}); err != ErrTooLarge {
+		t.Fatalf("GIF err = %v, want ErrTooLarge", err)
+	}
+	animated, err := FromImage(testGIF(t, 3, 64), Text{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDecodedSize(animated.WebP); err != nil {
+		t.Fatalf("small animated WebP refused: %v", err)
+	}
+}
