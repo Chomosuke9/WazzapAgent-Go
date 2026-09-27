@@ -161,22 +161,20 @@ func nativeFlowButton(name string, params map[string]string) *waE2E.InteractiveM
 	}
 }
 
-// nativeFlowMessage wraps buttons in viewOnceMessage like WhatsApp's own
-// clients send them; hypermeow adds the biz node that makes them render.
+// nativeFlowMessage is a top-level interactive message with native-flow
+// buttons, in the shape Rey confirmed WhatsApp accepts on an account that
+// gets 405 otherwise. The trailing nameless button is the trick: hypermeow
+// names its biz node after the buttons ("quick_reply", "cta_copy"), and with
+// a nameless one present it falls back to "mixed", which the server accepts.
 func nativeFlowMessage(body string, contextInfo *waE2E.ContextInfo, buttons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) *waE2E.Message {
-	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			DeviceListMetadata:        &waE2E.DeviceListMetadata{},
-			DeviceListMetadataVersion: proto.Int32(2),
+	buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{Name: proto.String("")})
+	return &waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
+		Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
+		ContextInfo: contextInfo,
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons},
 		},
-		InteractiveMessage: &waE2E.InteractiveMessage{
-			Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
-			ContextInfo: contextInfo,
-			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
-				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
-			},
-		},
-	}}}
+	}}
 }
 
 // ownJID is the paired device's phone JID, or empty before pairing completes.
