@@ -135,9 +135,11 @@ func (dispatcher *Dispatcher) Run(ctx context.Context) error {
 }
 
 // Recover resumes every message the last run left unfinished, oldest first,
-// reading the inbox one page at a time.
+// reading the inbox one page at a time. It returns the first transient
+// failure, so the caller can run it again; other failures are reported.
 func (dispatcher *Dispatcher) Recover(ctx context.Context, tenantID identity.TenantID) error {
 	var after *conversation.IncomingMessage
+	var transient error
 	for {
 		messages, err := dispatcher.store.ListUnfinished(ctx, tenantID, after, maxPending)
 		if err != nil {
@@ -147,12 +149,19 @@ func (dispatcher *Dispatcher) Recover(ctx context.Context, tenantID identity.Ten
 			if ctx.Err() != nil {
 				return nil
 			}
-			if err := dispatcher.Resume(ctx, message); err != nil {
+			err := dispatcher.Resume(ctx, message)
+			switch {
+			case err == nil:
+			case agent.RetryableGeneration(err):
+				if transient == nil {
+					transient = err
+				}
+			default:
 				dispatcher.options.Report(err)
 			}
 		}
 		if len(messages) < maxPending {
-			return nil
+			return transient
 		}
 		after = &messages[len(messages)-1]
 	}
