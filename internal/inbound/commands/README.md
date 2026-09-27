@@ -23,7 +23,8 @@ WhatsApp message "/trigger mention off"        (or a tap on a button with that I
   │         denied → DeniedReply is sent, Run is not called
   │    2. calls Run(ctx, c)
   │    3. Run returned nil → message marked handled
-  │       Run returned an error → message stays unhandled and is retried later
+  │       Run returned an error → error logged, message closed (never
+  │       retried), and a short "failed" reply unless a send may have landed
   └─ your Run function                         this folder
 ```
 
@@ -127,8 +128,11 @@ Never check permissions inside `Run`. The registry has already done it.
 - **Bad input is not an error.** Reply with the usage text and return
   `nil`, so the message is marked handled.
 - **Return an error only for real failures** (storage, provider, network).
-  The message then stays unhandled and is retried, so don't return an error
-  for something retrying cannot fix.
+  The command lane logs the error and closes the message. It also replies
+  "Sorry, /<name> failed. Please try again later." (or a "still starting up"
+  message for `ErrorNotReady`), except after a timeout or provider failure,
+  where your own reply may already have been delivered. A failed command is never re-run
+  automatically, because re-running would repeat anything it already sent.
 - If `Run` returns `nil` without replying, that's fine. `/group delete`
   does this on purpose.
 - Use `agent.NewError(agent.ErrorXxx, "operation", err)` for errors, like
@@ -151,8 +155,9 @@ return c.ReplyButtons(ctx, "Mention trigger is on.",
 - A message can have 1 to 10 buttons. Button labels must not be empty.
 - `Args` must be valid input for your own `Run`. Add a test that parses every
   button you send (see `TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger`).
-- When the host can't send buttons, `ReplyButtons` falls back to a text reply
-  that lists each label next to the command to type.
+- When the host can't send buttons, or WhatsApp rejects the button message,
+  `ReplyButtons` falls back to a text reply that lists each label next to the
+  command to type.
 - Taps on list, legacy buttons, template and native-flow messages are all
   handled by the adapter. The ID is read before the message text, and
   numeric IDs are accepted. You never deal with provider types.

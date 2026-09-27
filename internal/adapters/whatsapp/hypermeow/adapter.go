@@ -365,9 +365,16 @@ func (adapter *Adapter) SendButtons(ctx context.Context, request action.SendButt
 	if err != nil {
 		return action.SendTextResult{}, err
 	}
-	return adapter.send(ctx, request.Key, "send WhatsApp buttons", func(context.Context, string, types.JID) (*waE2E.Message, error) {
+	result, err := adapter.send(ctx, request.Key, "send WhatsApp buttons", func(context.Context, string, types.JID) (*waE2E.Message, error) {
 		return message, nil
 	})
+	if errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		// The server acknowledged the message with an error code (for
+		// example 405), so it was definitely not delivered. Other failures
+		// may have reached the chat and stay provider failures.
+		return action.SendTextResult{}, agent.NewError(agent.ErrorUnsupported, "send WhatsApp buttons", err)
+	}
+	return result, err
 }
 
 func (adapter *Adapter) send(ctx context.Context, key agent.Key, operation string, build func(context.Context, string, types.JID) (*waE2E.Message, error)) (action.SendTextResult, error) {
