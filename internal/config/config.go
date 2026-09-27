@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -142,163 +141,84 @@ func Load(lookup LookupEnv) (Snapshot, error) {
 }
 
 func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
-	if lookup == nil {
-		return Snapshot{}, errors.New("environment lookup is required")
-	}
-	dataDir, err := resolveDataDir(valueOrDefault(lookup, "WAZZAP_DATA_DIR", defaultDataDir))
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_DATA_DIR: %w", err)
-	}
-	httpAddress := valueOrDefault(lookup, "WAZZAP_HTTP_ADDRESS", defaultHTTPAddress)
-	if err := validateHTTPAddress(httpAddress); err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_HTTP_ADDRESS: %w", err)
-	}
-	logLevel := strings.ToLower(valueOrDefault(lookup, "WAZZAP_LOG_LEVEL", defaultLogLevel))
-	if !oneOf(logLevel, "debug", "info", "warn", "error") {
-		return Snapshot{}, fmt.Errorf("WAZZAP_LOG_LEVEL: unsupported value %q", logLevel)
-	}
-	logFormat := strings.ToLower(valueOrDefault(lookup, "WAZZAP_LOG_FORMAT", defaultLogFormat))
-	if !oneOf(logFormat, "json", "text", "compact") {
-		return Snapshot{}, fmt.Errorf("WAZZAP_LOG_FORMAT: unsupported value %q", logFormat)
-	}
-	shutdownTimeout, err := parseDuration(lookup, "WAZZAP_SHUTDOWN_TIMEOUT", defaultShutdownTimeout, maxShutdownTimeout)
+	settings, err := SettingsFromEnv(lookup)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	whatsAppEnabled, err := parseBool(lookup, "WAZZAP_WHATSAPP_ENABLED", defaultWhatsAppEnabled)
+	snapshot, err := SnapshotFromSettings(settings)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	agentEnabled, err := parseBool(lookup, "WAZZAP_AGENT_ENABLED", whatsAppEnabled)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if agentEnabled && !whatsAppEnabled {
-		return Snapshot{}, fmt.Errorf("WAZZAP_WHATSAPP_ENABLED: must be true when WAZZAP_AGENT_ENABLED=true")
-	}
-
-	providerID, err := identity.ParseProviderID(valueOrDefault(lookup, "WAZZAP_LLM_PROVIDER_ID", defaultProviderID))
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_LLM_PROVIDER_ID: %w", err)
-	}
-	policyID, err := identity.ParsePolicyID(valueOrDefault(lookup, "WAZZAP_POLICY_ID", defaultPolicyID))
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_POLICY_ID: %w", err)
-	}
-	policyRevision, err := parseUint(lookup, "WAZZAP_POLICY_REVISION", 1, 1, ^uint64(0))
-	if err != nil {
-		return Snapshot{}, err
-	}
-	llmTimeout, err := parseDuration(lookup, "WAZZAP_LLM_TIMEOUT", defaultLLMTimeout, 10*time.Minute)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	connectTimeout, err := parseDuration(lookup, "WAZZAP_CONNECT_TIMEOUT", defaultConnectTimeout, 10*time.Minute)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	sendTimeout, err := parseDuration(lookup, "WAZZAP_SEND_TIMEOUT", defaultSendTimeout, 5*time.Minute)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	inboundQueue, err := parseUint(lookup, "WAZZAP_INBOUND_QUEUE", defaultInboundQueue, 1, 65_536)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	inboundWorkers, err := parseUint(lookup, "WAZZAP_INBOUND_WORKERS", defaultInboundWorkers, 1, 256)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	messageDebounce, err := parseDuration(lookup, "WAZZAP_MESSAGE_DEBOUNCE", defaultMessageDebounce, time.Minute)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	messageBurstCap, err := parseUint(lookup, "WAZZAP_MESSAGE_BURST_CAP", defaultMessageBurstCap, 1, 256)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	historyWindow, err := parseUint(lookup, "WAZZAP_HISTORY_WINDOW", defaultHistoryWindow, 1, 256)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	maxContextBytes, err := parseUint(lookup, "WAZZAP_MAX_CONTEXT_BYTES", defaultMaxContextBytes, 1, 1024*1024)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	historyKeepLatest, err := parseUint(lookup, "WAZZAP_HISTORY_KEEP_LATEST", defaultHistoryKeepLatest, 1, 1_000_000)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	historyMaxAge, err := parseDuration(lookup, "WAZZAP_HISTORY_MAX_AGE", defaultHistoryMaxAge, 10*365*24*time.Hour)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	llmConcurrency, err := parseUint(lookup, "WAZZAP_LLM_CONCURRENCY", defaultLLMConcurrency, 1, 256)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	maxOutputTokens, err := parseUint(lookup, "WAZZAP_MAX_OUTPUT_TOKENS", defaultMaxOutputTokens, 1, 65_536)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	responseBytes, err := parseUint(lookup, "WAZZAP_MAX_RESPONSE_BYTES", defaultMaxResponseBytes, 1, maxResponseBytes)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	pairingOutput := strings.ToLower(valueOrDefault(lookup, "WAZZAP_PAIRING_OUTPUT", defaultPairingOutput))
-	if !oneOf(pairingOutput, "disabled", "terminal") {
-		return Snapshot{}, fmt.Errorf("WAZZAP_PAIRING_OUTPUT: must be disabled or terminal")
-	}
-
-	snapshot := Snapshot{
-		dataDir:             dataDir,
-		httpAddress:         httpAddress,
-		logLevel:            logLevel,
-		logFormat:           logFormat,
-		shutdownTimeout:     shutdownTimeout,
-		whatsAppEnabled:     whatsAppEnabled,
-		agentEnabled:        agentEnabled,
-		llmAPIKey:           value(lookup, "WAZZAP_LLM_API_KEY"),
-		llmEndpoint:         value(lookup, "WAZZAP_LLM_ENDPOINT"),
-		llmFallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"),
-		llmFallbackAPIKey:   value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
-		langsmithAPIKey:     value(lookup, "LANGSMITH_API_KEY"),
-		llmModel:            value(lookup, "WAZZAP_LLM_MODEL"),
-		llmProviderID:       providerID,
-		llmTimeout:          llmTimeout,
-		llmConcurrency:      uint32(llmConcurrency),
-		maxOutputTokens:     uint32(maxOutputTokens),
-		maxResponseBytes:    uint32(responseBytes),
-		basePrompt:          valueOrDefault(lookup, "WAZZAP_BASE_PROMPT", ""),
-		policyID:            policyID,
-		policyRevision:      policyRevision,
-		inboundQueue:        uint32(inboundQueue),
-		inboundWorkers:      uint32(inboundWorkers),
-		messageDebounce:     messageDebounce,
-		messageBurstCap:     uint32(messageBurstCap),
-		historyWindow:       uint32(historyWindow),
-		maxContextBytes:     uint32(maxContextBytes),
-		historyKeepLatest:   uint32(historyKeepLatest),
-		historyMaxAge:       historyMaxAge,
-		connectTimeout:      connectTimeout,
-		sendTimeout:         sendTimeout,
-		pairingOutput:       pairingOutput,
-		ownerAddress:        value(lookup, "WAZZAP_OWNER_JID"),
-		allowlist:           splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
-		assistantName:       value(lookup, "ASSISTANT_NAME"),
-		chatDefaults:        DefaultChatDefaults(),
-	}
-	if whatsAppEnabled {
-		if err := snapshot.validateEnabled(); err != nil {
+	if snapshot.whatsAppEnabled && requireConfiguredIdentity {
+		if err := snapshot.loadRequiredIdentity(lookup); err != nil {
 			return Snapshot{}, err
-		}
-		if requireConfiguredIdentity {
-			if err := snapshot.loadRequiredIdentity(lookup); err != nil {
-				return Snapshot{}, err
-			}
 		}
 	}
 	return snapshot, nil
+}
+
+// SettingsFromEnv reads the same Settings the settings UI edits from
+// environment variables, so both sources go through one set of defaults and
+// validation. Unset values stay zero and take their defaults.
+func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
+	if lookup == nil {
+		return Settings{}, errors.New("environment lookup is required")
+	}
+	settings := Settings{
+		AssistantName: value(lookup, "ASSISTANT_NAME"), BasePrompt: value(lookup, "WAZZAP_BASE_PROMPT"),
+		ChatDefaults: DefaultChatDefaults(),
+		OwnerJID:     value(lookup, "WAZZAP_OWNER_JID"), ChatAllowlist: splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
+		LLMEndpoint: value(lookup, "WAZZAP_LLM_ENDPOINT"), LLMAPIKey: value(lookup, "WAZZAP_LLM_API_KEY"),
+		LLMModel: value(lookup, "WAZZAP_LLM_MODEL"), LLMProviderID: value(lookup, "WAZZAP_LLM_PROVIDER_ID"),
+		FallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"), FallbackAPIKey: value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
+		PolicyID: value(lookup, "WAZZAP_POLICY_ID"), LogLevel: value(lookup, "WAZZAP_LOG_LEVEL"),
+		LogFormat: value(lookup, "WAZZAP_LOG_FORMAT"), LangSmithAPIKey: value(lookup, "LANGSMITH_API_KEY"),
+		DataDir: value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
+		PairingOutput: value(lookup, "WAZZAP_PAIRING_OUTPUT"),
+	}
+	var err error
+	if settings.WhatsAppEnabled, err = parseBool(lookup, "WAZZAP_WHATSAPP_ENABLED", defaultWhatsAppEnabled); err != nil {
+		return Settings{}, err
+	}
+	if settings.AgentEnabled, err = parseBool(lookup, "WAZZAP_AGENT_ENABLED", settings.WhatsAppEnabled); err != nil {
+		return Settings{}, err
+	}
+	if settings.PolicyRevision, err = parseUint(lookup, "WAZZAP_POLICY_REVISION", 0, 1, ^uint64(0)); err != nil {
+		return Settings{}, err
+	}
+	// An explicit value must be positive; its upper bound is checked with the
+	// rest of the settings.
+	durations := []struct {
+		key    string
+		target *time.Duration
+	}{
+		{"WAZZAP_SHUTDOWN_TIMEOUT", &settings.ShutdownTimeout}, {"WAZZAP_LLM_TIMEOUT", &settings.LLMTimeout},
+		{"WAZZAP_CONNECT_TIMEOUT", &settings.ConnectTimeout}, {"WAZZAP_SEND_TIMEOUT", &settings.SendTimeout},
+		{"WAZZAP_MESSAGE_DEBOUNCE", &settings.MessageDebounce}, {"WAZZAP_HISTORY_MAX_AGE", &settings.HistoryMaxAge},
+	}
+	for _, field := range durations {
+		if *field.target, err = parseDuration(lookup, field.key, 0, time.Duration(1<<63-1)); err != nil {
+			return Settings{}, err
+		}
+	}
+	numbers := []struct {
+		key    string
+		target *uint32
+	}{
+		{"WAZZAP_LLM_CONCURRENCY", &settings.LLMConcurrency}, {"WAZZAP_MAX_OUTPUT_TOKENS", &settings.MaxOutputTokens},
+		{"WAZZAP_MAX_RESPONSE_BYTES", &settings.MaxResponseBytes}, {"WAZZAP_HISTORY_WINDOW", &settings.HistoryWindow},
+		{"WAZZAP_MAX_CONTEXT_BYTES", &settings.MaxContextBytes}, {"WAZZAP_HISTORY_KEEP_LATEST", &settings.HistoryKeepLatest},
+		{"WAZZAP_INBOUND_QUEUE", &settings.InboundQueue}, {"WAZZAP_INBOUND_WORKERS", &settings.InboundWorkers},
+		{"WAZZAP_MESSAGE_BURST_CAP", &settings.MessageBurstCap},
+	}
+	for _, field := range numbers {
+		parsed, err := parseUint(lookup, field.key, 0, 1, 1<<32-1)
+		if err != nil {
+			return Settings{}, err
+		}
+		*field.target = uint32(parsed)
+	}
+	return settings, nil
 }
 
 func (snapshot *Snapshot) loadRequiredIdentity(lookup LookupEnv) error {
@@ -312,55 +232,6 @@ func (snapshot *Snapshot) loadRequiredIdentity(lookup LookupEnv) error {
 	}
 	snapshot.tenantID = tenantID
 	snapshot.accountID = accountID
-	return nil
-}
-
-func (snapshot Snapshot) validateEnabled() error {
-	required := []struct {
-		key   string
-		value string
-	}{
-		{"WAZZAP_OWNER_JID", snapshot.ownerAddress},
-		{"WAZZAP_LLM_ENDPOINT", snapshot.llmEndpoint},
-		{"WAZZAP_LLM_API_KEY", snapshot.llmAPIKey},
-		{"WAZZAP_LLM_MODEL", snapshot.llmModel},
-	}
-	for _, field := range required {
-		if strings.TrimSpace(field.value) == "" {
-			return fmt.Errorf("%s: required when WAZZAP_WHATSAPP_ENABLED=true", field.key)
-		}
-	}
-	if len(snapshot.allowlist) == 0 {
-		return fmt.Errorf("WAZZAP_CHAT_ALLOWLIST: at least one target is required when WAZZAP_WHATSAPP_ENABLED=true")
-	}
-	if len(snapshot.allowlist) > 1024 {
-		return fmt.Errorf("WAZZAP_CHAT_ALLOWLIST: at most 1024 targets are allowed")
-	}
-	for _, address := range append(append([]string(nil), snapshot.allowlist...), snapshot.ownerAddress) {
-		if err := validateOpaqueAddress(address); err != nil {
-			return fmt.Errorf("provider address: %w", err)
-		}
-	}
-	parsedEndpoint, err := url.Parse(snapshot.llmEndpoint)
-	if err != nil || parsedEndpoint.Scheme == "" || parsedEndpoint.Host == "" {
-		return fmt.Errorf("WAZZAP_LLM_ENDPOINT: must be an absolute HTTP(S) URL")
-	}
-	if parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https" {
-		return fmt.Errorf("WAZZAP_LLM_ENDPOINT: must use HTTP or HTTPS")
-	}
-	if (snapshot.llmFallbackEndpoint == "") != (snapshot.llmFallbackAPIKey == "") {
-		return fmt.Errorf("WAZZAP_LLM_FALLBACK_ENDPOINT and WAZZAP_LLM_FALLBACK_API_KEY: must be configured together")
-	}
-	if snapshot.llmFallbackEndpoint != "" {
-		fallbackEndpoint, parseErr := url.Parse(snapshot.llmFallbackEndpoint)
-		if parseErr != nil || fallbackEndpoint.Scheme == "" || fallbackEndpoint.Host == "" ||
-			(fallbackEndpoint.Scheme != "http" && fallbackEndpoint.Scheme != "https") {
-			return fmt.Errorf("WAZZAP_LLM_FALLBACK_ENDPOINT: must be an absolute HTTP(S) URL")
-		}
-	}
-	if strings.TrimSpace(snapshot.basePrompt) == "" || len(snapshot.basePrompt) > 16*1024 {
-		return fmt.Errorf("WAZZAP_BASE_PROMPT: must be non-empty and at most 16384 bytes")
-	}
 	return nil
 }
 

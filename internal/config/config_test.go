@@ -260,6 +260,7 @@ func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "very-secret-key",
 		"WAZZAP_LLM_MODEL":        "test-model",
+		"ASSISTANT_NAME":          "Vivy",
 		"WAZZAP_BASE_PROMPT":      "private base prompt",
 	}
 	cfg, err := Load(mapLookup(values))
@@ -295,6 +296,7 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://example.invalid/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "secret",
 		"WAZZAP_LLM_MODEL":        "model",
+		"ASSISTANT_NAME":          "Vivy",
 	}
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted an empty allowlist")
@@ -318,6 +320,7 @@ func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "secret",
 		"WAZZAP_LLM_MODEL":        "test-model",
+		"ASSISTANT_NAME":          "Vivy",
 		"WAZZAP_PAIRING_OUTPUT":   "terminal",
 		"WAZZAP_BASE_PROMPT":      "test prompt",
 	}))
@@ -425,6 +428,7 @@ func enabledRuntimeValues(dataDir string) map[string]string {
 		"WAZZAP_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":    "very-secret-key",
 		"WAZZAP_LLM_MODEL":      "test-model",
+		"ASSISTANT_NAME":        "Vivy",
 		"WAZZAP_BASE_PROMPT":    "test prompt",
 	}
 }
