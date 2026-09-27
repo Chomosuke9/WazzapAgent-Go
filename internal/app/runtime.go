@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
+
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
 func (runtime *conversationRuntime) run(ctx context.Context) error {
@@ -10,11 +13,9 @@ func (runtime *conversationRuntime) run(ctx context.Context) error {
 	defer cancel()
 	runners := []func(context.Context) error{
 		runtime.account.Run,
-		runtime.recovery.Run,
-		runtime.effectRecovery.Run,
-		runtime.inboundRecovery.Run,
 		runtime.inboundDispatch.Run,
 		runtime.maintenance.Run,
+		runtime.redeliver,
 	}
 	errorsChannel := make(chan error, len(runners))
 	for _, runner := range runners {
@@ -27,6 +28,64 @@ func (runtime *conversationRuntime) run(ctx context.Context) error {
 		joined = errors.Join(joined, <-errorsChannel)
 	}
 	return joined
+}
+
+// outboxSweep is how often, and after how long, a reply or effect that a
+// transient failure left pending is tried again while the account stays
+// connected. Younger rows belong to the turn that planned them.
+const outboxSweep = time.Minute
+
+// redeliver resumes the messages the last run left unanswered, then sends
+// whatever the outbox holds each time the account connects, and once a
+// minute whatever has been pending for over a minute. A failed recovery is
+// tried again on each sweep until it succeeds.
+func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
+	recovered := runtime.recoverInbound(ctx)
+	sweep := time.NewTicker(outboxSweep)
+	defer sweep.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-runtime.account.Opened():
+			runtime.flushOutbox(ctx, time.Time{})
+		case now := <-sweep.C:
+			if !recovered {
+				recovered = runtime.recoverInbound(ctx)
+			}
+			runtime.flushOutbox(ctx, now.Add(-outboxSweep))
+		}
+	}
+}
+
+func (runtime *conversationRuntime) recoverInbound(ctx context.Context) bool {
+	err := runtime.inboundDispatch.Recover(ctx, runtime.tenantID)
+	if err != nil && ctx.Err() == nil {
+		runtime.logger.Error("inbound recovery failed", "code", agent.CodeOf(err), "error", err)
+	}
+	return err == nil
+}
+
+// flushOutbox dispatches pending replies and effects planned before
+// plannedBefore; the zero time means all of them.
+func (runtime *conversationRuntime) flushOutbox(ctx context.Context, plannedBefore time.Time) {
+	report := func(what string, err error) {
+		if err != nil && ctx.Err() == nil && !agent.IsCode(err, agent.ErrorNotReady) {
+			runtime.logger.Warn("outbox redelivery failed", "kind", what, "code", agent.CodeOf(err), "error", err)
+		}
+	}
+	actions, err := runtime.store.Actions().ListPending(ctx, runtime.tenantID, plannedBefore)
+	report("list actions", err)
+	for _, ref := range actions {
+		_, err := runtime.dispatcher.Dispatch(ctx, ref)
+		report("action", err)
+	}
+	// Effects go second: a model effect waits for the reply it follows.
+	effects, err := runtime.store.Effects().ListPending(ctx, runtime.tenantID, plannedBefore)
+	report("list effects", err)
+	for _, ref := range effects {
+		report("effect", runtime.effectDispatcher.Dispatch(ctx, ref))
+	}
 }
 
 // close is called only after run has joined every worker. It is retryable: a

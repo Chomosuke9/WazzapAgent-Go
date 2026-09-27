@@ -230,10 +230,6 @@ export function SettingsPage() {
         <label><span>History max age</span><input value={draft.historyMaxAge} onChange={(event) => update("historyMaxAge", event.target.value)} /></label>
         <label><span>Inbound queue</span><input type="number" min="0" value={draft.inboundQueue} onChange={(event) => update("inboundQueue", Number(event.target.value))} /></label>
         <label><span>Inbound workers</span><input type="number" min="0" value={draft.inboundWorkers} onChange={(event) => update("inboundWorkers", Number(event.target.value))} /></label>
-        <label><span>Command queue</span><input type="number" min="0" value={draft.commandQueue} onChange={(event) => update("commandQueue", Number(event.target.value))} /></label>
-        <label><span>Command workers</span><input type="number" min="0" value={draft.commandWorkers} onChange={(event) => update("commandWorkers", Number(event.target.value))} /></label>
-        <label><span>AI queue</span><input type="number" min="0" value={draft.aiQueue} onChange={(event) => update("aiQueue", Number(event.target.value))} /></label>
-        <label><span>AI workers</span><input type="number" min="0" value={draft.aiWorkers} onChange={(event) => update("aiWorkers", Number(event.target.value))} /></label>
         <label><span>Message debounce</span><input value={draft.messageDebounce} onChange={(event) => update("messageDebounce", event.target.value)} /></label>
         <label><span>Message burst cap</span><input type="number" min="0" value={draft.messageBurstCap} onChange={(event) => update("messageBurstCap", Number(event.target.value))} /></label>
       </div>

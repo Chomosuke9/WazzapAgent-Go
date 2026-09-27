@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/fallback"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
@@ -24,10 +26,8 @@ import (
 )
 
 const (
-	generationLeaseMargin = 30 * time.Second
-	actionLeaseMargin     = 10 * time.Second
-	maintenanceInterval   = time.Hour
-	terminalRetentionAge  = 30 * 24 * time.Hour
+	maintenanceInterval  = time.Hour
+	terminalRetentionAge = 30 * 24 * time.Hour
 )
 
 type conversationRuntime struct {
@@ -37,13 +37,13 @@ type conversationRuntime struct {
 	account          *account.Runtime
 	adapter          *whatsapp.Adapter
 	gate             *policy.FixedGate
+	dispatcher       *action.Dispatcher
 	effectDispatcher *effect.Dispatcher
-	recovery         *action.RecoveryWorker
-	effectRecovery   *effect.RecoveryWorker
-	inboundRecovery  *inbound.RecoveryWorker
-	inboundDispatch  *inbound.SplitDispatcher
+	inboundDispatch  *inbound.Dispatcher
 	maintenance      *maintenance.Worker
 	shutdownTimeout  time.Duration
+	tenantID         identity.TenantID
+	logger           *slog.Logger
 
 	closeMu  sync.Mutex
 	closed   bool
@@ -57,10 +57,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err := prepareDataDir(application.config.TenantDataDir()); err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "prepare tenant data directory", err)
 	}
-	store, err := appsqlite.OpenWithOptions(ctx, application.config.AppDatabasePath(), appsqlite.Options{
-		GenerationLeaseTTL: application.config.LLMTimeout() + generationLeaseMargin,
-		ActionLeaseTTL:     application.config.SendTimeout() + actionLeaseMargin,
-	})
+	store, err := appsqlite.Open(ctx, application.config.AppDatabasePath())
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +68,11 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			_ = store.Close()
 		}
 	}()
+	// Nothing has been sent in this run yet, so anything still executing was
+	// cut off by the last one.
+	if err := store.ResolveInterrupted(ctx, application.config.TenantID()); err != nil {
+		return nil, err
+	}
 	defaults := agent.ConfigValues{
 		Model:      agent.ModelConfig{ProviderID: application.config.LLMProviderID(), Model: application.config.LLMModel(), MaxOutputTokens: application.config.MaxOutputTokens()},
 		Prompt:     application.config.BasePrompt(),
@@ -164,14 +166,6 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	recovery, err := action.NewRecoveryWorker(application.config.TenantID(), store.Actions(), dispatcher, agent.SystemClock{}, time.Second, 64)
-	if err != nil {
-		return nil, err
-	}
-	effectRecovery, err := effect.NewRecoveryWorker(application.config.TenantID(), store.Effects(), effectDispatcher, agent.SystemClock{}, time.Second, 64)
-	if err != nil {
-		return nil, err
-	}
 	agentLogs := observability.NewAgentLogger(application.logger)
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
@@ -197,33 +191,17 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	commandHandler, err := inbound.NewCommandHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform)
-	if err != nil {
-		return nil, err
-	}
-	aiHandler, err := inbound.NewAIHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, inbound.BatchOptions{
-		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(), Clock: agent.SystemClock{},
-		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter,
+	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
+		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
+		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter, Muter: waAdapter,
+		Report: func(err error) {
+			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	inboundDispatch, err := inbound.NewSplitDispatcher(store.Inbound(), commandHandler, aiHandler, application.metrics,
-		application.config.CommandQueue(), application.config.AIQueue(), application.config.CommandWorkers(), application.config.AIWorkers(),
-		func(lane inbound.Lane, err error) {
-			application.logger.Error("inbound lane processing failed", "lane", lane, "code", agent.CodeOf(err), "error", err)
-		})
-	if err != nil {
-		return nil, err
-	}
-	if err := inboundDispatch.EnableMuteEnforcement(waAdapter, agent.SystemClock{}); err != nil {
-		return nil, err
-	}
 	if err := waAdapter.BindHandler(inboundDispatch); err != nil {
-		return nil, err
-	}
-	inboundRecovery, err := inbound.NewRecoveryWorker(application.config.TenantID(), store.Inbound(), inboundDispatch, agent.SystemClock{}, 2*time.Second, 5*time.Second, 64)
-	if err != nil {
 		return nil, err
 	}
 	maintenanceWorker, err := maintenance.NewWorker(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalRetentionAge, 500,
@@ -237,8 +215,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	adapterOwned = false
 	return &conversationRuntime{store: store, configDefaults: defaults, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
-		gate: gate, effectDispatcher: effectDispatcher,
-		recovery: recovery, effectRecovery: effectRecovery, inboundRecovery: inboundRecovery, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
+		gate: gate, dispatcher: dispatcher, effectDispatcher: effectDispatcher, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
+		tenantID: application.config.TenantID(), logger: application.logger,
 		shutdownTimeout: application.config.ShutdownTimeout()}, nil
 }
 

@@ -11,17 +11,15 @@ import (
 
 type State uint8
 
+// State values are stored in outbound_actions.state. 2 (claimed) and 5
+// (retryable) were lease states; migration 021 turned them back into pending.
 const (
-	StatePending State = iota + 1
-	StateClaimed
-	StateExecuting
-	StateSucceeded
-	StateFailedRetryable
-	StateFailedTerminal
-	StateUnknownOutcome
+	StatePending        State = 1
+	StateExecuting      State = 3
+	StateSucceeded      State = 4
+	StateFailedTerminal State = 6
+	StateUnknownOutcome State = 7
 )
-
-type Lease string
 
 type StoredAction struct {
 	Ref              agent.DispatchRef
@@ -30,17 +28,20 @@ type StoredAction struct {
 	ReplyToMessageID identity.MessageID
 	Text             string
 	State            State
-	Lease            Lease
 	CompletedAt      *time.Time
 	ProviderReceipt  string
 }
 
+// Store is the reply outbox. Start is the only claim: it moves a pending row
+// to executing with a conditional update, so two callers can never both send
+// it. One process owns the database, so there is no lease to expire; an
+// executing row found at startup was cut off mid-send and becomes unknown.
 type Store interface {
-	Claim(context.Context, agent.DispatchRef, time.Time) (StoredAction, error)
-	MarkExecuting(context.Context, agent.DispatchRef, Lease, time.Time) error
-	Complete(context.Context, agent.DispatchRef, Lease, string, time.Time) error
-	Release(context.Context, agent.DispatchRef, Lease, agent.ErrorCode, bool, time.Time) error
-	MarkUnknown(context.Context, agent.DispatchRef, Lease, agent.ErrorCode, time.Time) error
+	Load(context.Context, agent.DispatchRef) (StoredAction, error)
+	Start(context.Context, agent.DispatchRef, time.Time) error
+	Complete(context.Context, agent.DispatchRef, string, time.Time) error
+	FailTerminal(context.Context, agent.DispatchRef, agent.ErrorCode, time.Time) error
+	MarkUnknown(context.Context, agent.DispatchRef, agent.ErrorCode, time.Time) error
 }
 
 type SendAuthorizer interface {
@@ -89,95 +90,87 @@ type DiscardObserver struct{}
 func (DiscardObserver) ObserveDelivery(agent.DeliveryStatus, agent.ErrorCode) {}
 
 type Dispatcher struct {
-	store      Store
-	policy     SendAuthorizer
-	sender     TextSender
-	clock      agent.Clock
-	retryDelay time.Duration
-	observer   Observer
+	store    Store
+	policy   SendAuthorizer
+	sender   TextSender
+	clock    agent.Clock
+	observer Observer
 }
 
 func NewDispatcher(store Store, policy SendAuthorizer, sender TextSender, clock agent.Clock, observer Observer) (*Dispatcher, error) {
 	if store == nil || policy == nil || sender == nil || clock == nil || observer == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create response dispatcher", fmt.Errorf("store, policy, sender, clock, and observer are required"))
 	}
-	return &Dispatcher{store: store, policy: policy, sender: sender, clock: clock, retryDelay: time.Second, observer: observer}, nil
+	return &Dispatcher{store: store, policy: policy, sender: sender, clock: clock, observer: observer}, nil
 }
 
+// Dispatch sends a planned reply at most once. A reply that cannot be sent
+// yet (the account is offline) stays pending; the runtime dispatches pending
+// replies again whenever the account reconnects.
 func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRef) (result agent.DeliveryResult, resultErr error) {
 	defer func() { dispatcher.observer.ObserveDelivery(result.Status, agent.CodeOf(resultErr)) }()
 	if err := ref.Key.Validate(); err != nil || ref.ActionID.IsZero() {
 		return agent.DeliveryResult{}, agent.NewError(agent.ErrorInvalidArgument, "dispatch response", fmt.Errorf("valid dispatch reference is required"))
 	}
-	action, err := dispatcher.store.Claim(ctx, ref, dispatcher.clock.Now())
+	action, err := dispatcher.store.Load(ctx, ref)
 	if err != nil {
 		return agent.DeliveryResult{}, err
 	}
+	pending := agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryPending}
 	switch action.State {
 	case StateSucceeded:
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: cloneTime(action.CompletedAt)}, nil
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: action.CompletedAt}, nil
 	case StateFailedTerminal:
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryFailedTerminal, CompletedAt: cloneTime(action.CompletedAt)}, agent.NewError(agent.ErrorProviderFailure, "dispatch response", fmt.Errorf("delivery previously failed terminally"))
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryFailedTerminal, CompletedAt: action.CompletedAt}, agent.NewError(agent.ErrorProviderFailure, "dispatch response", fmt.Errorf("delivery previously failed terminally"))
 	case StateUnknownOutcome:
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome, CompletedAt: cloneTime(action.CompletedAt)}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("delivery outcome is unknown"))
-	case StateExecuting, StatePending, StateFailedRetryable:
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryPending}, agent.NewError(agent.ErrorDeliveryPending, "dispatch response", fmt.Errorf("delivery is owned by another worker"))
-	case StateClaimed:
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome, CompletedAt: action.CompletedAt}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("delivery outcome is unknown"))
+	case StateExecuting:
+		return pending, agent.NewError(agent.ErrorDeliveryPending, "dispatch response", fmt.Errorf("delivery is already in progress"))
+	case StatePending:
 		// Continue below.
 	default:
 		return agent.DeliveryResult{}, agent.NewError(agent.ErrorIntegrityFailure, "dispatch response", fmt.Errorf("invalid action state"))
 	}
 
 	if err := dispatcher.policy.AuthorizeSend(ctx, ref.Key); err != nil {
-		_ = dispatcher.release(action, agent.CodeOf(err), false)
+		record(func(ctx context.Context) error {
+			return dispatcher.store.FailTerminal(ctx, ref, agent.CodeOf(err), dispatcher.clock.Now())
+		})
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryFailedTerminal}, err
 	}
 	if !dispatcher.sender.Ready() {
-		_ = dispatcher.release(action, agent.ErrorNotReady, true)
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryPending}, agent.NewError(agent.ErrorNotReady, "dispatch response", fmt.Errorf("text sender is not ready"))
+		return pending, agent.NewError(agent.ErrorNotReady, "dispatch response", fmt.Errorf("text sender is not ready"))
 	}
-	now := dispatcher.clock.Now()
-	if err := dispatcher.store.MarkExecuting(ctx, ref, action.Lease, now); err != nil {
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryPending}, err
+	if err := dispatcher.store.Start(ctx, ref, dispatcher.clock.Now()); err != nil {
+		if agent.IsCode(err, agent.ErrorConflict) {
+			return pending, agent.NewError(agent.ErrorDeliveryPending, "dispatch response", fmt.Errorf("delivery is already in progress"))
+		}
+		return pending, err
 	}
 	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: action.Text, QuotedMessageID: action.ReplyToMessageID})
 	if sendErr != nil {
+		// The request may have reached WhatsApp. Never send it a second time.
 		code := agent.CodeOf(sendErr)
-		if code == agent.ErrorCancelled || code == agent.ErrorTimeout || code == agent.ErrorUnavailable || code == agent.ErrorUnknownOutcome {
-			_ = dispatcher.markUnknown(action, code)
-			return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("send text unknown outcome: %w", sendErr))
-		}
-		_ = dispatcher.markUnknown(action, code)
-		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("provider failure unknown outcome: %w", sendErr))
+		record(func(ctx context.Context) error {
+			return dispatcher.store.MarkUnknown(ctx, ref, code, dispatcher.clock.Now())
+		})
+		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "dispatch response", fmt.Errorf("send text unknown outcome: %w", sendErr))
 	}
 	completedAt := dispatcher.clock.Now()
-	if err := dispatcher.store.Complete(ctx, ref, action.Lease, sent.ProviderReceipt, completedAt); err != nil {
-		_ = dispatcher.markUnknown(action, agent.ErrorStorageFailure)
+	if err := dispatcher.store.Complete(ctx, ref, sent.ProviderReceipt, completedAt); err != nil {
+		record(func(ctx context.Context) error {
+			return dispatcher.store.MarkUnknown(ctx, ref, agent.ErrorStorageFailure, dispatcher.clock.Now())
+		})
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", fmt.Errorf("complete storage failed: %w", err))
 	}
 	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: &completedAt}, nil
 }
 
-func (dispatcher *Dispatcher) release(action StoredAction, code agent.ErrorCode, retryable bool) error {
-	retryAt := dispatcher.clock.Now()
-	if retryable {
-		retryAt = retryAt.Add(dispatcher.retryDelay)
-	}
+// record saves an outcome even when the caller's context is already done.
+// A failed write leaves the row executing, which the next startup turns into
+// unknown: the reply is still never sent twice.
+func record(write func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return dispatcher.store.Release(ctx, action.Ref, action.Lease, code, retryable, retryAt)
-}
-
-func (dispatcher *Dispatcher) markUnknown(action StoredAction, code agent.ErrorCode) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	return dispatcher.store.MarkUnknown(ctx, action.Ref, action.Lease, code, dispatcher.clock.Now())
-}
-
-func cloneTime(value *time.Time) *time.Time {
-	if value == nil {
-		return nil
-	}
-	copyValue := *value
-	return &copyValue
+	_ = write(ctx)
 }

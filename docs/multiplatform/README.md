@@ -238,8 +238,6 @@ aktif harus ditandai demikian di UI. Field secret menggunakan aksi khusus.
 | Konteks | `WAZZAP_HISTORY_WINDOW`, `WAZZAP_MAX_CONTEXT_BYTES` | R |
 | Retention | `WAZZAP_HISTORY_KEEP_LATEST`, `WAZZAP_HISTORY_MAX_AGE` | R; jelaskan efek pengurangan retention sebelum Apply |
 | Inbound | `WAZZAP_INBOUND_QUEUE`, `WAZZAP_INBOUND_WORKERS` | R |
-| Command | `WAZZAP_COMMAND_QUEUE`, `WAZZAP_COMMAND_WORKERS` | R |
-| AI workers | `WAZZAP_AI_QUEUE`, `WAZZAP_AI_WORKERS` | R |
 | Batching | `WAZZAP_MESSAGE_DEBOUNCE`, `WAZZAP_MESSAGE_BURST_CAP` | R |
 | Koneksi | `WAZZAP_CONNECT_TIMEOUT`, `WAZZAP_SEND_TIMEOUT`, `WAZZAP_SHUTDOWN_TIMEOUT` | R |
 | Policy | `WAZZAP_POLICY_ID`, `WAZZAP_POLICY_REVISION` | R; bukan moderation level per-chat |

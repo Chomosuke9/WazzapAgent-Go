@@ -65,6 +65,8 @@ type Runtime struct {
 	connector   Connector
 	stopTimeout time.Duration
 
+	opened chan struct{} // signalled each time the account becomes open
+
 	mu          sync.RWMutex
 	state       State
 	stateSince  time.Time
@@ -93,6 +95,7 @@ func NewRuntime(
 		accountID:   accountID,
 		connector:   connector,
 		stopTimeout: stopTimeout,
+		opened:      make(chan struct{}, 1),
 		state:       StateStopped,
 		stateSince:  time.Now().UTC(),
 	}, nil
@@ -215,11 +218,22 @@ func (runtime *Runtime) transition(next State, code agent.ErrorCode) bool {
 
 func (runtime *Runtime) setState(next State, code agent.ErrorCode) {
 	runtime.mu.Lock()
+	previous := runtime.state
 	runtime.state = next
 	runtime.stateSince = time.Now().UTC()
 	runtime.lastErrCode = code
 	runtime.mu.Unlock()
+	if next == StateOpen && previous != StateOpen {
+		select {
+		case runtime.opened <- struct{}{}:
+		default: // a signal is already waiting
+		}
+	}
 }
+
+// Opened receives a value each time the account connects, so work that
+// waited for the connection can run.
+func (runtime *Runtime) Opened() <-chan struct{} { return runtime.opened }
 
 func (runtime *Runtime) stopConnector() error {
 	ctx, cancel := context.WithTimeout(context.Background(), runtime.stopTimeout)

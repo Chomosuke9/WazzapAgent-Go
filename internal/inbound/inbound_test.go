@@ -313,6 +313,133 @@ func TestMessageBurstCapSplitsOversizedBurstWithoutLosingRemainder(t *testing.T)
 	}
 }
 
+func TestMessagesBeyondTheMemoryBoundAreReadBackFromTheInbox(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 2)
+	chat := "15550000015@s.whatsapp.net"
+	var wait sync.WaitGroup
+	errors := make(chan error, 6)
+	for index := 0; index < 6; index++ {
+		candidate := fixture.candidate(fmt.Sprintf("overflow-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
+		candidate.OccurredAt = candidate.OccurredAt.Add(time.Duration(index) * time.Millisecond)
+		candidate.ReceivedAt = candidate.ReceivedAt.Add(time.Duration(index) * time.Millisecond)
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			errors <- fixture.handler.Handle(context.Background(), candidate)
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("handle overflowing burst: %v", err)
+		}
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
+	if err != nil || len(unfinished) != 0 {
+		t.Fatalf("messages left unanswered after overflow: %d, err=%v", len(unfinished), err)
+	}
+	if fixture.model.calls.Load() < 3 {
+		t.Fatalf("model calls = %d, want at least 3 batches of at most 2", fixture.model.calls.Load())
+	}
+}
+
+type flakyClaimStore struct {
+	inbound.Store
+	failures atomic.Int32
+}
+
+func (store *flakyClaimStore) ClaimBatch(ctx context.Context, batch []conversation.IncomingMessage) ([]conversation.IncomingMessage, []conversation.IncomingMessage, error) {
+	if store.failures.Add(-1) >= 0 {
+		return nil, nil, agent.NewError(agent.ErrorUnavailable, "claim batch", errors.New("database is busy"))
+	}
+	return store.Store.ClaimBatch(ctx, batch)
+}
+
+type flakyInboxStore struct {
+	inbound.Store
+	failures atomic.Int32
+}
+
+func (store *flakyInboxStore) ListUnfinishedInChat(ctx context.Context, key agent.Key, limit int) ([]conversation.IncomingMessage, error) {
+	if store.failures.Add(-1) >= 0 {
+		return nil, agent.NewError(agent.ErrorUnavailable, "list unfinished", errors.New("database is busy"))
+	}
+	return store.Store.ListUnfinishedInChat(ctx, key, limit)
+}
+
+func TestAFailedInboxReadBackIsTriedAgain(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixture(t)
+	store := &flakyInboxStore{Store: fixture.store.Inbound()}
+	store.failures.Store(1)
+	dispatcher, err := inbound.NewDispatcher(
+		store, fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+		command.Platform{Text: fixture.sender}, inbound.Options{Debounce: 200 * time.Millisecond, BurstCap: 256, Report: fixture.handler.report},
+	)
+	if err != nil {
+		t.Fatalf("create inbound dispatcher: %v", err)
+	}
+	fixture.handler.dispatcher = dispatcher
+	// Two messages fit in memory; the other two wait in the inbox, and the
+	// first read-back fails.
+	chat := "15550000017@s.whatsapp.net"
+	for index := 0; index < 4; index++ {
+		candidate := fixture.candidate(fmt.Sprintf("flaky-inbox-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
+		if err := dispatcher.Handle(context.Background(), candidate); err != nil {
+			t.Fatalf("handle: %v", err)
+		}
+	}
+	if err := fixture.handler.settle(nil); err != nil {
+		t.Fatalf("settle overflowing burst: %v", err)
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
+	if err != nil || len(unfinished) != 0 {
+		t.Fatalf("messages left unanswered after a failed read-back: %d, err=%v", len(unfinished), err)
+	}
+}
+
+func TestRecoveryReadsTheInboxPageByPage(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixture(t)
+	for index := 0; index < 5; index++ {
+		chat := fmt.Sprintf("1555000002%d@s.whatsapp.net", index)
+		candidate := fixture.candidate(fmt.Sprintf("paged-%d", index), chat, conversation.ChatDirect, "hello")
+		if _, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate); err != nil {
+			t.Fatalf("store unfinished message: %v", err)
+		}
+	}
+	if err := fixture.handler.Recover(context.Background(), fixture.tenantID); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
+	if err != nil || len(unfinished) != 0 || fixture.sender.count() != 5 {
+		t.Fatalf("after paged recovery: unfinished=%d replies=%d err=%v, want 0/5", len(unfinished), fixture.sender.count(), err)
+	}
+}
+
+func TestAFailedClaimIsTriedAgain(t *testing.T) {
+	fixture := newFixture(t)
+	store := &flakyClaimStore{Store: fixture.store.Inbound()}
+	store.failures.Store(1)
+	dispatcher, err := inbound.NewDispatcher(
+		store, fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+		command.Platform{Text: fixture.sender}, inbound.Options{BurstCap: 1, Report: fixture.handler.report},
+	)
+	if err != nil {
+		t.Fatalf("create inbound dispatcher: %v", err)
+	}
+	fixture.handler.dispatcher = dispatcher
+	candidate := fixture.candidate("flaky-claim", "15550000016@s.whatsapp.net", conversation.ChatDirect, "hello")
+	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+		t.Fatalf("handle after a failed claim: %v", err)
+	}
+	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
+		t.Fatalf("model calls=%d replies=%d, want 1/1", fixture.model.calls.Load(), fixture.sender.count())
+	}
+}
+
 func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
 	fixture := newFixture(t)
 	chat := "120363000000000012@g.us"
@@ -668,16 +795,15 @@ func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim before crash: %v", err)
 	}
-	now := time.Now().UTC()
-	messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+	messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 	if err != nil {
-		t.Fatalf("list recoverable inbound: %v", err)
+		t.Fatalf("list unfinished inbound: %v", err)
 	}
 	if len(messages) != 1 || messages[0].InvocationID != claimed.Message.InvocationID {
-		t.Fatalf("recoverable messages = %#v", messages)
+		t.Fatalf("unfinished messages = %#v", messages)
 	}
-	if err := fixture.handler.Resume(context.Background(), messages[0]); err != nil {
-		t.Fatalf("resume durable inbound: %v", err)
+	if err := fixture.handler.Recover(context.Background(), fixture.tenantID); err != nil {
+		t.Fatalf("recover durable inbound: %v", err)
 	}
 	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
 		t.Fatalf("resumed model/sender calls = %d/%d", fixture.model.calls.Load(), fixture.sender.count())
@@ -709,12 +835,11 @@ func TestDispatcherRechecksCurrentAllowlistBeforeEverySend(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	turnClaim, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()})
-	if err != nil {
+	if _, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()}); err != nil {
 		t.Fatalf("claim planned turn: %v", err)
 	}
 	plan, err := fixture.store.Turns().CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, ConfigVersion: snapshot.Version, ResponseText: "pending response",
+		Key: key, InvocationID: invocation.ID, ConfigVersion: snapshot.Version, ResponseText: "pending response",
 	})
 	if err != nil {
 		t.Fatalf("commit pending plan: %v", err)
@@ -746,40 +871,41 @@ type fixture struct {
 	responder  *action.CommandResponder
 }
 
-// directIngress is a synchronous test harness for the two concrete lanes.
-// Production intake uses SplitDispatcher; this helper keeps unit tests
-// deterministic without reintroducing a combined production handler.
+// directIngress makes the dispatcher synchronous for tests: each call waits
+// until every chat is idle and returns what the background turns reported.
 type directIngress struct {
-	store    inbound.Store
-	command  *inbound.CommandHandler
-	ai       *inbound.AIHandler
-	observer inbound.Observer
+	dispatcher *inbound.Dispatcher
+	mu         sync.Mutex
+	reported   []error
+}
+
+func (handler *directIngress) report(err error) {
+	handler.mu.Lock()
+	handler.reported = append(handler.reported, err)
+	handler.mu.Unlock()
+}
+
+func (handler *directIngress) settle(err error) error {
+	handler.dispatcher.WaitIdle()
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	if err == nil && len(handler.reported) > 0 {
+		err = handler.reported[0]
+	}
+	handler.reported = nil
+	return err
 }
 
 func (handler *directIngress) Handle(ctx context.Context, candidate conversation.IncomingCandidate) error {
-	if err := candidate.Validate(); err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "handle incoming candidate", err)
-	}
-	claimed, err := handler.store.ClaimAndResolveSender(ctx, candidate)
-	if err != nil {
-		return err
-	}
-	if claimed.Duplicate {
-		handler.observer.ObserveInboundDuplicate()
-	} else {
-		handler.observer.ObserveInboundClaimed()
-	}
-	if claimed.Handled {
-		return nil
-	}
-	return handler.Resume(ctx, claimed.Message)
+	return handler.settle(handler.dispatcher.Handle(ctx, candidate))
 }
 
 func (handler *directIngress) Resume(ctx context.Context, message conversation.IncomingMessage) error {
-	if inbound.IsCommand(message.Text) {
-		return handler.command.Resume(ctx, message)
-	}
-	return handler.ai.Resume(ctx, message)
+	return handler.settle(handler.dispatcher.Resume(ctx, message))
+}
+
+func (handler *directIngress) Recover(ctx context.Context, tenantID identity.TenantID) error {
+	return handler.settle(handler.dispatcher.Recover(ctx, tenantID))
 }
 
 type failingText struct {
@@ -805,13 +931,14 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 		t.Run(string(test.code), func(t *testing.T) {
 			fixture := newFixture(t)
 			failing := &failingText{code: test.code}
-			commandHandler, err := inbound.NewCommandHandler(
-				fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{}, command.Platform{Text: failing},
+			dispatcher, err := inbound.NewDispatcher(
+				fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+				command.Platform{Text: failing}, inbound.Options{BurstCap: 1, Report: fixture.handler.report},
 			)
 			if err != nil {
-				t.Fatalf("create command handler: %v", err)
+				t.Fatalf("create inbound dispatcher: %v", err)
 			}
-			fixture.handler.command = commandHandler
+			fixture.handler.dispatcher = dispatcher
 			candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
 			candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
 			candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
@@ -828,13 +955,12 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 			if test.reply != "" && !strings.Contains(fixture.sender.last().Text, test.reply) {
 				t.Fatalf("failure reply = %q, want it to contain %q", fixture.sender.last().Text, test.reply)
 			}
-			now := time.Now().UTC()
-			messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+			messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 			if err != nil {
-				t.Fatalf("list recoverable inbound: %v", err)
+				t.Fatalf("list unfinished inbound: %v", err)
 			}
 			if len(messages) != 0 {
-				t.Fatalf("failed command is still recoverable: %#v", messages)
+				t.Fatalf("failed command is still unfinished: %#v", messages)
 			}
 			if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 				t.Fatalf("redelivered failed command: %v", err)
@@ -906,25 +1032,27 @@ func newFixtureAtPath(
 	if err != nil {
 		t.Fatalf("create command responder: %v", err)
 	}
-	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender},
+	ingress := &directIngress{}
+	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report}
+	ingress.dispatcher, err = inbound.NewDispatcher(
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender}, dispatcherOptions,
 	)
 	if err != nil {
-		t.Fatalf("create command handler: %v", err)
+		t.Fatalf("create inbound dispatcher: %v", err)
 	}
-	aiHandler, err := inbound.NewAIHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
-		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
-	)
-	if err != nil {
-		t.Fatalf("create AI handler: %v", err)
-	}
+	runCtx, stop := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	running := ingress.dispatcher
+	go func() { _ = running.Run(runCtx); close(stopped) }()
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
-		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
-		model:   model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
+		handler: ingress, model: model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		stop()
+		<-stopped
+		_ = store.Close()
+	})
 	return fixture
 }
 

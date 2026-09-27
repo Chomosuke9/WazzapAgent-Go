@@ -114,7 +114,7 @@ func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
 	if err != nil || record.Plan == nil || record.State != agent.TurnSucceeded || len(record.Plan.Effects) != 1 {
 		t.Fatalf("durable reaction-only plan = %#v, err=%v", record, err)
 	}
-	actions, err := store.Actions().ListRecoverable(context.Background(), key.TenantID, time.Now().UTC(), 10)
+	actions, err := store.Actions().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(actions) != 0 {
 		t.Fatalf("reaction-only outbound text actions = %#v, err=%v", actions, err)
 	}
@@ -122,13 +122,12 @@ func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
 	if err != nil || len(history.Entries) != 1 || history.Entries[0].Role != agent.HistoryUser {
 		t.Fatalf("reaction-only history = %#v, err=%v", history, err)
 	}
-	recoverable, err := store.Effects().ListRecoverableEffects(context.Background(), key.TenantID, time.Now().UTC(), 10)
+	recoverable, err := store.Effects().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(recoverable) != 1 || recoverable[0].EffectID != record.Plan.Effects[0].EffectID {
 		t.Fatalf("recoverable reaction = %#v, err=%v", recoverable, err)
 	}
-	claimedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: record.Plan.Effects[0].EffectID}, time.Now().UTC())
-	if err != nil || claimedEffect.State != effect.StateClaimed {
-		t.Fatalf("reaction-only effect claim = %#v, err=%v", claimedEffect, err)
+	if err := store.Effects().Start(context.Background(), effect.Ref{Key: key, EffectID: record.Plan.Effects[0].EffectID}, time.Now().UTC()); err != nil {
+		t.Fatalf("reaction-only effect start: %v", err)
 	}
 	second, err := current.Invoke(context.Background(), invocation)
 	if err != nil || second.Delivery != agent.DeliverySucceeded || model.calls.Load() != 1 || responses.calls.Load() != 0 {

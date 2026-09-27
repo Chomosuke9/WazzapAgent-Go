@@ -8,8 +8,6 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-type TurnLease string
-
 type TurnState uint8
 
 const (
@@ -40,7 +38,6 @@ type ClaimTurnRequest struct {
 
 type TurnClaim struct {
 	State     TurnState
-	Lease     TurnLease
 	MessageID identity.MessageID
 	Plan      *StoredPlan
 }
@@ -49,7 +46,6 @@ type CommitPlanRequest struct {
 	Key              Key
 	InvocationID     identity.InvocationID
 	CurrentMessageID identity.MessageID
-	Lease            TurnLease
 	ConfigVersion    ConfigVersion
 	ResponseText     string
 	ReplyToMessageID identity.MessageID
@@ -60,10 +56,8 @@ type CommitPlanRequest struct {
 type FailGenerationRequest struct {
 	Key          Key
 	InvocationID identity.InvocationID
-	Lease        TurnLease
 	Code         ErrorCode
 	Retryable    bool
-	RetryAfter   time.Time
 }
 
 type DispatchRef struct {

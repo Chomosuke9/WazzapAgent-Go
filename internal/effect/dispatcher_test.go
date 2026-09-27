@@ -67,52 +67,38 @@ func (store *memoryStore) Plan(_ context.Context, request effect.PlanRequest, _ 
 	return store.stored, nil
 }
 
-func (store *memoryStore) Claim(_ context.Context, ref effect.Ref, _ time.Time) (effect.Stored, error) {
+func (store *memoryStore) Load(_ context.Context, ref effect.Ref) (effect.Stored, error) {
 	if store.stored.Request.Ref != ref {
 		return effect.Stored{}, fmt.Errorf("effect not found")
-	}
-	if store.stored.State == effect.StatePending {
-		store.stored.State = effect.StateClaimed
-		store.stored.Lease = "lease"
 	}
 	return store.stored, nil
 }
 
-func (store *memoryStore) Requeue(_ context.Context, ref effect.Ref, lease effect.Lease, _ time.Time) error {
-	if store.stored.Request.Ref != ref || store.stored.State != effect.StateClaimed || store.stored.Lease != lease {
-		return fmt.Errorf("invalid requeue claim")
-	}
-	store.stored.State = effect.StatePending
-	store.stored.Lease = ""
-	return nil
-}
-
-func (store *memoryStore) MarkExecuting(_ context.Context, ref effect.Ref, lease effect.Lease, _ time.Time) error {
-	if store.stored.Request.Ref != ref || store.stored.State != effect.StateClaimed || store.stored.Lease != lease {
-		return fmt.Errorf("invalid execution claim")
+func (store *memoryStore) Start(_ context.Context, ref effect.Ref, _ time.Time) error {
+	if store.stored.Request.Ref != ref || store.stored.State != effect.StatePending {
+		return agent.NewError(agent.ErrorConflict, "start fake effect", fmt.Errorf("effect is not pending"))
 	}
 	store.stored.State = effect.StateExecuting
 	return nil
 }
 
-func (store *memoryStore) Complete(_ context.Context, ref effect.Ref, lease effect.Lease, _ string, _ time.Time) error {
-	return store.finish(ref, lease, effect.StateSucceeded)
+func (store *memoryStore) Complete(_ context.Context, ref effect.Ref, _ string, _ time.Time) error {
+	return store.finish(ref, effect.StateSucceeded)
 }
 
-func (store *memoryStore) FailTerminal(_ context.Context, ref effect.Ref, lease effect.Lease, _ agent.ErrorCode, _ time.Time) error {
-	return store.finish(ref, lease, effect.StateFailedTerminal)
+func (store *memoryStore) FailTerminal(_ context.Context, ref effect.Ref, _ agent.ErrorCode, _ time.Time) error {
+	return store.finish(ref, effect.StateFailedTerminal)
 }
 
-func (store *memoryStore) MarkUnknown(_ context.Context, ref effect.Ref, lease effect.Lease, _ agent.ErrorCode, _ time.Time) error {
-	return store.finish(ref, lease, effect.StateUnknownOutcome)
+func (store *memoryStore) MarkUnknown(_ context.Context, ref effect.Ref, _ agent.ErrorCode, _ time.Time) error {
+	return store.finish(ref, effect.StateUnknownOutcome)
 }
 
-func (store *memoryStore) finish(ref effect.Ref, lease effect.Lease, state effect.State) error {
-	if store.stored.Request.Ref != ref || store.stored.State != effect.StateExecuting || store.stored.Lease != lease {
-		return fmt.Errorf("invalid completion claim")
+func (store *memoryStore) finish(ref effect.Ref, state effect.State) error {
+	if store.stored.Request.Ref != ref {
+		return fmt.Errorf("effect not found")
 	}
 	store.stored.State = state
-	store.stored.Lease = ""
 	return nil
 }
 

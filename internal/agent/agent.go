@@ -208,14 +208,14 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 		}
 		return agent.dispatchPlan(ctx, *claim.Plan)
 	}
-	if claim.State != TurnGenerating || claim.Lease == "" {
+	if claim.State != TurnGenerating {
 		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", fmt.Errorf("turn store returned invalid generation claim"))
 	}
 	if claim.MessageID.IsZero() {
 		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", fmt.Errorf("turn store returned an empty message ID"))
 	}
 	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(claim.MessageID, invocation)); err != nil {
-		agent.failGeneration(invocation.ID, claim.Lease, err)
+		agent.failGeneration(invocation.ID, err)
 		return InvokeResult{}, err
 	}
 	// The transcript may continue to receive passive group messages while this
@@ -226,7 +226,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	})
 	if err != nil {
 		wrappedErr := NewError(ErrorIntegrityFailure, "invoke agent", err)
-		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		agent.failGeneration(invocation.ID, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
 	var chat ChatContext
@@ -235,7 +235,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	} else {
 		chat, err = agent.chatContext.ReadChatContext(ctx, agent.key)
 		if err != nil {
-			agent.failGeneration(invocation.ID, claim.Lease, err)
+			agent.failGeneration(invocation.ID, err)
 			return InvokeResult{}, err
 		}
 	}
@@ -244,7 +244,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	})
 	if err != nil {
 		wrappedErr := NewError(ErrorIntegrityFailure, "invoke agent", err)
-		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		agent.failGeneration(invocation.ID, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
 
@@ -269,7 +269,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	if err != nil {
 		agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), ModelResult{}, err)
 		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
-		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		agent.failGeneration(invocation.ID, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
 	if strings.TrimSpace(generated.Text) == "" && utf8.ValidString(generated.Text) {
@@ -278,7 +278,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 	if err := validateModelResult(generated, request.Capabilities, request.ContextMessages); err != nil {
 		agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), generated, err)
 		wrappedErr := NewError(ErrorProviderFailure, "invoke agent", err)
-		agent.failGeneration(invocation.ID, claim.Lease, wrappedErr)
+		agent.failGeneration(invocation.ID, wrappedErr)
 		return InvokeResult{}, wrappedErr
 	}
 	agent.invokeEvents.ObserveAgentInvokeFinished(agent.key, request.Model, chatName, time.Since(invokeStarted), generated, nil)
@@ -287,7 +287,6 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 		Key:              agent.key,
 		InvocationID:     invocation.ID,
 		CurrentMessageID: claim.MessageID,
-		Lease:            claim.Lease,
 		ConfigVersion:    snapshot.Version,
 		ResponseText:     generated.Text,
 		ReplyToMessageID: generated.ReplyToMessageID,
@@ -453,23 +452,30 @@ func (rejectedEffectDispatcher) DispatchEffect(context.Context, EffectDispatchRe
 	return NewError(ErrorPermissionDenied, "dispatch effect", fmt.Errorf("no effect executor is configured"))
 }
 
-func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease TurnLease, generationErr error) {
-	code := CodeOf(generationErr)
-	retryable := code == ErrorRateLimited || code == ErrorTimeout || code == ErrorCancelled ||
-		code == ErrorUnavailable || code == ErrorProviderFailure || code == ErrorInternal
+func (agent *Agent) failGeneration(invocationID identity.InvocationID, generationErr error) {
 	request := FailGenerationRequest{
 		Key:          agent.key,
 		InvocationID: invocationID,
-		Lease:        lease,
-		Code:         code,
-		Retryable:    retryable,
-		RetryAfter:   agent.clock.Now().Add(time.Second),
+		Code:         CodeOf(generationErr),
+		Retryable:    RetryableGeneration(generationErr),
 	}
-	// The generation error remains the primary result. A failed cleanup leaves
-	// the bounded lease to expire, which is safer than hiding the original cause.
+	// The generation error remains the primary result. A failed write leaves
+	// the turn generating, which the next claim treats as retryable.
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = agent.turns.FailGeneration(cleanupCtx, request)
+}
+
+// RetryableGeneration reports whether a failed turn may be generated again:
+// the model call failed in a way that can pass (rate limit, timeout, outage,
+// shutdown). Delivery and storage failures are not generation failures.
+func RetryableGeneration(err error) bool {
+	switch CodeOf(err) {
+	case ErrorRateLimited, ErrorTimeout, ErrorCancelled, ErrorUnavailable, ErrorProviderFailure, ErrorInternal:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateModelResult(result ModelResult, capabilities CapabilitySet, contextMessages map[string]identity.MessageID) error {

@@ -156,10 +156,6 @@ export interface SettingsValuesDTO {
     "historyMaxAge": string;
     "inboundQueue": number;
     "inboundWorkers": number;
-    "commandQueue": number;
-    "commandWorkers": number;
-    "aiQueue": number;
-    "aiWorkers": number;
     "messageDebounce": string;
     "messageBurstCap": number;
     "connectTimeout": string;
