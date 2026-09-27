@@ -52,7 +52,7 @@ func (store *HistoryStore) list(
 	if err != nil {
 		return agent.HistoryPage{}, err
 	}
-	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := store.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return agent.HistoryPage{}, storageError("begin history list", err)
 	}

@@ -42,7 +42,7 @@ func (store *Store) SaveBroadcastSchedule(ctx context.Context, schedule broadcas
 
 func (store *Store) ListBroadcastSchedules(ctx context.Context) ([]broadcast.Schedule, error) {
 	cutoff := time.Now().UTC().Add(-broadcastScheduleRetention).UnixMilli()
-	rows, err := store.db.QueryContext(ctx, `SELECT id, scheduled_at_ms, format, payload, batch_size,
+	rows, err := store.read.QueryContext(ctx, `SELECT id, scheduled_at_ms, format, payload, batch_size,
 		batch_delay_seconds, targets_json, status, results_json, created_at_ms, updated_at_ms
 		FROM whatsapp_broadcast_schedules
 		WHERE status = 'scheduled' OR updated_at_ms >= ?

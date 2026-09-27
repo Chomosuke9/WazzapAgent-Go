@@ -3,7 +3,6 @@ package policy
 import (
 	"context"
 	"errors"
-	"sort"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
@@ -92,47 +91,6 @@ func (principal Principal) Validate() error {
 	return nil
 }
 
-type Capability string
-
-const (
-	CapabilityCommandExecute Capability = "command.execute"
-
-	CapabilityMessageReact  Capability = "message.react"
-	CapabilityMessageDelete Capability = "message.delete"
-)
-
-type CapabilitySet struct{ values []Capability }
-
-func NewCapabilitySet(values ...Capability) (CapabilitySet, error) {
-	copyValues := append([]Capability(nil), values...)
-	sort.Slice(copyValues, func(left, right int) bool { return copyValues[left] < copyValues[right] })
-	for index, capability := range copyValues {
-		if !capability.Valid() {
-			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", errors.New("capability is invalid"))
-		}
-		if index > 0 && copyValues[index-1] == capability {
-			return CapabilitySet{}, agent.NewError(agent.ErrorInvalidArgument, "create policy capability set", errors.New("capability is duplicated"))
-		}
-	}
-	return CapabilitySet{values: copyValues}, nil
-}
-
-func (set CapabilitySet) Has(capability Capability) bool {
-	index := sort.Search(len(set.values), func(index int) bool { return set.values[index] >= capability })
-	return index < len(set.values) && set.values[index] == capability
-}
-
-func (set CapabilitySet) Values() []Capability { return append([]Capability(nil), set.values...) }
-
-func (capability Capability) Valid() bool {
-	switch capability {
-	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete:
-		return true
-	default:
-		return false
-	}
-}
-
 // HumanAccess is the current durable policy observation for one verified
 // human principal. It intentionally carries policy facts, not provider DTOs
 // or an address which a caller could treat as another identity proof.
@@ -194,7 +152,7 @@ type ChatAuthorityReader interface {
 type EffectAuthorization struct {
 	Key        agent.Key
 	Principal  Principal
-	Capability Capability
+	Capability agent.Capability
 }
 
 func (request EffectAuthorization) Validate() error {

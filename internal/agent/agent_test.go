@@ -43,7 +43,7 @@ func TestAgentInvokePersistsPlanAndSkipsModelOnReplay(t *testing.T) {
 
 }
 
-func TestInvokeWithChatContextReusesObservedMetadata(t *testing.T) {
+func TestInvokeWithReusesObservedMetadata(t *testing.T) {
 	store := openStore(t)
 	key := newKey(t)
 	reader := &countingChatContextReader{}
@@ -54,7 +54,7 @@ func TestInvokeWithChatContextReusesObservedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	invocation := newInvocation(t, agent.InitialConfigVersion, "hello")
-	if _, err := current.InvokeWithChatContext(context.Background(), invocation, agent.ChatContext{Kind: "group", Name: "Group"}); err != nil {
+	if _, err := current.InvokeWith(context.Background(), invocation, snapshotOf(t, current), &agent.ChatContext{Kind: "group", Name: "Group"}); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 0 {
@@ -544,4 +544,13 @@ type failingDispatcher struct{ err error }
 
 func (dispatcher failingDispatcher) Dispatch(context.Context, agent.DispatchRef) (agent.DeliveryResult, error) {
 	return agent.DeliveryResult{}, dispatcher.err
+}
+
+func snapshotOf(t *testing.T, current *agent.Agent) agent.ConfigSnapshot {
+	t.Helper()
+	snapshot, err := current.Config().Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("refresh config: %v", err)
+	}
+	return snapshot
 }

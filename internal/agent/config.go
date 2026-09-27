@@ -111,7 +111,7 @@ func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMute
 // react_to_message tool. Commands the model requests in reply_message are not
 // capabilities; the command registry's permission expression decides them.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	result, _ := NewCapabilitySet("message.react")
+	result, _ := NewCapabilitySet(CapabilityMessageReact)
 	return result
 }
 

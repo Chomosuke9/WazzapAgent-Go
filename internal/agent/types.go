@@ -74,7 +74,24 @@ type MentionContext struct {
 	Bot         bool
 }
 
+// Capability names something the model may do beyond replying.
 type Capability string
+
+const (
+	CapabilityCommandExecute Capability = "command.execute"
+	CapabilityMessageReact   Capability = "message.react"
+	CapabilityMessageDelete  Capability = "message.delete"
+)
+
+// Valid reports whether capability is one the application knows.
+func (capability Capability) Valid() bool {
+	switch capability {
+	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete:
+		return true
+	default:
+		return false
+	}
+}
 
 type CapabilitySet struct {
 	values []Capability
@@ -84,8 +101,7 @@ func NewCapabilitySet(values ...Capability) (CapabilitySet, error) {
 	copyValues := append([]Capability(nil), values...)
 	sort.Slice(copyValues, func(i, j int) bool { return copyValues[i] < copyValues[j] })
 	for index, value := range copyValues {
-		text := string(value)
-		if text == "" || len(text) > 128 || !utf8.ValidString(text) || strings.TrimSpace(text) != text {
+		if !value.Valid() {
 			return CapabilitySet{}, NewError(ErrorInvalidArgument, "create capability set", fmt.Errorf("invalid capability"))
 		}
 		if index > 0 && copyValues[index-1] == value {

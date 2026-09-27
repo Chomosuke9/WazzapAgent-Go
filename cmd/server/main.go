@@ -8,26 +8,19 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/web"
-	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	coreapp "github.com/Chomosuke9/WazzapAgent-Go/internal/app"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	apphost "github.com/Chomosuke9/WazzapAgent-Go/internal/host"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
 var version = "dev"
@@ -62,101 +55,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	lease, err := platform.AcquireDataRootLease(ctx, paths.EffectiveDataRoot)
+	app, err := apphost.Open(ctx, paths, version)
 	if err != nil {
-		return err
-	}
-	defer lease.Close()
-	logs := observability.NewLogBuffer(500)
-	consoleLogger, _, err := observability.NewLogger(os.Stderr, "info", "compact")
-	if err != nil {
-		return err
-	}
-	logger := slog.New(observability.NewMultiHandler(consoleLogger.Handler(), logs.Handler()))
-	slog.SetDefault(logger)
-	if err := logs.Persist(filepath.Join(lease.Root(), observability.ProblemLogFile)); err != nil {
-		logger.Warn("earlier warnings and errors could not be loaded", "error", err)
-	}
-	store, err := appsqlite.OpenSettings(ctx, appsqlite.SettingsPath(lease.Root()))
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	repository, err := appsqlite.NewControlSettingsRepository(store)
-	if err != nil {
-		return err
-	}
-	settings, err := control.NewController(repository)
-	if err != nil {
-		return err
-	}
-	if err := platform.WriteBootstrapDataRoot(paths.ConfigDir, lease.Root()); err != nil {
-		return err
-	}
-	bindings, err := appsqlite.NewSessionBindingRepository(store)
-	if err != nil {
-		return err
-	}
-	sessions, err := control.NewSessionController(repository, bindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), ui.SessionLog{Logs: logs}, lease.Root())
-	if err != nil {
-		return err
-	}
-	agents, err := control.NewAgentController(repository, bindings, sessions, coreapp.ManagedAgentRuntimeFactory{Logger: logger}, lease.Root())
-	if err != nil {
-		_ = sessions.Close(context.Background())
 		return err
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := agents.Close(shutdownCtx); err != nil {
-			logger.Error("stop Agent runtime", "code", agent.CodeOf(err), "error", err)
-			return
-		}
-		if err := sessions.Close(shutdownCtx); err != nil {
-			logger.Error("stop WhatsApp session", "code", agent.CodeOf(err), "error", err)
-			return
-		}
-		if err := store.Checkpoint(shutdownCtx); err != nil {
-			logger.Error("checkpoint settings database", "error", err)
+		if err := app.Close(); err != nil {
+			app.Logger.Error("stop application", "code", agent.CodeOf(err), "error", err)
 		}
 	}()
-	reader, err := appsqlite.NewConversationReader(lease.Root())
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	conversations, err := control.NewConversationController(bindings, reader)
-	if err != nil {
-		return err
-	}
-	service := ui.NewAppService(ui.Options{
-		Version:       version,
-		Settings:      settings,
-		Sessions:      sessions,
-		Agent:         agents,
-		Conversations: conversations,
-		DataRoot:      lease.Root(),
-		Logs:          logs,
-	})
+	logger := app.Logger
 	assets, err := fs.Sub(frontend.WebAssets, "web-dist")
 	if err != nil {
 		return err
 	}
-	handler, err := web.NewHandler(service, assets, os.Getenv("WAZZAP_WEB_PUBLIC_ORIGIN"))
+	handler, err := web.NewHandler(app.Service, assets, os.Getenv("WAZZAP_WEB_PUBLIC_ORIGIN"))
 	if err != nil {
 		return err
 	}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
-	if startup, err := settings.GetSettings(ctx); err != nil {
-		logger.Warn("read start-on-launch preference", "code", agent.CodeOf(err), "error", err)
-	} else if startup.Values.Settings.StartOnLaunch {
-		go func() {
-			if _, err := agents.Start(ctx); err != nil {
-				logger.Warn("start Agent on launch", "code", agent.CodeOf(err), "error", err)
-			}
-		}()
-	}
+	app.StartOnLaunch(ctx)
 	serveError := make(chan error, 1)
 	go func() { serveError <- server.Serve(listener) }()
 	logger.Info("web UI ready", "address", listener.Addr().String())

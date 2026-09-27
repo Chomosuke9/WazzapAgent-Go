@@ -234,7 +234,9 @@ func TestRunHandlesNilRuntimeResult(t *testing.T) {
 }
 
 func TestCompositionFailureClosesStore(t *testing.T) {
-	application := testEnabledApplicationWith(t, map[string]string{"ASSISTANT_NAME": ""})
+	// Settings accept this name, but the context builder rejects a name
+	// that cannot be mentioned, which fails composition after the store opened.
+	application := testEnabledApplicationWith(t, map[string]string{"ASSISTANT_NAME": "Bot@Test"})
 	err := application.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "create context builder") {
 		t.Fatalf("composition error = %v, want context-builder failure", err)
@@ -272,6 +274,7 @@ func testEnabledApplicationWith(t *testing.T, overrides map[string]string) *Appl
 		"WAZZAP_LLM_API_KEY":      "test-key",
 		"WAZZAP_LLM_MODEL":        "test-model",
 		"WAZZAP_BASE_PROMPT":      "test prompt",
+		"ASSISTANT_NAME":          "Test Bot",
 	}
 	for key, value := range overrides {
 		values[key] = value
