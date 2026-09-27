@@ -88,20 +88,23 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	// turning every durable entry into a provider message wastes tokens and
 	// changes the compact prompt shape selected for this project.
 	messages := make([]ModelMessage, 0, 4)
-	basePrompt := request.Config.Prompt
-	additionalPrompt := ""
+	// The configured chat prompt fills the system policy's <additional> block.
+	// A /prompt override goes in <prompt_override>; replace mode also drops the
+	// configured chat prompt.
+	additionalPrompt := request.Config.Prompt
+	promptOverride := defaultPromptOverride
 	if request.Config.PromptOverride != nil {
-		additionalPrompt = replaceReservedContextBrackets(request.Config.PromptOverride.Text)
+		promptOverride = replaceReservedContextBrackets(request.Config.PromptOverride.Text)
 		if request.Config.PromptOverride.Mode == PromptReplace {
-			basePrompt = ""
+			additionalPrompt = ""
 		}
 	}
 	messages = append(messages, ModelMessage{
-		Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: basePrompt, AdditionalPrompt: additionalPrompt,
+		Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: additionalPrompt,
 	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenancePromptOverride,
-		Content: "<prompt_override>\n" + defaultPromptOverride + "\n</prompt_override>",
+		Content: "<prompt_override>\n" + promptOverride + "\n</prompt_override>",
 	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenanceChatInformation,
@@ -453,14 +456,18 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
+		if message.Provenance == ProvenanceBasePrompt && message.Content != "" {
+			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("base prompt text belongs in the additional prompt"))
+		}
 		if message.Provenance != ProvenanceBasePrompt && message.AdditionalPrompt != "" {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("additional prompt must be on the base prompt message"))
 		}
 		if message.AdditionalPrompt != "" && !utf8.ValidString(message.AdditionalPrompt) {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("additional prompt is invalid"))
 		}
-		if strings.TrimSpace(message.Content) == "" &&
-			!(message.Provenance == ProvenanceBasePrompt && strings.TrimSpace(message.AdditionalPrompt) != "") {
+		// The base prompt message only carries the <additional> text, which is
+		// empty when a replace-mode override drops the configured chat prompt.
+		if message.Provenance != ProvenanceBasePrompt && strings.TrimSpace(message.Content) == "" {
 			return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model message content is required"))
 		}
 		valid := false
@@ -470,8 +477,8 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			valid = promptPhase && overrideCount == 0 && message.Role == ModelSystem
 		case ProvenancePromptOverride:
 			overrideCount++
-			// This status block remains a user message. Configured custom prompt
-			// text is rendered separately in the system-level <additional> block.
+			// The /prompt override (or the default "none" text) is a user
+			// message; the configured chat prompt is in the system <additional> block.
 			valid = promptPhase && message.Role == ModelUser &&
 				strings.HasPrefix(message.Content, "<prompt_override>\n") &&
 				strings.HasSuffix(message.Content, "\n</prompt_override>")

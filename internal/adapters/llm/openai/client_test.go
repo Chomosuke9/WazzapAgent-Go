@@ -38,12 +38,13 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	client, err := New(Config{
 		Endpoint: server.URL, APIKey: secret, ProviderID: providerID,
-		SystemPolicy: "NON OVERRIDABLE", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
+		SystemPolicy: "NON OVERRIDABLE\n<additional>\n{{additional_prompt}}\n</additional>", Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
 	request := modelRequest(t, providerID)
+	request.Messages[0].AdditionalPrompt = "chat prompt"
 	request.Messages = append(request.Messages[:1],
 		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenancePromptOverride, Content: "<prompt_override>\nchat override\n</prompt_override>"},
 		agent.ModelMessage{Role: agent.ModelUser, Provenance: agent.ProvenanceChatInformation, Content: "Chat information:\n- Chat state: private"},
@@ -66,7 +67,7 @@ func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {
 			t.Fatalf("message %d role = %q, want %q", index, encoded.Messages[index].Role, role)
 		}
 	}
-	if encoded.Messages[0].Content != "NON OVERRIDABLE\n\nbase prompt" || encoded.Messages[1].Content != "<prompt_override>\nchat override\n</prompt_override>" ||
+	if encoded.Messages[0].Content != "NON OVERRIDABLE\n<additional>\nchat prompt\n</additional>" || encoded.Messages[1].Content != "<prompt_override>\nchat override\n</prompt_override>" ||
 		!strings.HasPrefix(encoded.Messages[2].Content, "Chat information:") || !strings.Contains(encoded.Messages[3].Content, "hello from user") {
 		t.Fatalf("message ordering/content = %#v", encoded.Messages)
 	}
@@ -140,11 +141,6 @@ func TestPromptReplaceCannotReplaceSafetyPolicy(t *testing.T) {
 		!strings.Contains(encoded.Messages[1].Content, "<prompt_override>") || strings.Contains(encoded.Messages[1].Content, "replacement") {
 		t.Fatalf("replace message sequence = %#v", encoded.Messages)
 	}
-	for _, message := range encoded.Messages {
-		if message.Content == "base prompt" {
-			t.Fatal("replace mode retained configurable base prompt")
-		}
-	}
 }
 
 func TestPromptAppendInjectsAdditionalThroughSystemPolicyPlaceholder(t *testing.T) {
@@ -158,14 +154,13 @@ func TestPromptAppendInjectsAdditionalThroughSystemPolicyPlaceholder(t *testing.
 		t.Fatalf("create client: %v", err)
 	}
 	request := modelRequest(t, providerID)
-	request.Messages[0].Content = "base prompt"
 	request.Messages[0].AdditionalPrompt = "chat-specific addition"
 
 	messages, _, err := client.messages(request)
 	if err != nil {
 		t.Fatalf("build messages: %v", err)
 	}
-	want := "<main>\nSAFETY\n\nbase prompt\n\n<additional>\nchat-specific addition\n</additional>\n</main>"
+	want := "<main>\nSAFETY\n<additional>\nchat-specific addition\n</additional>\n</main>"
 	if len(messages) == 0 || messages[0].Content != want {
 		t.Fatalf("system message = %#v, want %q", messages, want)
 	}
@@ -619,7 +614,7 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 		ConfigVersion: 1,
 		Model:         agent.ModelConfig{ProviderID: providerID, Model: "test-model", MaxOutputTokens: 128},
 		Messages: []agent.ModelMessage{
-			{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt, Content: "base prompt"},
+			{Role: agent.ModelSystem, Provenance: agent.ProvenanceBasePrompt},
 			{Role: agent.ModelUser, Provenance: agent.ProvenanceCurrentUser,
 				Content: "【000001】 00:00\nAlice 【" + senderRef.String() + "】: hello from user"},
 		},

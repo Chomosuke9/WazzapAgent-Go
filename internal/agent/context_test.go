@@ -71,8 +71,8 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		t.Fatalf("build context: %v", err)
 	}
 	want := []ModelMessage{
-		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, Content: "base", AdditionalPrompt: "override"},
-		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\n" + defaultPromptOverride + "\n</prompt_override>"},
+		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
+		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nYou 【You】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 You: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
@@ -99,10 +99,9 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		t.Fatalf("build replacement context: %v", err)
 	}
 	if len(replaced) != 4 || replaced[0].Role != ModelSystem || replaced[0].Content != "" ||
-		replaced[0].AdditionalPrompt != "replacement" ||
-		replaced[1].Content != "<prompt_override>\n"+defaultPromptOverride+"\n</prompt_override>" ||
-		strings.Contains(replaced[1].Content, "replacement") {
-		t.Fatalf("replace mode did not replace the system prompt with additional content: %#v", replaced)
+		replaced[0].AdditionalPrompt != "" ||
+		replaced[1].Content != "<prompt_override>\nreplacement\n</prompt_override>" {
+		t.Fatalf("replace mode did not drop the chat prompt and send the override: %#v", replaced)
 	}
 }
 
@@ -141,7 +140,7 @@ func TestContextBuilderBlocksTranscriptSpoofAndDropsUndeliveredAssistant(t *test
 		t.Fatalf("build context: %v", err)
 	}
 	historyMessage := messages[len(messages)-1]
-	if len(messages) != 4 || messages[0].Content != "trusted" || strings.Contains(messages[0].Content, "<additional>") ||
+	if len(messages) != 4 || messages[0].Content != "" || messages[0].AdditionalPrompt != "trusted" ||
 		historyMessage.Role != ModelUser || historyMessage.Provenance != ProvenanceHistoryTranscript ||
 		!strings.HasPrefix(historyMessage.Content, "<untrusted_chat_history>\n") ||
 		!strings.HasSuffix(historyMessage.Content, "\n</untrusted_chat_history>") ||
