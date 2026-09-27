@@ -50,7 +50,7 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 	if err != nil {
 		return effect.Stored{}, storageError("inspect typed effect plan", err)
 	}
-	stored, leaseUntil, err := loadEffect(ctx, tx, request.Ref)
+	stored, err := loadEffect(ctx, tx, request.Ref)
 	if err != nil {
 		return effect.Stored{}, err
 	}
@@ -63,115 +63,61 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 	if err := tx.Commit(); err != nil {
 		return effect.Stored{}, storageError("commit typed effect plan", err)
 	}
-	if leaseUntil.Valid {
-		// Plan is allowed to observe a raced in-flight effect. Do not disclose
-		// its private lease to a planning caller.
-		stored.Lease = ""
-	}
 	return stored, nil
 }
 
-func (store *EffectStore) Claim(ctx context.Context, ref effect.Ref, now time.Time) (effect.Stored, error) {
+func (store *EffectStore) Load(ctx context.Context, ref effect.Ref) (effect.Stored, error) {
+	if err := ref.Validate(); err != nil {
+		return effect.Stored{}, err
+	}
+	stored, err := loadEffect(ctx, store.db, ref)
+	if errors.Is(err, sql.ErrNoRows) {
+		return effect.Stored{}, agent.NewError(agent.ErrorNotFound, "load typed effect", errors.New("effect does not exist"))
+	}
+	return stored, err
+}
+
+// Start claims a pending effect. A model effect waits for the reply it
+// follows: until that reply is sent the effect stays pending (not ready).
+func (store *EffectStore) Start(ctx context.Context, ref effect.Ref, now time.Time) error {
 	if err := ref.Validate(); err != nil || now.IsZero() {
-		return effect.Stored{}, agent.NewError(agent.ErrorInvalidArgument, "claim typed effect", fmt.Errorf("valid reference and current time are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "start typed effect", fmt.Errorf("reference and time are required"))
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return effect.Stored{}, storageError("begin typed effect claim", err)
+		return storageError("begin typed effect start", err)
 	}
 	defer tx.Rollback()
-	stored, leaseUntil, err := loadEffect(ctx, tx, ref)
-	if errors.Is(err, sql.ErrNoRows) {
-		return effect.Stored{}, agent.NewError(agent.ErrorNotFound, "claim typed effect", errors.New("effect does not exist"))
-	}
-	if err != nil {
-		return effect.Stored{}, err
-	}
 	ready, err := modelEffectResponseDelivered(ctx, tx, ref)
 	if err != nil {
-		return effect.Stored{}, err
+		return err
 	}
-	if !ready && (stored.State == effect.StatePending || stored.State == effect.StateClaimed || stored.State == effect.StateExecuting) {
-		if err := tx.Commit(); err != nil {
-			return effect.Stored{}, storageError("commit blocked model effect claim", err)
-		}
-		stored.State = effect.StatePending
-		stored.Lease = ""
-		return stored, nil
+	if !ready {
+		return agent.NewError(agent.ErrorNotReady, "start typed effect", errors.New("the reply this effect follows is not sent yet"))
 	}
-	nowMS := now.UTC().UnixMilli()
-	switch stored.State {
-	case effect.StateSucceeded, effect.StateFailedTerminal, effect.StateUnknownOutcome:
-		if err := tx.Commit(); err != nil {
-			return effect.Stored{}, storageError("commit typed effect observation", err)
-		}
-		return stored, nil
-	case effect.StateExecuting:
-		if leaseUntil.Valid && leaseUntil.Int64 > nowMS {
-			if err := tx.Commit(); err != nil {
-				return effect.Stored{}, storageError("commit executing effect observation", err)
-			}
-			return stored, nil
-		}
-		state := effect.StateUnknownOutcome
-		if err := finishEffectTx(ctx, tx, stored, state, agent.ErrorUnknownOutcome, "", nowMS); err != nil {
-			return effect.Stored{}, err
-		}
-		stored.State = state
-		completedAt := now.UTC()
-		stored.CompletedAt = &completedAt
-		if err := tx.Commit(); err != nil {
-			return effect.Stored{}, storageError("commit expired typed effect", err)
-		}
-		return stored, nil
-	case effect.StateClaimed:
-		if leaseUntil.Valid && leaseUntil.Int64 > nowMS {
-			stored.State = effect.StatePending
-			stored.Lease = ""
-			if err := tx.Commit(); err != nil {
-				return effect.Stored{}, storageError("commit claimed effect observation", err)
-			}
-			return stored, nil
-		}
-	case effect.StatePending:
-		// Claim below.
-	default:
-		return effect.Stored{}, agent.NewError(agent.ErrorIntegrityFailure, "claim typed effect", errors.New("effect state is invalid"))
-	}
-	lease, err := randomLease("eff")
-	if err != nil {
-		return effect.Stored{}, agent.NewError(agent.ErrorInternal, "create typed effect lease", err)
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE typed_effects SET
-        state = ?, effect_lease = ?, effect_lease_until_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?
-        AND state = ?`,
-		uint8(effect.StateClaimed), lease, now.Add(store.actionTTL).UTC().UnixMilli(), nowMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(stored.State),
+	result, err := tx.ExecContext(ctx, `UPDATE typed_effects SET state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ? AND state = ?`,
+		uint8(effect.StateExecuting), now.UTC().UnixMilli(),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
+		uint8(effect.StatePending),
 	)
-	if err := requireOne(result, err, "claim typed effect"); err != nil {
-		return effect.Stored{}, err
+	if err := requireOne(result, err, "start typed effect"); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return effect.Stored{}, storageError("commit typed effect claim", err)
+		return storageError("commit typed effect start", err)
 	}
-	stored.State = effect.StateClaimed
-	stored.Lease = effect.Lease(lease)
-	return stored, nil
+	return nil
 }
 
-// ListRecoverableEffects returns pending work and expired leases only. Active
-// executing effects are intentionally excluded: their outcome is ambiguous
-// until their lease expires, at which point Claim records unknown/skipped.
-func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID identity.TenantID, now time.Time, limit uint32) ([]effect.Ref, error) {
-	if tenantID.IsZero() || now.IsZero() || limit == 0 || limit > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable effects", errors.New("tenant, time, and bounded limit are required"))
+// ListPending returns effects that are ready to run, oldest first: model
+// effects only once the reply they follow has been sent.
+func (store *EffectStore) ListPending(ctx context.Context, tenantID identity.TenantID) ([]effect.Ref, error) {
+	if tenantID.IsZero() {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending effects", errors.New("tenant is required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, effect_id FROM typed_effects
-      WHERE tenant_id = ? AND (
-        state = ? OR
-        (state IN (?, ?) AND effect_lease_until_ms IS NOT NULL AND effect_lease_until_ms <= ?)
-      )
+      WHERE tenant_id = ? AND state = ?
 		AND (
 			model_call_id IS NULL OR EXISTS (
 				SELECT 1 FROM outbound_actions
@@ -191,38 +137,54 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 				  AND `+noOutboundAction("inbound_events")+`
 			)
 		)
-      ORDER BY updated_at_ms, effect_id
-      LIMIT ?`,
-		tenantID.String(), uint8(effect.StatePending), uint8(effect.StateClaimed), uint8(effect.StateExecuting), now.UTC().UnixMilli(), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded), limit,
+      ORDER BY created_at_ms, effect_id`,
+		tenantID.String(), uint8(effect.StatePending), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded),
 	)
 	if err != nil {
-		return nil, storageError("list recoverable effects", err)
+		return nil, storageError("list pending effects", err)
 	}
 	defer rows.Close()
 	refs := make([]effect.Ref, 0)
 	for rows.Next() {
 		var accountValue, chatValue, effectValue string
 		if err := rows.Scan(&accountValue, &chatValue, &effectValue); err != nil {
-			return nil, storageError("scan recoverable effect", err)
+			return nil, storageError("scan pending effect", err)
 		}
-		accountID, err := identity.ParseAccountID(accountValue)
+		ref, err := decodeEffectRef(tenantID, accountValue, chatValue, effectValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable effect", err)
+			return nil, err
 		}
-		chatID, err := identity.ParseChatID(chatValue)
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable effect", err)
-		}
-		effectID, err := identity.ParseEffectID(effectValue)
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable effect", err)
-		}
-		refs = append(refs, effect.Ref{Key: agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}, EffectID: effectID})
+		refs = append(refs, ref)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, storageError("iterate recoverable effects", err)
+		return nil, storageError("iterate pending effects", err)
 	}
 	return refs, nil
+}
+
+func decodeEffectRef(tenantID identity.TenantID, accountValue, chatValue, effectValue string) (effect.Ref, error) {
+	accountID, accountErr := identity.ParseAccountID(accountValue)
+	chatID, chatErr := identity.ParseChatID(chatValue)
+	effectID, effectErr := identity.ParseEffectID(effectValue)
+	if err := errors.Join(accountErr, chatErr, effectErr); err != nil {
+		return effect.Ref{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect reference", err)
+	}
+	return effect.Ref{Key: agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}, EffectID: effectID}, nil
+}
+
+// resolveInterruptedEffects runs at startup, before anything can run an
+// effect: one still executing was cut off by the last shutdown or crash.
+func resolveInterruptedEffects(ctx context.Context, tx *sql.Tx, tenantID identity.TenantID, nowMS int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE typed_effects SET
+        state = ?, last_error_code = ?, completed_at_ms = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND state = ?`,
+		uint8(effect.StateUnknownOutcome), string(agent.ErrorUnknownOutcome), nowMS, nowMS,
+		tenantID.String(), uint8(effect.StateExecuting),
+	)
+	if err != nil {
+		return storageError("resolve interrupted effects", err)
+	}
+	return nil
 }
 
 // modelEffectResponseDelivered waits for a text reply's receipt, or for an
@@ -270,77 +232,37 @@ func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref 
 	return effectOnly == 1, nil
 }
 
-func (store *EffectStore) MarkExecuting(ctx context.Context, ref effect.Ref, lease effect.Lease, now time.Time) error {
-	if err := ref.Validate(); err != nil || lease == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "start typed effect", fmt.Errorf("reference, lease, and time are required"))
+func (store *EffectStore) Complete(ctx context.Context, ref effect.Ref, receipt string, now time.Time) error {
+	return store.finish(ctx, ref, effect.StateSucceeded, "", receipt, now, effect.StateExecuting)
+}
+
+// FailTerminal records an effect that will never run: nothing ran yet, or a
+// command was refused before it did anything.
+func (store *EffectStore) FailTerminal(ctx context.Context, ref effect.Ref, code agent.ErrorCode, now time.Time) error {
+	return store.finish(ctx, ref, effect.StateFailedTerminal, code, "", now, effect.StatePending, effect.StateExecuting)
+}
+
+func (store *EffectStore) MarkUnknown(ctx context.Context, ref effect.Ref, code agent.ErrorCode, now time.Time) error {
+	return store.finish(ctx, ref, effect.StateUnknownOutcome, code, "", now, effect.StateExecuting)
+}
+
+// finish moves an effect in one of the from states to the final state to.
+func (store *EffectStore) finish(ctx context.Context, ref effect.Ref, to effect.State, code agent.ErrorCode, receipt string, now time.Time, from ...effect.State) error {
+	if err := ref.Validate(); err != nil || now.IsZero() || len(from) == 0 || len(from) > 2 {
+		return agent.NewError(agent.ErrorInvalidArgument, "finish typed effect", errors.New("reference, time, and source state are required"))
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE typed_effects SET state = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?
-        AND state = ? AND effect_lease = ? AND effect_lease_until_ms > ?`,
-		uint8(effect.StateExecuting), now.UTC().UnixMilli(), ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
-		uint8(effect.StateClaimed), string(lease), now.UTC().UnixMilli(),
-	)
-	return requireOne(result, err, "start typed effect")
-}
-
-func (store *EffectStore) Requeue(ctx context.Context, ref effect.Ref, lease effect.Lease, now time.Time) error {
-	if err := ref.Validate(); err != nil || lease == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "requeue typed effect", errors.New("reference, lease, and time are required"))
-	}
-	result, err := store.db.ExecContext(ctx, `UPDATE typed_effects SET
-        state = ?, effect_lease = NULL, effect_lease_until_ms = NULL, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?
-        AND state = ? AND effect_lease = ? AND effect_lease_until_ms > ?`,
-		uint8(effect.StatePending), now.UTC().UnixMilli(), ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
-		uint8(effect.StateClaimed), string(lease), now.UTC().UnixMilli(),
-	)
-	return requireOne(result, err, "requeue typed effect")
-}
-
-func (store *EffectStore) Complete(ctx context.Context, ref effect.Ref, lease effect.Lease, receipt string, now time.Time) error {
-	return store.finish(ctx, ref, lease, effect.StateSucceeded, "", receipt, now)
-}
-
-func (store *EffectStore) FailTerminal(ctx context.Context, ref effect.Ref, lease effect.Lease, code agent.ErrorCode, now time.Time) error {
-	return store.finish(ctx, ref, lease, effect.StateFailedTerminal, code, "", now)
-}
-
-func (store *EffectStore) MarkUnknown(ctx context.Context, ref effect.Ref, lease effect.Lease, code agent.ErrorCode, now time.Time) error {
-	return store.finish(ctx, ref, lease, effect.StateUnknownOutcome, code, "", now)
-}
-
-func (store *EffectStore) finish(ctx context.Context, ref effect.Ref, lease effect.Lease, state effect.State, code agent.ErrorCode, receipt string, now time.Time) error {
-	if err := ref.Validate(); err != nil || lease == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "finish typed effect", errors.New("reference, lease, and time are required"))
-	}
-	if state != effect.StateSucceeded && code == "" {
+	if to != effect.StateSucceeded && code == "" {
 		return agent.NewError(agent.ErrorInvalidArgument, "finish typed effect", errors.New("terminal errors need a code"))
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError("begin typed effect completion", err)
-	}
-	defer tx.Rollback()
-	stored, _, err := loadEffect(ctx, tx, ref)
-	if errors.Is(err, sql.ErrNoRows) {
-		return agent.NewError(agent.ErrorNotFound, "finish typed effect", errors.New("effect does not exist"))
-	}
-	if err != nil {
-		return err
-	}
-	if stored.State == state && stored.CompletedAt != nil {
-		return tx.Commit()
-	}
-	if stored.State != effect.StateExecuting || stored.Lease != lease {
-		return agent.NewError(agent.ErrorConflict, "finish typed effect", errors.New("effect execution lease changed"))
-	}
-	if err := finishEffectTx(ctx, tx, stored, state, code, receipt, now.UTC().UnixMilli()); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return storageError("commit typed effect completion", err)
-	}
-	return nil
+	nowMS := now.UTC().UnixMilli()
+	result, err := store.db.ExecContext(ctx, `UPDATE typed_effects SET
+        state = ?, provider_receipt = ?, last_error_code = ?, completed_at_ms = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ? AND state IN (?, ?)`,
+		uint8(to), nullableString(receipt), nullableErrorCode(code), nowMS, nowMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
+		uint8(from[0]), uint8(from[len(from)-1]),
+	)
+	return requireOne(result, err, "finish typed effect")
 }
 
 func requireEffectChat(ctx context.Context, tx *sql.Tx, key agent.Key) error {
@@ -477,55 +399,41 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 	return principal, value, nil
 }
 
-func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effect.Stored, sql.NullInt64, error) {
+func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effect.Stored, error) {
 	var (
 		invocationValue, payload string
 		kind, state              int64
-		target, lease, receipt   sql.NullString
-		completedAt, leaseUntil  sql.NullInt64
+		target, receipt          sql.NullString
+		completedAt              sql.NullInt64
 	)
-	err := query.QueryRowContext(ctx, `SELECT invocation_id, kind, target_message_id, payload, state, effect_lease,
-        effect_lease_until_ms, provider_receipt, completed_at_ms
+	err := query.QueryRowContext(ctx, `SELECT invocation_id, kind, target_message_id, payload, state,
+        provider_receipt, completed_at_ms
       FROM typed_effects WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
-	).Scan(&invocationValue, &kind, &target, &payload, &state, &lease, &leaseUntil, &receipt, &completedAt)
+	).Scan(&invocationValue, &kind, &target, &payload, &state, &receipt, &completedAt)
 	if err != nil {
-		return effect.Stored{}, leaseUntil, err
+		return effect.Stored{}, err
 	}
 	invocationID, err := identity.ParseInvocationID(invocationValue)
 	if err != nil {
-		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
+		return effect.Stored{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
 	}
 	principal, value, err := decodeEffect(ref, effect.Kind(kind), target, payload)
 	if err != nil {
-		return effect.Stored{}, leaseUntil, err
+		return effect.Stored{}, err
 	}
 	stored := effect.Stored{Request: effect.PlanRequest{Ref: ref, InvocationID: invocationID, Principal: principal, Effect: value}, State: effect.State(state), ProviderReceipt: receipt.String}
 	if err := stored.Request.Validate(); err != nil {
-		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
+		return effect.Stored{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
 	}
-	if stored.State < effect.StatePending || stored.State > effect.StateUnknownOutcome {
-		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect state is invalid"))
-	}
-	if lease.Valid {
-		stored.Lease = effect.Lease(lease.String)
+	switch stored.State {
+	case effect.StatePending, effect.StateExecuting, effect.StateSucceeded, effect.StateFailedTerminal, effect.StateUnknownOutcome:
+	default:
+		return effect.Stored{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect state is invalid"))
 	}
 	if completedAt.Valid {
 		value := time.UnixMilli(completedAt.Int64).UTC()
 		stored.CompletedAt = &value
 	}
-	return stored, leaseUntil, nil
-}
-
-func finishEffectTx(ctx context.Context, tx *sql.Tx, stored effect.Stored, state effect.State, code agent.ErrorCode, receipt string, nowMS int64) error {
-	result, err := tx.ExecContext(ctx, `UPDATE typed_effects SET
-        state = ?, effect_lease = NULL, effect_lease_until_ms = NULL, provider_receipt = ?,
-        last_error_code = ?, completed_at_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?
-        AND state = ? AND effect_lease = ?`,
-		uint8(state), nullableString(receipt), nullableErrorCode(code), nowMS, nowMS,
-		stored.Request.Ref.Key.TenantID.String(), stored.Request.Ref.Key.AccountID.String(), stored.Request.Ref.Key.ChatID.String(), stored.Request.Ref.EffectID.String(),
-		uint8(effect.StateExecuting), string(stored.Lease),
-	)
-	return requireOne(result, err, "finish typed effect")
+	return stored, nil
 }

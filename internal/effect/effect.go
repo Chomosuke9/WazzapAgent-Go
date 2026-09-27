@@ -112,33 +112,33 @@ func (request PlanRequest) Validate() error {
 
 type State uint8
 
+// State values are stored in typed_effects.state. 2 was the claimed lease
+// state; migration 021 turned those rows back into pending.
 const (
-	StatePending State = iota + 1
-	StateClaimed
-	StateExecuting
-	StateSucceeded
-	StateFailedTerminal
-	StateUnknownOutcome
+	StatePending        State = 1
+	StateExecuting      State = 3
+	StateSucceeded      State = 4
+	StateFailedTerminal State = 5
+	StateUnknownOutcome State = 6
 )
-
-type Lease string
 
 type Stored struct {
 	Request         PlanRequest
 	State           State
-	Lease           Lease
 	ProviderReceipt string
 	CompletedAt     *time.Time
 }
 
+// Store is the effect outbox. Load reports a model effect as pending until
+// the reply it follows has been sent. Start is the only claim: a conditional
+// update from pending to executing.
 type Store interface {
 	Plan(context.Context, PlanRequest, time.Time) (Stored, error)
-	Claim(context.Context, Ref, time.Time) (Stored, error)
-	Requeue(context.Context, Ref, Lease, time.Time) error
-	MarkExecuting(context.Context, Ref, Lease, time.Time) error
-	Complete(context.Context, Ref, Lease, string, time.Time) error
-	FailTerminal(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
-	MarkUnknown(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
+	Load(context.Context, Ref) (Stored, error)
+	Start(context.Context, Ref, time.Time) error
+	Complete(context.Context, Ref, string, time.Time) error
+	FailTerminal(context.Context, Ref, agent.ErrorCode, time.Time) error
+	MarkUnknown(context.Context, Ref, agent.ErrorCode, time.Time) error
 }
 
 type Authorizer interface {
@@ -156,7 +156,7 @@ type CommandExecutor interface {
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
-// Dispatcher is an outbox state machine for durable effects.
+// Dispatcher runs effects from the outbox.
 type Dispatcher struct {
 	store      Store
 	authorizer Authorizer
@@ -187,29 +187,29 @@ func (dispatcher *Dispatcher) Plan(ctx context.Context, request PlanRequest) (St
 	return dispatcher.store.Plan(ctx, request, dispatcher.clock.Now())
 }
 
+// Dispatch runs a planned effect at most once. An effect that cannot run yet
+// (the account is offline, or its reply is unsent) stays pending; the
+// runtime dispatches pending effects again whenever the account reconnects.
 func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	stored, err := dispatcher.store.Claim(ctx, ref, dispatcher.clock.Now())
+	stored, err := dispatcher.store.Load(ctx, ref)
 	if err != nil {
 		return err
 	}
 	switch stored.State {
 	case StateSucceeded, StateFailedTerminal, StateUnknownOutcome:
 		return terminalStateError(stored.State)
-	case StateClaimed:
-		// Continue below: this dispatcher owns the returned lease.
-	case StatePending, StateExecuting:
-		return agent.NewError(agent.ErrorDeliveryPending, "dispatch effect", errors.New("effect is owned by another worker"))
+	case StateExecuting:
+		return agent.NewError(agent.ErrorDeliveryPending, "dispatch effect", errors.New("effect is already running"))
+	case StatePending:
+		// Continue below.
 	default:
 		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch effect", errors.New("effect state is invalid"))
 	}
-	// No provider call has happened while the row is merely claimed. A
-	// disconnected account therefore returns the row to pending rather than
-	// converting safe recovery into a terminal denial.
 	if !dispatcher.sender.Ready() {
-		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
+		return agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready"))
 	}
 	// A command is checked only by its registry permission expression when it
 	// runs; every other effect is checked against the model's capabilities.
@@ -226,14 +226,18 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	}
 	if authorizeErr != nil {
 		if retryablePreExecutionError(authorizeErr) {
-			return dispatcher.requeuePreExecution(stored, authorizeErr)
+			// Nothing ran; the row stays pending for the next reconnect.
+			return authorizeErr
 		}
-		return dispatcher.finalizePreExecution(stored, agent.CodeOf(authorizeErr), authorizeErr)
+		record(func(ctx context.Context) error {
+			return dispatcher.store.FailTerminal(ctx, ref, agent.CodeOf(authorizeErr), dispatcher.clock.Now())
+		})
+		return authorizeErr
 	}
-	if !dispatcher.sender.Ready() {
-		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
-	}
-	if err := dispatcher.store.MarkExecuting(ctx, ref, stored.Lease, dispatcher.clock.Now()); err != nil {
+	if err := dispatcher.store.Start(ctx, ref, dispatcher.clock.Now()); err != nil {
+		if agent.IsCode(err, agent.ErrorConflict) {
+			return agent.NewError(agent.ErrorDeliveryPending, "dispatch effect", errors.New("effect is already running"))
+		}
 		return err
 	}
 	var receipt string
@@ -244,15 +248,26 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
 	}
 	if executeErr != nil {
+		state := StateUnknownOutcome
 		if isCommand && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
 			// The registry refused the command before it ran, so nothing happened.
-			return dispatcher.finalizePreExecution(stored, agent.ErrorPermissionDenied, executeErr)
+			state = StateFailedTerminal
 		}
-		_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
+		record(func(ctx context.Context) error {
+			if state == StateFailedTerminal {
+				return dispatcher.store.FailTerminal(ctx, ref, agent.ErrorPermissionDenied, dispatcher.clock.Now())
+			}
+			return dispatcher.store.MarkUnknown(ctx, ref, agent.CodeOf(executeErr), dispatcher.clock.Now())
+		})
+		if state == StateFailedTerminal {
+			return executeErr
+		}
 		return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)
 	}
-	if err := dispatcher.store.Complete(ctx, ref, stored.Lease, receipt, dispatcher.clock.Now()); err != nil {
-		_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.ErrorStorageFailure, dispatcher.clock.Now())
+	if err := dispatcher.store.Complete(ctx, ref, receipt, dispatcher.clock.Now()); err != nil {
+		record(func(ctx context.Context) error {
+			return dispatcher.store.MarkUnknown(ctx, ref, agent.ErrorStorageFailure, dispatcher.clock.Now())
+		})
 		return agent.NewError(agent.ErrorUnknownOutcome, "record effect receipt", err)
 	}
 	return nil
@@ -268,20 +283,11 @@ func (dispatcher *Dispatcher) DispatchEffect(ctx context.Context, ref agent.Effe
 	return dispatcher.Dispatch(ctx, Ref{Key: ref.Key, EffectID: ref.EffectID})
 }
 
-func (dispatcher *Dispatcher) finalizePreExecution(stored Stored, code agent.ErrorCode, resultErr error) error {
+// record saves an outcome even when the caller's context is already done.
+func record(write func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = dispatcher.store.FailTerminal(ctx, stored.Request.Ref, stored.Lease, code, dispatcher.clock.Now())
-	return resultErr
-}
-
-func (dispatcher *Dispatcher) requeuePreExecution(stored Stored, resultErr error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := dispatcher.store.Requeue(ctx, stored.Request.Ref, stored.Lease, dispatcher.clock.Now()); err != nil {
-		return err
-	}
-	return resultErr
+	_ = write(ctx)
 }
 
 func retryablePreExecutionError(err error) bool {

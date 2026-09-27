@@ -138,12 +138,12 @@ func TestReplyToPreResetAssistantKeepsTriggerWithoutResurrectingText(t *testing.
 		Input: []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	turn, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
+	_, err = store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim source turn: %v", err)
 	}
 	plan, err := store.Turns().CommitPlan(ctx, agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turn.Lease,
+		Key: key, InvocationID: invocation.ID,
 		ConfigVersion: snapshot.Version, ResponseText: "old private context",
 	})
 	if err != nil {

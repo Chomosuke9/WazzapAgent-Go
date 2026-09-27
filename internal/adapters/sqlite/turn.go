@@ -2,9 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -35,7 +33,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if err := ensureScope(ctx, tx, request.Key, request.Now.UnixMilli()); err != nil {
 			return agent.TurnClaim{}, err
 		}
-		row, err = insertInvocation(ctx, tx, request, store.generationTTL)
+		row, err = insertInvocation(ctx, tx, request)
 		if err != nil {
 			return agent.TurnClaim{}, err
 		}
@@ -46,7 +44,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if parseErr != nil {
 			return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode turn message ID", parseErr)
 		}
-		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(row.generationLease.String), MessageID: messageID}, nil
+		return agent.TurnClaim{State: agent.TurnGenerating, MessageID: messageID}, nil
 	}
 	if err != nil {
 		return agent.TurnClaim{}, storageError("load turn claim", err)
@@ -55,18 +53,10 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if !matchesPreclaimedInbound(row, request) {
 			return agent.TurnClaim{}, agent.NewError(agent.ErrorConflict, "claim received turn", errors.New("invocation does not match durable inbound message"))
 		}
-		lease, err := randomLease("gen")
-		if err != nil {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorInternal, "claim turn", err)
-		}
-		arguments := []any{
-			uint64(request.Invocation.PolicyVersion), uint8(agent.TurnGenerating), lease,
-			request.Now.Add(store.generationTTL).UnixMilli(), request.Now.UnixMilli(),
-		}
+		arguments := []any{uint64(request.Invocation.PolicyVersion), uint8(agent.TurnGenerating), request.Now.UnixMilli()}
 		arguments = append(arguments, keyArgs(request.Key, request.Invocation.ID)...)
 		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-            turn_claimed = 1, config_version = ?, turn_state = ?, generation_lease = ?,
-            generation_lease_until_ms = ?, retry_after_ms = NULL, generation_attempts = generation_attempts + 1,
+            turn_claimed = 1, config_version = ?, turn_state = ?, generation_attempts = generation_attempts + 1,
             updated_at_ms = ?
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND turn_claimed = 0`, arguments...)
 		if err != nil {
@@ -82,7 +72,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		if parseErr != nil {
 			return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode received message ID", parseErr)
 		}
-		return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease), MessageID: messageID}, nil
+		return agent.TurnClaim{State: agent.TurnGenerating, MessageID: messageID}, nil
 	}
 	if row.actionID.Valid || agent.TurnState(row.state) == agent.TurnSucceeded {
 		plan, err := row.plan(request.Key, request.Invocation.ID)
@@ -105,14 +95,9 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 
 	nowMS := request.Now.UnixMilli()
 	switch agent.TurnState(row.state) {
-	case agent.TurnGenerating:
-		if row.generationLease.Valid && row.generationLeaseUntil.Valid && row.generationLeaseUntil.Int64 > nowMS {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", errors.New("generation lease is active"))
-		}
-	case agent.TurnFailedRetryable:
-		if row.retryAfter.Valid && row.retryAfter.Int64 > nowMS {
-			return agent.TurnClaim{}, agent.NewError(agent.ErrorInProgress, "claim turn", errors.New("generation retry is not due"))
-		}
+	case agent.TurnGenerating, agent.TurnFailedRetryable:
+		// One worker owns each chat, so a generating turn here was cut off by
+		// a crash or shutdown. Either way it is generated again.
 	case agent.TurnFailedTerminal:
 		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", errors.New("generation failed terminally"))
 	case agent.TurnUnknownOutcome:
@@ -125,8 +110,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	}
 	if row.generationAttempts >= maxGenerationAttempts {
 		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-            turn_state = ?, generation_lease = NULL, generation_lease_until_ms = NULL,
-            retry_after_ms = NULL, last_error_code = ?, updated_at_ms = ?
+            turn_state = ?, last_error_code = ?, updated_at_ms = ?
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
             AND turn_state = ?`,
 			uint8(agent.TurnFailedTerminal), string(agent.ErrorProviderFailure), nowMS,
@@ -141,17 +125,12 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 		return agent.TurnClaim{}, agent.NewError(agent.ErrorProviderFailure, "claim turn", errors.New("generation retry limit reached"))
 	}
 
-	lease, err := randomLease("gen")
-	if err != nil {
-		return agent.TurnClaim{}, agent.NewError(agent.ErrorInternal, "claim turn", err)
-	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        turn_state = ?, generation_lease = ?, generation_lease_until_ms = ?, retry_after_ms = NULL,
-        generation_attempts = generation_attempts + 1, config_version = ?, last_error_code = NULL, updated_at_ms = ?
+        turn_state = ?, generation_attempts = generation_attempts + 1, config_version = ?,
+        last_error_code = NULL, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
         AND turn_claimed = 1 AND turn_state = ?`,
-		uint8(agent.TurnGenerating), lease, request.Now.Add(store.generationTTL).UnixMilli(),
-		uint64(request.Invocation.PolicyVersion), nowMS,
+		uint8(agent.TurnGenerating), uint64(request.Invocation.PolicyVersion), nowMS,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.Invocation.ID.String(),
 		row.state,
 	)
@@ -168,14 +147,14 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
 	if parseErr != nil {
 		return agent.TurnClaim{}, agent.NewError(agent.ErrorIntegrityFailure, "decode renewed message ID", parseErr)
 	}
-	return agent.TurnClaim{State: agent.TurnGenerating, Lease: agent.TurnLease(lease), MessageID: messageID}, nil
+	return agent.TurnClaim{State: agent.TurnGenerating, MessageID: messageID}, nil
 }
 
 func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlanRequest) (agent.StoredPlan, error) {
 	if err := request.Key.Validate(); err != nil {
 		return agent.StoredPlan{}, err
 	}
-	if request.InvocationID.IsZero() || request.Lease == "" || request.ConfigVersion == 0 ||
+	if request.InvocationID.IsZero() || request.ConfigVersion == 0 ||
 		(request.ResponseText != "" && strings.TrimSpace(request.ResponseText) == "") ||
 		(strings.TrimSpace(request.ResponseText) == "" && (len(request.Effects) == 0 || !request.ReplyToMessageID.IsZero())) {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorInvalidArgument, "commit response plan", errors.New("complete response plan is required"))
@@ -211,10 +190,8 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	}
 	nowMS := store.clock.Now().UTC().UnixMilli()
 	createdAt := time.UnixMilli(nowMS).UTC()
-	if agent.TurnState(row.state) != agent.TurnGenerating ||
-		!row.generationLease.Valid || row.generationLease.String != string(request.Lease) ||
-		!row.generationLeaseUntil.Valid || row.generationLeaseUntil.Int64 <= nowMS {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("generation lease is not owned"))
+	if agent.TurnState(row.state) != agent.TurnGenerating {
+		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("turn is not generating"))
 	}
 	if row.configVersion.Valid && agent.ConfigVersion(row.configVersion.Int64) != request.ConfigVersion {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "commit response plan", errors.New("config version changed"))
@@ -234,14 +211,11 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		if err != nil {
 			return agent.StoredPlan{}, err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        config_version = ?, turn_state = ?,
-        generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
+		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET config_version = ?, turn_state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND turn_state = ?`,
 			uint64(request.ConfigVersion), uint8(agent.TurnSucceeded), nowMS,
 			request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
-			uint8(agent.TurnGenerating), string(request.Lease), nowMS,
+			uint8(agent.TurnGenerating),
 		)
 		if err := requireOne(result, err, "publish effect-only plan"); err != nil {
 			return agent.StoredPlan{}, err
@@ -334,20 +308,14 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        config_version = ?, turn_state = ?,
-        generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
+	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET config_version = ?, turn_state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND turn_state = ?`,
 		uint64(request.ConfigVersion), uint8(agent.TurnResponsePlanned), nowMS,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
-		uint8(agent.TurnGenerating), string(request.Lease), nowMS,
+		uint8(agent.TurnGenerating),
 	)
-	if err != nil {
-		return agent.StoredPlan{}, storageError("publish response plan", err)
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return agent.StoredPlan{}, agent.NewError(agent.ErrorConflict, "publish response plan", errors.New("generation lease changed"))
+	if err := requireOne(result, err, "publish response plan"); err != nil {
+		return agent.StoredPlan{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return agent.StoredPlan{}, storageError("commit response plan", err)
@@ -534,33 +502,20 @@ func (store *TurnStore) FailGeneration(ctx context.Context, request agent.FailGe
 	if err := request.Key.Validate(); err != nil {
 		return err
 	}
-	if request.InvocationID.IsZero() || request.Lease == "" || request.Code == "" {
+	if request.InvocationID.IsZero() || request.Code == "" {
 		return agent.NewError(agent.ErrorInvalidArgument, "fail generation", errors.New("complete failure data is required"))
 	}
 	state := agent.TurnFailedTerminal
 	if request.Retryable {
 		state = agent.TurnFailedRetryable
-		if request.RetryAfter.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "fail generation", errors.New("retry time is required"))
-		}
 	}
-	nowMS := store.clock.Now().UnixMilli()
-	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET
-        turn_state = ?, generation_lease = NULL, generation_lease_until_ms = NULL,
-        retry_after_ms = ?, last_error_code = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
-		uint8(state), nullableMillis(request.RetryAfter), string(request.Code), nowMS,
+	result, err := store.db.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, last_error_code = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND turn_state = ?`,
+		uint8(state), string(request.Code), store.clock.Now().UnixMilli(),
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
-		uint8(agent.TurnGenerating), string(request.Lease), nowMS,
+		uint8(agent.TurnGenerating),
 	)
-	if err != nil {
-		return storageError("record generation failure", err)
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return agent.NewError(agent.ErrorConflict, "record generation failure", errors.New("generation lease changed"))
-	}
-	return nil
+	return requireOne(result, err, "record generation failure")
 }
 
 func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (agent.TurnRecord, error) {
@@ -604,30 +559,27 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 }
 
 type turnRow struct {
-	state                int64
-	claimed              bool
-	messageID            string
-	providerMessageID    sql.NullString
-	invocationCause      int64
-	causationKind        int64
-	causationID          string
-	participantID        sql.NullString
-	senderRef            sql.NullString
-	senderName           string
-	inputText            string
-	occurredAt           int64
-	generationLease      sql.NullString
-	generationLeaseUntil sql.NullInt64
-	retryAfter           sql.NullInt64
-	generationAttempts   int64
-	configVersion        sql.NullInt64
-	responseID           sql.NullString
-	actionID             sql.NullString
-	responseText         sql.NullString
-	actionState          sql.NullInt64
-	updatedAt            int64
-	responseCreatedAt    sql.NullInt64
-	replyToMessageID     sql.NullString
+	state              int64
+	claimed            bool
+	messageID          string
+	providerMessageID  sql.NullString
+	invocationCause    int64
+	causationKind      int64
+	causationID        string
+	participantID      sql.NullString
+	senderRef          sql.NullString
+	senderName         string
+	inputText          string
+	occurredAt         int64
+	generationAttempts int64
+	configVersion      sql.NullInt64
+	responseID         sql.NullString
+	actionID           sql.NullString
+	responseText       sql.NullString
+	actionState        sql.NullInt64
+	updatedAt          int64
+	responseCreatedAt  sql.NullInt64
+	replyToMessageID   sql.NullString
 }
 
 type turnQuerier interface {
@@ -637,8 +589,8 @@ type turnQuerier interface {
 func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocationID identity.InvocationID) (turnRow, error) {
 	var row turnRow
 	err := query.QueryRowContext(ctx, `SELECT i.turn_state, i.turn_claimed, i.message_id, i.provider_message_id,
-        i.invocation_cause, i.causation_kind, i.causation_id, i.participant_id, i.sender_ref, i.sender_name, i.input_text, i.occurred_at_ms, i.generation_lease,
-        i.generation_lease_until_ms, i.retry_after_ms, i.generation_attempts, i.config_version, a.response_id, a.action_id,
+        i.invocation_cause, i.causation_kind, i.causation_id, i.participant_id, i.sender_ref, i.sender_name, i.input_text, i.occurred_at_ms,
+        i.generation_attempts, i.config_version, a.response_id, a.action_id,
 	        a.text, a.state, i.updated_at_ms, a.created_at_ms, a.reply_to_message_id
       FROM inbound_events i
       LEFT JOIN outbound_actions a ON a.tenant_id = i.tenant_id AND a.account_id = i.account_id
@@ -647,7 +599,7 @@ func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocati
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(),
 	).Scan(&row.state, &row.claimed, &row.messageID, &row.providerMessageID, &row.invocationCause, &row.causationKind,
 		&row.causationID, &row.participantID, &row.senderRef,
-		&row.senderName, &row.inputText, &row.occurredAt, &row.generationLease, &row.generationLeaseUntil, &row.retryAfter, &row.generationAttempts,
+		&row.senderName, &row.inputText, &row.occurredAt, &row.generationAttempts,
 		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.actionState, &row.updatedAt, &row.responseCreatedAt, &row.replyToMessageID)
 	return row, err
 }
@@ -666,14 +618,10 @@ func matchesPreclaimedInbound(row turnRow, request agent.ClaimTurnRequest) bool 
 	return true
 }
 
-func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRequest, ttl time.Duration) (turnRow, error) {
+func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRequest) (turnRow, error) {
 	messageID, err := identity.NewMessageID()
 	if err != nil {
 		return turnRow{}, agent.NewError(agent.ErrorInternal, "create turn message ID", err)
-	}
-	lease, err := randomLease("gen")
-	if err != nil {
-		return turnRow{}, agent.NewError(agent.ErrorInternal, "create generation lease", err)
 	}
 	inputText := flattenText(request.Invocation.Input)
 	var participant, senderRef any
@@ -689,21 +637,19 @@ func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRe
 	_, err = tx.ExecContext(ctx, `INSERT INTO inbound_events(
         tenant_id, account_id, chat_id, invocation_id, message_id, invocation_cause, causation_kind, causation_id,
         participant_id, sender_ref, sender_name, input_text, occurred_at_ms, received_at_ms,
-        turn_claimed, config_version, turn_state, generation_lease,
-        generation_lease_until_ms, generation_attempts, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        turn_claimed, config_version, turn_state, generation_attempts, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
 		request.Invocation.ID.String(), messageID.String(), uint8(request.Invocation.Cause), uint8(request.Invocation.Causation.Kind), request.Invocation.Causation.ID.String(),
 		participant, senderRef, senderName, inputText, request.Invocation.RequestedAt.UnixMilli(), request.Now.UnixMilli(),
-		1, uint64(request.Invocation.PolicyVersion), uint8(agent.TurnGenerating), lease,
-		request.Now.Add(ttl).UnixMilli(), request.Now.UnixMilli(),
+		1, uint64(request.Invocation.PolicyVersion), uint8(agent.TurnGenerating), request.Now.UnixMilli(),
 	)
 	if err != nil {
 		return turnRow{}, storageError("insert turn claim", err)
 	}
 	return turnRow{messageID: messageID.String(), invocationCause: int64(request.Invocation.Cause),
 		causationKind: int64(request.Invocation.Causation.Kind), causationID: request.Invocation.Causation.ID.String(),
-		claimed: true, generationLease: sql.NullString{String: lease, Valid: true}}, nil
+		claimed: true}, nil
 }
 
 func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender agent.SenderContext, nowMS int64) error {
@@ -813,21 +759,6 @@ func flattenText(parts []agent.ContentPart) string {
 	return builder.String()
 }
 
-func randomLease(prefix string) (string, error) {
-	buffer := make([]byte, 16)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", err
-	}
-	return prefix + "_" + hex.EncodeToString(buffer), nil
-}
-
 func keyArgs(key agent.Key, invocationID identity.InvocationID) []any {
 	return []any{key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String()}
-}
-
-func nullableMillis(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value.UnixMilli()
 }

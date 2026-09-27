@@ -21,28 +21,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	defaultBusyTimeoutMS = 5000
-	defaultGenerationTTL = 2 * time.Minute
-	defaultActionTTL     = 30 * time.Second
-)
+const defaultBusyTimeoutMS = 5000
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
 type Options struct {
-	GenerationLeaseTTL time.Duration
-	ActionLeaseTTL     time.Duration
-	Clock              agent.Clock
-	SenderRefFactory   func() (identity.SenderRef, error)
+	Clock            agent.Clock
+	SenderRefFactory func() (identity.SenderRef, error)
 }
 
 type Store struct {
-	db            *sql.DB
-	generationTTL time.Duration
-	actionTTL     time.Duration
-	clock         agent.Clock
-	senderRefs    func() (identity.SenderRef, error)
+	db         *sql.DB
+	clock      agent.Clock
+	senderRefs func() (identity.SenderRef, error)
 }
 
 type ConfigStore struct{ *Store }
@@ -79,29 +71,39 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		_ = db.Close()
 		return nil, err
 	}
-	if options.GenerationLeaseTTL == 0 {
-		options.GenerationLeaseTTL = defaultGenerationTTL
-	}
-	if options.ActionLeaseTTL == 0 {
-		options.ActionLeaseTTL = defaultActionTTL
-	}
 	if options.Clock == nil {
 		options.Clock = agent.SystemClock{}
 	}
 	if options.SenderRefFactory == nil {
 		options.SenderRefFactory = identity.NewSenderRef
 	}
-	if options.GenerationLeaseTTL <= 0 || options.ActionLeaseTTL <= 0 {
-		_ = db.Close()
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "open application store", fmt.Errorf("lease TTLs must be positive"))
-	}
-	return &Store{
-		db: db, generationTTL: options.GenerationLeaseTTL, actionTTL: options.ActionLeaseTTL,
-		clock: options.Clock, senderRefs: options.SenderRefFactory,
-	}, nil
+	return &Store{db: db, clock: options.Clock, senderRefs: options.SenderRefFactory}, nil
 }
 
 func (store *Store) Close() error { return store.db.Close() }
+
+// ResolveInterrupted runs once at startup, before anything is sent. A send
+// or effect still marked executing was cut off by the last shutdown; it may
+// or may not have reached WhatsApp, so it becomes unknown and is never sent
+// again.
+func (store *Store) ResolveInterrupted(ctx context.Context, tenantID identity.TenantID) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError("begin interrupted outbox resolution", err)
+	}
+	defer tx.Rollback()
+	nowMS := store.clock.Now().UnixMilli()
+	if err := resolveInterruptedActions(ctx, tx, tenantID, nowMS); err != nil {
+		return err
+	}
+	if err := resolveInterruptedEffects(ctx, tx, tenantID, nowMS); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("commit interrupted outbox resolution", err)
+	}
+	return nil
+}
 
 func (store *Store) Checkpoint(ctx context.Context) error {
 	if _, err := store.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {

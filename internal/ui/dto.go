@@ -43,10 +43,6 @@ type SettingsValuesDTO struct {
 
 	InboundQueue   uint32 `json:"inboundQueue"`
 	InboundWorkers uint32 `json:"inboundWorkers"`
-	CommandQueue   uint32 `json:"commandQueue"`
-	CommandWorkers uint32 `json:"commandWorkers"`
-	AIQueue        uint32 `json:"aiQueue"`
-	AIWorkers      uint32 `json:"aiWorkers"`
 
 	MessageDebounce string `json:"messageDebounce"`
 	MessageBurstCap uint32 `json:"messageBurstCap"`
@@ -264,8 +260,6 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		HistoryWindow: settings.HistoryWindow, MaxContextBytes: settings.MaxContextBytes,
 		HistoryKeepLatest: settings.HistoryKeepLatest, HistoryMaxAge: settings.HistoryMaxAge.String(),
 		InboundQueue: settings.InboundQueue, InboundWorkers: settings.InboundWorkers,
-		CommandQueue: settings.CommandQueue, CommandWorkers: settings.CommandWorkers,
-		AIQueue: settings.AIQueue, AIWorkers: settings.AIWorkers,
 		MessageDebounce: settings.MessageDebounce.String(), MessageBurstCap: settings.MessageBurstCap,
 		ConnectTimeout: settings.ConnectTimeout.String(),
 		SendTimeout:    settings.SendTimeout.String(), ShutdownTimeout: settings.ShutdownTimeout.String(),
@@ -352,8 +346,8 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.FallbackEndpoint = values.FallbackEndpoint
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
-	settings.InboundQueue, settings.InboundWorkers, settings.CommandQueue, settings.CommandWorkers = values.InboundQueue, values.InboundWorkers, values.CommandQueue, values.CommandWorkers
-	settings.AIQueue, settings.AIWorkers, settings.MessageBurstCap = values.AIQueue, values.AIWorkers, values.MessageBurstCap
+	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers
+	settings.MessageBurstCap = values.MessageBurstCap
 	settings.PolicyID, settings.LogLevel, settings.LogFormat = values.PolicyID, values.LogLevel, values.LogFormat
 	settings.DataDir, settings.EnvFile, settings.HTTPAddress, settings.PairingOutput = values.DataDir, values.EnvFile, values.HTTPAddress, values.PairingOutput
 	settings.NoColor, settings.ForceColor, settings.StartOnLaunch = values.NoColor, values.ForceColor, values.StartOnLaunch

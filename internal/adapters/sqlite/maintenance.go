@@ -28,32 +28,13 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	}
 	defer tx.Rollback()
 	result := maintenance.Result{}
-	batchedDeleteResult, err := tx.ExecContext(ctx, `DELETE FROM inbound_events
-      WHERE rowid IN (
-        SELECT member.rowid FROM inbound_events member
-        JOIN inbound_events anchor ON anchor.tenant_id = member.tenant_id
-          AND anchor.account_id = member.account_id AND anchor.chat_id = member.chat_id
-          AND anchor.invocation_id = member.batch_anchor_invocation_id
-        WHERE member.tenant_id = ? AND member.turn_state = ?
-          AND anchor.updated_at_ms <= ? AND anchor.turn_state IN (?, ?, ?)
-        ORDER BY anchor.updated_at_ms, member.batch_position LIMIT ?
-      )`,
-		request.TenantID.String(), batchedTurnState, request.DeleteBefore.UnixMilli(),
-		uint8(agent.TurnSucceeded), uint8(agent.TurnFailedTerminal), uint8(agent.TurnUnknownOutcome), request.BatchSize,
-	)
-	if err != nil {
-		return maintenance.Result{}, storageError("delete expired batched turns", err)
-	}
-	if count, rowsErr := batchedDeleteResult.RowsAffected(); rowsErr == nil {
-		result.TurnsDeleted += count
-	}
 	deleteResult, err := tx.ExecContext(ctx, `DELETE FROM inbound_events
       WHERE rowid IN (
         SELECT rowid FROM inbound_events
-        WHERE tenant_id = ? AND updated_at_ms <= ? AND turn_state IN (?, ?, ?, ?)
+        WHERE tenant_id = ? AND updated_at_ms <= ? AND turn_state IN (?, ?, ?, ?, ?)
         ORDER BY updated_at_ms, invocation_id LIMIT ?
       )`,
-		request.TenantID.String(), request.DeleteBefore.UnixMilli(), ignoredTurnState,
+		request.TenantID.String(), request.DeleteBefore.UnixMilli(), ignoredTurnState, batchedTurnState,
 		uint8(agent.TurnSucceeded), uint8(agent.TurnFailedTerminal), uint8(agent.TurnUnknownOutcome), request.BatchSize,
 	)
 	if err != nil {
@@ -63,7 +44,7 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	if err != nil {
 		return maintenance.Result{}, storageError("inspect deleted terminal turns", err)
 	}
-	result.TurnsDeleted += deletedTerminal
+	result.TurnsDeleted = deletedTerminal
 	// A finished effect is only still read when it deleted a message that is
 	// in retained history (the transcript marks that message deleted).
 	if _, err := tx.ExecContext(ctx, `DELETE FROM typed_effects

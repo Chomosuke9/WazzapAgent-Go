@@ -87,10 +87,6 @@ type Settings struct {
 
 	InboundQueue   uint32
 	InboundWorkers uint32
-	CommandQueue   uint32
-	CommandWorkers uint32
-	AIQueue        uint32
-	AIWorkers      uint32
 
 	MessageDebounce time.Duration
 	MessageBurstCap uint32
@@ -155,8 +151,6 @@ func DefaultSettings() Settings {
 		LLMTimeout: defaultLLMTimeout, LLMConcurrency: defaultLLMConcurrency,
 		MaxOutputTokens: defaultMaxOutputTokens, MaxResponseBytes: defaultMaxResponseBytes,
 		InboundQueue: defaultInboundQueue, InboundWorkers: defaultInboundWorkers,
-		CommandQueue: defaultCommandQueue, CommandWorkers: defaultCommandWorkers,
-		AIQueue: defaultAIQueue, AIWorkers: defaultAIWorkers,
 		MessageDebounce: defaultMessageDebounce, MessageBurstCap: defaultMessageBurstCap,
 		HistoryWindow: defaultHistoryWindow, MaxContextBytes: defaultMaxContextBytes,
 		HistoryKeepLatest: defaultHistoryKeepLatest, HistoryMaxAge: defaultHistoryMaxAge,
@@ -320,8 +314,6 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		basePrompt: settings.BasePrompt, policyID: policyID, policyRevision: settings.PolicyRevision,
 		chatDefaults: settings.ChatDefaults,
 		inboundQueue: settings.InboundQueue, inboundWorkers: settings.InboundWorkers,
-		commandQueue: settings.CommandQueue, commandWorkers: settings.CommandWorkers,
-		aiQueue: settings.AIQueue, aiWorkers: settings.AIWorkers,
 		messageDebounce: settings.MessageDebounce, messageBurstCap: settings.MessageBurstCap,
 		historyWindow: settings.HistoryWindow, maxContextBytes: settings.MaxContextBytes,
 		historyKeepLatest: settings.HistoryKeepLatest, historyMaxAge: settings.HistoryMaxAge,
@@ -397,7 +389,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "WAZZAP_LLM_FALLBACK_ENDPOINT", Group: "fallback", Kind: FieldString}, {Key: "WAZZAP_LLM_FALLBACK_API_KEY", Group: "fallback", Kind: FieldSecret, Sensitive: true},
 		{Key: "WAZZAP_LLM_TIMEOUT", Group: "limits", Kind: FieldDuration, Default: defaultLLMTimeout.String()}, {Key: "WAZZAP_LLM_CONCURRENCY", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultLLMConcurrency)}, {Key: "WAZZAP_MAX_OUTPUT_TOKENS", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxOutputTokens)}, {Key: "WAZZAP_MAX_RESPONSE_BYTES", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxResponseBytes)},
 		{Key: "WAZZAP_HISTORY_WINDOW", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryWindow)}, {Key: "WAZZAP_MAX_CONTEXT_BYTES", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultMaxContextBytes)}, {Key: "WAZZAP_HISTORY_KEEP_LATEST", Group: "retention", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryKeepLatest)}, {Key: "WAZZAP_HISTORY_MAX_AGE", Group: "retention", Kind: FieldDuration, Default: defaultHistoryMaxAge.String()},
-		{Key: "WAZZAP_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "WAZZAP_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)}, {Key: "WAZZAP_COMMAND_QUEUE", Group: "command", Kind: FieldUint, Default: fmt.Sprint(defaultCommandQueue)}, {Key: "WAZZAP_COMMAND_WORKERS", Group: "command", Kind: FieldUint, Default: fmt.Sprint(defaultCommandWorkers)}, {Key: "WAZZAP_AI_QUEUE", Group: "ai", Kind: FieldUint, Default: fmt.Sprint(defaultAIQueue)}, {Key: "WAZZAP_AI_WORKERS", Group: "ai", Kind: FieldUint, Default: fmt.Sprint(defaultAIWorkers)},
+		{Key: "WAZZAP_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "WAZZAP_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)},
 		{Key: "WAZZAP_MESSAGE_DEBOUNCE", Group: "batching", Kind: FieldDuration, Default: defaultMessageDebounce.String()}, {Key: "WAZZAP_MESSAGE_BURST_CAP", Group: "batching", Kind: FieldUint, Default: fmt.Sprint(defaultMessageBurstCap)},
 		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
 		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
@@ -458,18 +450,6 @@ func (settings Settings) withDefaults() Settings {
 	}
 	if settings.InboundWorkers == 0 {
 		settings.InboundWorkers = defaults.InboundWorkers
-	}
-	if settings.CommandQueue == 0 {
-		settings.CommandQueue = defaults.CommandQueue
-	}
-	if settings.CommandWorkers == 0 {
-		settings.CommandWorkers = defaults.CommandWorkers
-	}
-	if settings.AIQueue == 0 {
-		settings.AIQueue = defaults.AIQueue
-	}
-	if settings.AIWorkers == 0 {
-		settings.AIWorkers = defaults.AIWorkers
 	}
 	if settings.MessageDebounce == 0 {
 		settings.MessageDebounce = defaults.MessageDebounce
@@ -591,10 +571,6 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	checkUint("WAZZAP_HISTORY_KEEP_LATEST", settings.HistoryKeepLatest, 1, 1000000)
 	checkUint("WAZZAP_INBOUND_QUEUE", settings.InboundQueue, 1, 65536)
 	checkUint("WAZZAP_INBOUND_WORKERS", settings.InboundWorkers, 1, 256)
-	checkUint("WAZZAP_COMMAND_QUEUE", settings.CommandQueue, 1, 65536)
-	checkUint("WAZZAP_COMMAND_WORKERS", settings.CommandWorkers, 1, 256)
-	checkUint("WAZZAP_AI_QUEUE", settings.AIQueue, 1, 65536)
-	checkUint("WAZZAP_AI_WORKERS", settings.AIWorkers, 1, 256)
 	checkUint("WAZZAP_MESSAGE_BURST_CAP", settings.MessageBurstCap, 1, 256)
 	if settings.FallbackEndpoint != "" || settings.FallbackAPIKey != "" {
 		if (strings.TrimSpace(settings.FallbackEndpoint) == "") != (strings.TrimSpace(settings.FallbackAPIKey) == "") {

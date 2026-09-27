@@ -11,154 +11,91 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
-const actionPendingRecoveryGrace = 2 * time.Second
-
-func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now time.Time) (action.StoredAction, error) {
+func (store *ActionStore) Load(ctx context.Context, ref agent.DispatchRef) (action.StoredAction, error) {
 	if err := ref.Key.Validate(); err != nil {
 		return action.StoredAction{}, err
 	}
-	if ref.ActionID.IsZero() || now.IsZero() {
-		return action.StoredAction{}, agent.NewError(agent.ErrorInvalidArgument, "claim outbound action", errors.New("action ID and current time are required"))
+	if ref.ActionID.IsZero() {
+		return action.StoredAction{}, agent.NewError(agent.ErrorInvalidArgument, "load outbound action", errors.New("action ID is required"))
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return action.StoredAction{}, storageError("begin outbound action claim", err)
-	}
-	defer tx.Rollback()
-	stored, leaseUntil, retryAfter, err := loadAction(ctx, tx, ref)
+	stored, err := loadAction(ctx, store.db, ref)
 	if errors.Is(err, sql.ErrNoRows) {
-		return action.StoredAction{}, agent.NewError(agent.ErrorNotFound, "claim outbound action", errors.New("action does not exist"))
+		return action.StoredAction{}, agent.NewError(agent.ErrorNotFound, "load outbound action", errors.New("action does not exist"))
 	}
 	if err != nil {
 		return action.StoredAction{}, storageError("load outbound action", err)
 	}
-	nowMS := now.UnixMilli()
-	switch stored.State {
-	case action.StateSucceeded, action.StateFailedTerminal, action.StateUnknownOutcome:
-		if err := tx.Commit(); err != nil {
-			return action.StoredAction{}, storageError("commit action observation", err)
-		}
-		return stored, nil
-	case action.StateExecuting:
-		if leaseUntil.Valid && leaseUntil.Int64 > nowMS {
-			if err := tx.Commit(); err != nil {
-				return action.StoredAction{}, storageError("commit executing action observation", err)
-			}
-			return stored, nil
-		}
-		if err := markUnknownTx(ctx, tx, stored, agent.ErrorUnknownOutcome, nowMS); err != nil {
-			return action.StoredAction{}, err
-		}
-		stored.State = action.StateUnknownOutcome
-		completedAt := now.UTC()
-		stored.CompletedAt = &completedAt
-		if err := tx.Commit(); err != nil {
-			return action.StoredAction{}, storageError("commit expired executing action", err)
-		}
-		return stored, nil
-	case action.StateClaimed:
-		if leaseUntil.Valid && leaseUntil.Int64 > nowMS {
-			// The existing private lease is not returned to another dispatcher.
-			stored.State = action.StatePending
-			stored.Lease = ""
-			if err := tx.Commit(); err != nil {
-				return action.StoredAction{}, storageError("commit claimed action observation", err)
-			}
-			return stored, nil
-		}
-	case action.StateFailedRetryable:
-		if retryAfter.Valid && retryAfter.Int64 > nowMS {
-			if err := tx.Commit(); err != nil {
-				return action.StoredAction{}, storageError("commit deferred action observation", err)
-			}
-			return stored, nil
-		}
-	case action.StatePending:
-		// Claim below.
-	default:
-		return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "claim outbound action", errors.New("invalid action state"))
-	}
-	lease, err := randomLease("act")
-	if err != nil {
-		return action.StoredAction{}, agent.NewError(agent.ErrorInternal, "create action lease", err)
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET
-        state = ?, action_lease = ?, action_lease_until_ms = ?, retry_after_ms = NULL,
-        attempts = attempts + 1, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
-        AND state = ?`,
-		uint8(action.StateClaimed), lease, now.Add(store.actionTTL).UnixMilli(), nowMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(), uint8(stored.State),
-	)
-	if err != nil {
-		return action.StoredAction{}, storageError("claim outbound action", err)
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return action.StoredAction{}, agent.NewError(agent.ErrorConflict, "claim outbound action", errors.New("action changed concurrently"))
-	}
-	turnResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state IN (?, ?)`,
-		uint8(agent.TurnDeliveryPending), nowMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), stored.InvocationID.String(),
-		uint8(agent.TurnResponsePlanned), uint8(agent.TurnDeliveryPending),
-	)
-	if err := requireOne(turnResult, err, "mark turn delivery pending"); err != nil {
-		return action.StoredAction{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return action.StoredAction{}, storageError("commit outbound action claim", err)
-	}
-	stored.State = action.StateClaimed
-	stored.Lease = action.Lease(lease)
 	return stored, nil
 }
 
-func (store *ActionStore) ListRecoverable(
-	ctx context.Context,
-	tenantID identity.TenantID,
-	now time.Time,
-	limit uint32,
-) ([]agent.DispatchRef, error) {
-	if tenantID.IsZero() || now.IsZero() || limit == 0 || limit > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable actions", errors.New("valid tenant, time, and limit are required"))
+// Start claims a pending reply for sending. The state condition is the whole
+// claim: a second caller finds no pending row and gets a conflict.
+func (store *ActionStore) Start(ctx context.Context, ref agent.DispatchRef, now time.Time) error {
+	if now.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "start outbound action", errors.New("current time is required"))
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, action_id
-      FROM outbound_actions
-      WHERE tenant_id = ? AND (
-		(state = ? AND updated_at_ms <= ?) OR
-        (state = ? AND (retry_after_ms IS NULL OR retry_after_ms <= ?)) OR
-        (state = ? AND (action_lease_until_ms IS NULL OR action_lease_until_ms <= ?)) OR
-        (state = ? AND (action_lease_until_ms IS NULL OR action_lease_until_ms <= ?))
-      )
-      ORDER BY updated_at_ms, action_id
-      LIMIT ?`,
-		tenantID.String(), uint8(action.StatePending), now.Add(-actionPendingRecoveryGrace).UnixMilli(),
-		uint8(action.StateFailedRetryable), now.UnixMilli(),
-		uint8(action.StateClaimed), now.UnixMilli(),
-		uint8(action.StateExecuting), now.UnixMilli(), limit,
+	nowMS := now.UnixMilli()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError("begin outbound action start", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET
+        state = ?, attempts = attempts + 1, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ? AND state = ?`,
+		uint8(action.StateExecuting), nowMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
+		uint8(action.StatePending),
+	)
+	if err := requireOne(result, err, "start outbound action"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND turn_state = ?
+        AND invocation_id = (SELECT invocation_id FROM outbound_actions
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?)`,
+		uint8(agent.TurnDeliveryPending), nowMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), uint8(agent.TurnResponsePlanned),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
+	); err != nil {
+		return storageError("mark turn delivery pending", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("commit outbound action start", err)
+	}
+	return nil
+}
+
+// ListPending returns replies that are planned but not yet sent, oldest first.
+func (store *ActionStore) ListPending(ctx context.Context, tenantID identity.TenantID) ([]agent.DispatchRef, error) {
+	if tenantID.IsZero() {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending actions", errors.New("tenant is required"))
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, action_id FROM outbound_actions
+      WHERE tenant_id = ? AND state = ? ORDER BY created_at_ms, action_id`,
+		tenantID.String(), uint8(action.StatePending),
 	)
 	if err != nil {
-		return nil, storageError("list recoverable actions", err)
+		return nil, storageError("list pending actions", err)
 	}
 	defer rows.Close()
 	refs := make([]agent.DispatchRef, 0)
 	for rows.Next() {
 		var accountValue, chatValue, actionValue string
 		if err := rows.Scan(&accountValue, &chatValue, &actionValue); err != nil {
-			return nil, storageError("scan recoverable action", err)
+			return nil, storageError("scan pending action", err)
 		}
 		accountID, err := identity.ParseAccountID(accountValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable action", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode pending action", err)
 		}
 		chatID, err := identity.ParseChatID(chatValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable action", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode pending action", err)
 		}
 		actionID, err := identity.ParseActionID(actionValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable action", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode pending action", err)
 		}
 		refs = append(refs, agent.DispatchRef{
 			Key:      agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID},
@@ -166,140 +103,118 @@ func (store *ActionStore) ListRecoverable(
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, storageError("iterate recoverable actions", err)
+		return nil, storageError("iterate pending actions", err)
 	}
 	return refs, nil
 }
 
-func (store *ActionStore) MarkExecuting(ctx context.Context, ref agent.DispatchRef, lease action.Lease, now time.Time) error {
-	if lease == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "start outbound action", errors.New("lease and current time are required"))
+func (store *ActionStore) Complete(ctx context.Context, ref agent.DispatchRef, providerReceipt string, now time.Time) error {
+	if providerReceipt == "" || now.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "complete outbound action", errors.New("receipt and current time are required"))
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE outbound_actions SET
-        state = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
-        AND state = ? AND action_lease = ? AND action_lease_until_ms > ?`,
-		uint8(action.StateExecuting), now.UnixMilli(), ref.Key.TenantID.String(), ref.Key.AccountID.String(),
-		ref.Key.ChatID.String(), ref.ActionID.String(), uint8(action.StateClaimed), string(lease), now.UnixMilli(),
-	)
-	return requireOne(result, err, "start outbound action")
+	return store.finish(ctx, ref, action.StateExecuting, action.StateSucceeded, providerReceipt, "", now)
 }
 
-func (store *ActionStore) Complete(
+// FailTerminal records a reply that will never be sent. Nothing was sent, so
+// it applies to a pending row only.
+func (store *ActionStore) FailTerminal(ctx context.Context, ref agent.DispatchRef, code agent.ErrorCode, now time.Time) error {
+	if code == "" || now.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "fail outbound action", errors.New("code and time are required"))
+	}
+	return store.finish(ctx, ref, action.StatePending, action.StateFailedTerminal, "", code, now)
+}
+
+// MarkUnknown records a send whose outcome cannot be known. It is never
+// retried: WhatsApp may already have delivered it.
+func (store *ActionStore) MarkUnknown(ctx context.Context, ref agent.DispatchRef, code agent.ErrorCode, now time.Time) error {
+	if code == "" || now.IsZero() {
+		return agent.NewError(agent.ErrorInvalidArgument, "mark action unknown", errors.New("code and time are required"))
+	}
+	return store.finish(ctx, ref, action.StateExecuting, action.StateUnknownOutcome, "", code, now)
+}
+
+func (store *ActionStore) finish(
 	ctx context.Context,
 	ref agent.DispatchRef,
-	lease action.Lease,
+	from, to action.State,
 	providerReceipt string,
+	code agent.ErrorCode,
 	now time.Time,
 ) error {
-	if lease == "" || providerReceipt == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "complete outbound action", errors.New("lease and current time are required"))
-	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return storageError("begin action completion", err)
+		return storageError("begin action outcome", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET
-        state = ?, action_lease = NULL, action_lease_until_ms = NULL,
-        provider_receipt = ?, last_error_code = NULL, completed_at_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
-        AND state = ? AND action_lease = ?`,
-		uint8(action.StateSucceeded), nullableString(providerReceipt), now.UnixMilli(), now.UnixMilli(),
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-		uint8(action.StateExecuting), string(lease),
-	)
-	if err := requireOne(result, err, "complete outbound action"); err != nil {
-		return err
-	}
-	if err := updateTurnDelivery(ctx, tx, ref, agent.DeliverySucceeded, agent.TurnSucceeded, "", now.UnixMilli()); err != nil {
+	if err := finishActionTx(ctx, tx, ref, from, to, providerReceipt, code, now.UnixMilli()); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return storageError("commit action completion", err)
+		return storageError("commit action outcome", err)
 	}
 	return nil
 }
 
-func (store *ActionStore) Release(
+func finishActionTx(
 	ctx context.Context,
+	tx *sql.Tx,
 	ref agent.DispatchRef,
-	lease action.Lease,
+	from, to action.State,
+	providerReceipt string,
 	code agent.ErrorCode,
-	retryable bool,
-	retryAt time.Time,
+	nowMS int64,
 ) error {
-	if lease == "" || code == "" || retryAt.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "release outbound action", errors.New("lease, code, and time are required"))
-	}
-	state := action.StateFailedTerminal
-	delivery := agent.DeliveryFailedTerminal
-	turnState := agent.TurnFailedTerminal
-	if retryable {
-		state = action.StateFailedRetryable
-		delivery = agent.DeliveryPending
-		turnState = agent.TurnDeliveryPending
-	}
-	nowMS := store.clock.Now().UnixMilli()
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError("begin action release", err)
-	}
-	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET
-        state = ?, action_lease = NULL, action_lease_until_ms = NULL,
-        retry_after_ms = ?, last_error_code = ?, completed_at_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
-        AND state = ? AND action_lease = ?`,
-		uint8(state), nullableRetry(retryable, retryAt), string(code), nullableCompleted(retryable, nowMS), nowMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-		uint8(action.StateClaimed), string(lease),
+        state = ?, provider_receipt = COALESCE(?, provider_receipt), last_error_code = ?,
+        completed_at_ms = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ? AND state = ?`,
+		uint8(to), nullableString(providerReceipt), nullableErrorCode(code), nowMS, nowMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(), uint8(from),
 	)
-	if err := requireOne(result, err, "release outbound action"); err != nil {
+	if err := requireOne(result, err, "record outbound action outcome"); err != nil {
 		return err
 	}
-	if err := updateTurnDelivery(ctx, tx, ref, delivery, turnState, code, nowMS); err != nil {
-		return err
+	delivery, turnState := agent.DeliverySucceeded, agent.TurnSucceeded
+	switch to {
+	case action.StateFailedTerminal:
+		delivery, turnState = agent.DeliveryFailedTerminal, agent.TurnFailedTerminal
+	case action.StateUnknownOutcome:
+		delivery, turnState = agent.DeliveryUnknownOutcome, agent.TurnUnknownOutcome
 	}
-	if err := tx.Commit(); err != nil {
-		return storageError("commit action release", err)
-	}
-	return nil
+	return updateTurnDelivery(ctx, tx, ref, delivery, turnState, code, nowMS)
 }
 
-func (store *ActionStore) MarkUnknown(
-	ctx context.Context,
-	ref agent.DispatchRef,
-	lease action.Lease,
-	code agent.ErrorCode,
-	now time.Time,
-) error {
-	if lease == "" || code == "" || now.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "mark action unknown", errors.New("lease, code, and time are required"))
-	}
-	tx, err := store.db.BeginTx(ctx, nil)
+// resolveInterruptedActions runs at startup, before anything can send: a
+// reply still executing was cut off mid-send by the last shutdown or crash.
+func resolveInterruptedActions(ctx context.Context, tx *sql.Tx, tenantID identity.TenantID, nowMS int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT account_id, chat_id, action_id FROM outbound_actions
+      WHERE tenant_id = ? AND state = ?`, tenantID.String(), uint8(action.StateExecuting))
 	if err != nil {
-		return storageError("begin unknown action", err)
+		return storageError("list interrupted actions", err)
 	}
-	defer tx.Rollback()
-	stored, _, _, err := loadAction(ctx, tx, ref)
-	if errors.Is(err, sql.ErrNoRows) {
-		return agent.NewError(agent.ErrorNotFound, "mark action unknown", errors.New("action does not exist"))
+	refs := make([]agent.DispatchRef, 0)
+	for rows.Next() {
+		var accountValue, chatValue, actionValue string
+		if err := rows.Scan(&accountValue, &chatValue, &actionValue); err != nil {
+			rows.Close()
+			return storageError("scan interrupted action", err)
+		}
+		accountID, accountErr := identity.ParseAccountID(accountValue)
+		chatID, chatErr := identity.ParseChatID(chatValue)
+		actionID, actionErr := identity.ParseActionID(actionValue)
+		if err := errors.Join(accountErr, chatErr, actionErr); err != nil {
+			rows.Close()
+			return agent.NewError(agent.ErrorIntegrityFailure, "decode interrupted action", err)
+		}
+		refs = append(refs, agent.DispatchRef{Key: agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}, ActionID: actionID})
 	}
-	if err != nil {
-		return storageError("load unknown action", err)
+	if err := rows.Close(); err != nil {
+		return storageError("close interrupted actions", err)
 	}
-	if stored.State == action.StateUnknownOutcome {
-		return tx.Commit()
-	}
-	if stored.State != action.StateExecuting || stored.Lease != lease {
-		return agent.NewError(agent.ErrorConflict, "mark action unknown", errors.New("action execution lease changed"))
-	}
-	if err := markUnknownTx(ctx, tx, stored, code, now.UnixMilli()); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return storageError("commit unknown action", err)
+	for _, ref := range refs {
+		if err := finishActionTx(ctx, tx, ref, action.StateExecuting, action.StateUnknownOutcome, "", agent.ErrorUnknownOutcome, nowMS); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -309,40 +224,36 @@ type actionQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef) (action.StoredAction, sql.NullInt64, sql.NullInt64, error) {
+func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef) (action.StoredAction, error) {
 	var (
 		invocationValue string
 		responseValue   string
 		replyToValue    sql.NullString
 		text            string
 		state           int64
-		lease           sql.NullString
-		leaseUntil      sql.NullInt64
-		retryAfter      sql.NullInt64
 		completedAt     sql.NullInt64
 		providerReceipt sql.NullString
 	)
-	err := query.QueryRowContext(ctx, `SELECT invocation_id, response_id, text, state, action_lease,
-	        action_lease_until_ms, retry_after_ms, completed_at_ms, provider_receipt, reply_to_message_id
+	err := query.QueryRowContext(ctx, `SELECT invocation_id, response_id, text, state, completed_at_ms, provider_receipt, reply_to_message_id
       FROM outbound_actions WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-	).Scan(&invocationValue, &responseValue, &text, &state, &lease, &leaseUntil, &retryAfter, &completedAt, &providerReceipt, &replyToValue)
+	).Scan(&invocationValue, &responseValue, &text, &state, &completedAt, &providerReceipt, &replyToValue)
 	if err != nil {
-		return action.StoredAction{}, leaseUntil, retryAfter, err
+		return action.StoredAction{}, err
 	}
 	invocationID, err := identity.ParseInvocationID(invocationValue)
 	if err != nil {
-		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", err)
+		return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", err)
 	}
 	responseID, err := identity.ParseMessageID(responseValue)
 	if err != nil {
-		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", err)
+		return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", err)
 	}
 	var replyTo identity.MessageID
 	if replyToValue.Valid {
 		replyTo, err = identity.ParseMessageID(replyToValue.String)
 		if err != nil {
-			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound reply target", err)
+			return action.StoredAction{}, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound reply target", err)
 		}
 	}
 	stored := action.StoredAction{
@@ -354,30 +265,11 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 		State:            action.State(state),
 		ProviderReceipt:  providerReceipt.String,
 	}
-	if lease.Valid {
-		stored.Lease = action.Lease(lease.String)
-	}
 	if completedAt.Valid {
 		value := time.UnixMilli(completedAt.Int64).UTC()
 		stored.CompletedAt = &value
 	}
-	return stored, leaseUntil, retryAfter, nil
-}
-
-func markUnknownTx(ctx context.Context, tx *sql.Tx, stored action.StoredAction, code agent.ErrorCode, nowMS int64) error {
-	result, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET
-        state = ?, action_lease = NULL, action_lease_until_ms = NULL,
-        last_error_code = ?, completed_at_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
-        AND state = ? AND action_lease = ?`,
-		uint8(action.StateUnknownOutcome), string(code), nowMS, nowMS,
-		stored.Ref.Key.TenantID.String(), stored.Ref.Key.AccountID.String(), stored.Ref.Key.ChatID.String(), stored.Ref.ActionID.String(),
-		uint8(action.StateExecuting), string(stored.Lease),
-	)
-	if err := requireOne(result, err, "mark action unknown"); err != nil {
-		return err
-	}
-	return updateTurnDelivery(ctx, tx, stored.Ref, agent.DeliveryUnknownOutcome, agent.TurnUnknownOutcome, code, nowMS)
+	return stored, nil
 }
 
 // updateTurnDelivery moves the turn and the assistant history row to match a
@@ -427,7 +319,7 @@ func requireOne(result sql.Result, err error, operation string) error {
 		return storageError(operation, err)
 	}
 	if changed != 1 {
-		return agent.NewError(agent.ErrorConflict, operation, errors.New("state or lease changed"))
+		return agent.NewError(agent.ErrorConflict, operation, errors.New("row is not in the expected state"))
 	}
 	return nil
 }
@@ -444,18 +336,4 @@ func nullableErrorCode(value agent.ErrorCode) any {
 		return nil
 	}
 	return string(value)
-}
-
-func nullableRetry(retryable bool, value time.Time) any {
-	if !retryable {
-		return nil
-	}
-	return value.UnixMilli()
-}
-
-func nullableCompleted(retryable bool, nowMS int64) any {
-	if retryable {
-		return nil
-	}
-	return nowMS
 }

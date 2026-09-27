@@ -20,7 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 20
+const wantMigrationCount = 21
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
@@ -97,7 +97,7 @@ func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
 	if migrations != wantMigrationCount {
 		t.Fatalf("upgraded migration count = %d, want %d", migrations, wantMigrationCount)
 	}
-	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, batch_ready_at_ms FROM inbound_events LIMIT 0"); err != nil {
+	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, turn_claimed FROM inbound_events LIMIT 0"); err != nil {
 		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, "SELECT sequence FROM history_entries LIMIT 0"); err != nil {
@@ -540,7 +540,7 @@ func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
 	}
 }
 
-func TestClaimedBatchSurvivesReopenAndRecoversThroughItsAnchor(t *testing.T) {
+func TestBatchClaimRecordsMembersAndUnfinishedAnchorSurvivesReopen(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	path := filepath.Join(root, "app.db")
@@ -566,7 +566,7 @@ func TestClaimedBatchSurvivesReopenAndRecoversThroughItsAnchor(t *testing.T) {
 		t.Fatalf("claim second: %v", err)
 	}
 	// Make lexical InvocationID order the opposite of durable intake order.
-	// Batching must use the SQLite intake sequence, not a random UUID tie-break.
+	// Recovery must use the SQLite intake sequence, not a random UUID tie-break.
 	firstID, _ := identity.ParseInvocationID("ffffffff-ffff-7fff-bfff-ffffffffffff")
 	secondID, _ := identity.ParseInvocationID("00000000-0000-7000-8000-000000000001")
 	for _, replacement := range []struct {
@@ -586,23 +586,13 @@ func TestClaimedBatchSurvivesReopenAndRecoversThroughItsAnchor(t *testing.T) {
 	}
 	first.Message.InvocationID = firstID
 	second.Message.InvocationID = secondID
-	readyAt := clock.now.Add(time.Second)
-	firstStage, err := store.Inbound().StageBatch(ctx, first.Message, readyAt)
-	if err != nil {
-		t.Fatalf("stage first: %v", err)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, first.Message.TenantID)
+	if err != nil || len(unfinished) != 2 || unfinished[0].InvocationID != firstID || unfinished[1].InvocationID != secondID {
+		t.Fatalf("unfinished before claim = %#v, err=%v", unfinished, err)
 	}
-	secondStage, err := store.Inbound().StageBatch(ctx, second.Message, readyAt)
-	if err != nil {
-		t.Fatalf("stage second: %v", err)
-	}
-	if !firstStage.Wait || secondStage.Wait {
-		t.Fatalf("batch waiter election = first:%v second:%v", firstStage.Wait, secondStage.Wait)
-	}
-	clock.now = readyAt
-	batch, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
-	if err != nil || len(batch.Messages) != 2 ||
-		batch.Messages[1].InvocationID != second.Message.InvocationID {
-		t.Fatalf("claim batch = %#v, err=%v", batch, err)
+	batch, used, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{first.Message, second.Message})
+	if err != nil || used != 2 || len(batch) != 2 || batch[1].InvocationID != secondID {
+		t.Fatalf("claim batch = %#v, used=%d, err=%v", batch, used, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close before restart: %v", err)
@@ -612,21 +602,13 @@ func TestClaimedBatchSurvivesReopenAndRecoversThroughItsAnchor(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	defer reopened.Close()
-	clock.now = clock.now.Add(10 * time.Second)
-	recoverable, err := reopened.Inbound().ListRecoverableInbound(
-		ctx, first.Message.TenantID, clock.now, clock.now.Add(-time.Second), 10,
-	)
-	if err != nil || len(recoverable) != 1 ||
-		recoverable[0].InvocationID != second.Message.InvocationID {
-		t.Fatalf("recoverable anchors = %#v, err=%v", recoverable, err)
-	}
-	recoveredBatch, err := reopened.Inbound().ClaimBatch(ctx, recoverable[0], clock.now, 8)
-	if err != nil || len(recoveredBatch.Messages) != 2 {
-		t.Fatalf("recovered batch = %#v, err=%v", recoveredBatch, err)
+	unfinished, err = reopened.Inbound().ListUnfinished(ctx, first.Message.TenantID)
+	if err != nil || len(unfinished) != 1 || unfinished[0].InvocationID != secondID {
+		t.Fatalf("unfinished after restart = %#v, err=%v", unfinished, err)
 	}
 }
 
-func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) {
+func TestStartedTurnOnlyEverRunsAsAnAnchor(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
@@ -642,14 +624,6 @@ func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create config: %v", err)
 	}
-	stage, err := store.Inbound().StageBatch(ctx, first.Message, clock.now)
-	if err != nil || !stage.Wait {
-		t.Fatalf("stage first = %#v, err=%v", stage, err)
-	}
-	batch, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
-	if err != nil || len(batch.Messages) != 1 {
-		t.Fatalf("claim first batch = %#v, err=%v", batch, err)
-	}
 	capabilities, _ := agent.NewCapabilitySet()
 	invocation := agent.Invocation{
 		ID: first.Message.InvocationID, Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: first.Message.CausationID},
@@ -658,13 +632,11 @@ func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) 
 		Input:  []agent.ContentPart{agent.TextPart{Text: first.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: first.Message.OccurredAt,
 	}
-	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
-	if err != nil {
+	if _, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); err != nil {
 		t.Fatalf("claim first turn: %v", err)
 	}
 	if err := store.Turns().FailGeneration(ctx, agent.FailGenerationRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, Code: agent.ErrorUnavailable,
-		Retryable: true, RetryAfter: clock.now,
+		Key: key, InvocationID: invocation.ID, Code: agent.ErrorUnavailable, Retryable: true,
 	}); err != nil {
 		t.Fatalf("mark first retryable: %v", err)
 	}
@@ -678,69 +650,23 @@ func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) 
 	if err != nil {
 		t.Fatalf("claim second: %v", err)
 	}
-	secondStage, err := store.Inbound().StageBatch(ctx, second.Message, clock.now)
-	if err != nil {
-		t.Fatalf("stage second: %v", err)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID)
+	if err != nil || len(unfinished) != 2 || unfinished[0].InvocationID != first.Message.InvocationID {
+		t.Fatalf("unfinished = %#v, err=%v", unfinished, err)
 	}
-	if secondStage.Wait || secondStage.Handled {
-		t.Fatalf("newer message bypassed retryable anchor: %#v", secondStage)
+	// The started turn is first, so it runs alone.
+	batch, used, err := store.Inbound().ClaimBatch(ctx, unfinished)
+	if err != nil || used != 1 || len(batch) != 1 || batch[0].InvocationID != first.Message.InvocationID {
+		t.Fatalf("started turn batch = %#v, used=%d, err=%v", batch, used, err)
 	}
-
-	recoveryStage, err := store.Inbound().StageBatch(ctx, first.Message, clock.now)
-	if err != nil || !recoveryStage.Wait || recoveryStage.Handled {
-		t.Fatalf("stage retry recovery = %#v, err=%v", recoveryStage, err)
-	}
-	recovered, err := store.Inbound().ClaimBatch(ctx, first.Message, clock.now, 8)
-	if err != nil || len(recovered.Messages) != 1 || recovered.Messages[0].InvocationID != first.Message.InvocationID {
-		t.Fatalf("recover retryable batch = %#v, err=%v", recovered, err)
+	// Queued after a new message, the batch stops just before it.
+	batch, used, err = store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{second.Message, first.Message})
+	if err != nil || used != 1 || len(batch) != 1 || batch[0].InvocationID != second.Message.InvocationID {
+		t.Fatalf("batch ahead of started turn = %#v, used=%d, err=%v", batch, used, err)
 	}
 }
 
-func TestPreBatchRetryableTurnRecoversAsSingleton(t *testing.T) {
-	ctx := context.Background()
-	clock := &testClock{now: time.Date(2026, 9, 8, 0, 30, 0, 0, time.UTC)}
-	store := openTestStoreWithClock(t, clock)
-	candidate := testCandidate(t, "pre-batch-retry", "15550000047@s.whatsapp.net")
-	candidate.ReceivedAt = clock.now
-	candidate.OccurredAt = clock.now.Add(-time.Second)
-	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
-	if err != nil {
-		t.Fatalf("claim inbound: %v", err)
-	}
-	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
-	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
-	if err != nil {
-		t.Fatalf("create config: %v", err)
-	}
-	capabilities, _ := agent.NewCapabilitySet()
-	invocation := agent.Invocation{
-		ID: claimed.Message.InvocationID, Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: claimed.Message.CausationID},
-		Cause:  agent.CauseInboundMessage,
-		Sender: &agent.SenderContext{ParticipantID: claimed.Message.SenderID, Ref: claimed.Message.SenderRef, DisplayName: claimed.Message.SenderName},
-		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
-		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
-	}
-	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
-	if err != nil {
-		t.Fatalf("claim turn: %v", err)
-	}
-	if err := store.Turns().FailGeneration(ctx, agent.FailGenerationRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, Code: agent.ErrorUnavailable,
-		Retryable: true, RetryAfter: clock.now,
-	}); err != nil {
-		t.Fatalf("mark turn retryable: %v", err)
-	}
-	stage, err := store.Inbound().StageBatch(ctx, claimed.Message, clock.now)
-	if err != nil || !stage.Wait || stage.Handled {
-		t.Fatalf("stage pre-batch recovery = %#v, err=%v", stage, err)
-	}
-	batch, err := store.Inbound().ClaimBatch(ctx, claimed.Message, clock.now, 8)
-	if err != nil || len(batch.Messages) != 1 || batch.Messages[0].InvocationID != invocation.ID {
-		t.Fatalf("pre-batch recovery = %#v, err=%v", batch, err)
-	}
-}
-
-func TestMessageCannotEnterBatchAfterAConcurrentHistoryReset(t *testing.T) {
+func TestPreResetMessageIsDroppedFromBatch(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
 	store := openTestStoreWithClock(t, clock)
@@ -762,19 +688,13 @@ func TestMessageCannotEnterBatchAfterAConcurrentHistoryReset(t *testing.T) {
 	if err := store.History().ResetIfConfigVersion(ctx, key, snapshot.Version, clock.now); err != nil {
 		t.Fatalf("reset history: %v", err)
 	}
-	stage, err := store.Inbound().StageBatch(ctx, claimed.Message, clock.now.Add(time.Second))
-	if err != nil {
-		t.Fatalf("stage pre-reset message: %v", err)
+	batch, used, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{claimed.Message})
+	if err != nil || used != 1 || len(batch) != 0 {
+		t.Fatalf("pre-reset batch = %#v, used=%d, err=%v", batch, used, err)
 	}
-	if !stage.Handled {
-		t.Fatal("pre-reset message entered a post-reset batch")
-	}
-	batch, err := store.Inbound().ClaimBatch(ctx, claimed.Message, clock.now, 8)
-	if err != nil {
-		t.Fatalf("observe discarded message: %v", err)
-	}
-	if !batch.Handled || len(batch.Messages) != 0 {
-		t.Fatalf("discarded batch = %#v", batch)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID)
+	if err != nil || len(unfinished) != 0 {
+		t.Fatalf("pre-reset message still unfinished: %#v, err=%v", unfinished, err)
 	}
 }
 
@@ -850,7 +770,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
-	if claim.State != agent.TurnGenerating || claim.Lease == "" {
+	if claim.State != agent.TurnGenerating {
 		t.Fatalf("turn claim = %#v", claim)
 	}
 	if err := store.History().Append(context.Background(), key, agent.HistoryEntry{
@@ -860,11 +780,8 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append current history target: %v", err)
 	}
-	if _, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); !agent.IsCode(err, agent.ErrorInProgress) {
-		t.Fatalf("active lease error = %v, want in_progress", err)
-	}
 	plan, err := turns.CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, CurrentMessageID: claim.MessageID, Lease: claim.Lease, ConfigVersion: configSnapshot.Version, ResponseText: "hello back", ReplyToMessageID: claim.MessageID,
+		Key: key, InvocationID: invocation.ID, CurrentMessageID: claim.MessageID, ConfigVersion: configSnapshot.Version, ResponseText: "hello back", ReplyToMessageID: claim.MessageID,
 		Capabilities: capabilities,
 		Effects: []agent.ModelEffect{{CallID: "call_react_1", Intent: agent.EffectIntent{
 			Kind: agent.EffectReact, TargetMessageID: claim.MessageID, Emoji: "✅",
@@ -887,35 +804,38 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if len(plan.Effects) != 1 || len(replay.Plan.Effects) != 1 || replay.Plan.Effects[0] != plan.Effects[0] {
 		t.Fatalf("atomic model effect refs = %#v / %#v", plan.Effects, replay.Plan.Effects)
 	}
-	blockedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}, clock.now)
-	if err != nil || blockedEffect.State != effect.StatePending {
-		t.Fatalf("model effect ran before response delivery = %#v, %v", blockedEffect, err)
+	effectRef := effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}
+	if err := store.Effects().Start(context.Background(), effectRef, clock.now); !agent.IsCode(err, agent.ErrorNotReady) {
+		t.Fatalf("model effect started before response delivery: %v", err)
 	}
 	actions := store.Actions()
 	clock.now = clock.now.Add(3 * time.Second)
-	recoverable, err := actions.ListRecoverable(context.Background(), key.TenantID, clock.now, 10)
+	pending, err := actions.ListPending(context.Background(), key.TenantID)
 	if err != nil {
-		t.Fatalf("list recoverable action: %v", err)
+		t.Fatalf("list pending action: %v", err)
 	}
-	if len(recoverable) != 1 || recoverable[0] != plan.Dispatch {
-		t.Fatalf("recoverable actions = %#v, want plan dispatch", recoverable)
+	if len(pending) != 1 || pending[0] != plan.Dispatch {
+		t.Fatalf("pending actions = %#v, want plan dispatch", pending)
 	}
-	storedAction, err := actions.Claim(context.Background(), plan.Dispatch, clock.now)
+	storedAction, err := actions.Load(context.Background(), plan.Dispatch)
 	if err != nil {
-		t.Fatalf("claim action: %v", err)
+		t.Fatalf("load action: %v", err)
 	}
-	if storedAction.State != action.StateClaimed || storedAction.Text != "hello back" || storedAction.ReplyToMessageID != claim.MessageID {
-		t.Fatalf("action claim = %#v", storedAction)
+	if storedAction.State != action.StatePending || storedAction.Text != "hello back" || storedAction.ReplyToMessageID != claim.MessageID {
+		t.Fatalf("pending action = %#v", storedAction)
+	}
+	if err := actions.Start(context.Background(), plan.Dispatch, clock.now); err != nil {
+		t.Fatalf("start action: %v", err)
+	}
+	if err := actions.Start(context.Background(), plan.Dispatch, clock.now); !agent.IsCode(err, agent.ErrorConflict) {
+		t.Fatalf("second start = %v, want conflict", err)
 	}
 	pendingRecord, err := turns.Load(context.Background(), key, invocation.ID)
 	if err != nil || pendingRecord.State != agent.TurnDeliveryPending {
 		t.Fatalf("delivery-pending turn = %#v, err=%v", pendingRecord, err)
 	}
-	if err := actions.MarkExecuting(context.Background(), plan.Dispatch, storedAction.Lease, clock.now); err != nil {
-		t.Fatalf("mark executing: %v", err)
-	}
 	clock.now = clock.now.Add(time.Second)
-	if err := actions.Complete(context.Background(), plan.Dispatch, storedAction.Lease, "provider-receipt", clock.now); err != nil {
+	if err := actions.Complete(context.Background(), plan.Dispatch, "provider-receipt", clock.now); err != nil {
 		t.Fatalf("complete action: %v", err)
 	}
 	record, err := turns.Load(context.Background(), key, invocation.ID)
@@ -925,9 +845,8 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if record.State != agent.TurnSucceeded || record.Delivery != agent.DeliverySucceeded || record.Plan.ActionID != plan.ActionID {
 		t.Fatalf("completed turn = %#v", record)
 	}
-	releasedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}, clock.now)
-	if err != nil || releasedEffect.State != effect.StateClaimed {
-		t.Fatalf("model effect was not released after response delivery = %#v, %v", releasedEffect, err)
+	if err := store.Effects().Start(context.Background(), effectRef, clock.now); err != nil {
+		t.Fatalf("model effect was not released after response delivery: %v", err)
 	}
 	historyPage, err := store.History().ListIfConfigVersion(
 		context.Background(), key, configSnapshot.Version, agent.HistoryQuery{Limit: 10},
@@ -941,7 +860,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil || completedAssistant == nil || completedAssistant.Delivery != agent.DeliverySucceeded {
 		t.Fatalf("completed assistant history = %#v, err=%v", historyPage, err)
 	}
-	observed, err := actions.Claim(context.Background(), plan.Dispatch, clock.now)
+	observed, err := actions.Load(context.Background(), plan.Dispatch)
 	if err != nil || observed.State != action.StateSucceeded {
 		t.Fatalf("observe completed action = %#v, err=%v", observed, err)
 	}
@@ -992,13 +911,12 @@ func TestPlanReplayUsesTheExactAssistantHistoryTimestamp(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	claim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
-	if err != nil {
+	if _, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
 	clock.step = time.Millisecond
 	plan, err := store.Turns().CommitPlan(ctx, agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: claim.Lease,
+		Key: key, InvocationID: invocation.ID,
 		ConfigVersion: snapshot.Version, ResponseText: "same timestamp",
 	})
 	if err != nil {
@@ -1043,18 +961,9 @@ func TestPreclaimedInboundCannotBeReboundToDifferentInvocationContent(t *testing
 	}
 }
 
-func TestExpiredGenerationLeaseCannotPublishOrFailTurn(t *testing.T) {
+func TestInterruptedGenerationIsReclaimedAndCountsAsAnAttempt(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 2, 0, 0, 0, time.UTC)}
-	store, err := OpenWithOptions(context.Background(), filepath.Join(t.TempDir(), "app.db"), Options{
-		GenerationLeaseTTL: time.Second,
-		ActionLeaseTTL:     time.Minute,
-		Clock:              clock,
-	})
-	if err != nil {
-		t.Fatalf("open test store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
+	store := openTestStoreWithClock(t, clock)
 	key := testKey(t)
 	invocationID, _ := identity.NewInvocationID()
 	causationID, _ := identity.NewCausationID()
@@ -1063,41 +972,27 @@ func TestExpiredGenerationLeaseCannotPublishOrFailTurn(t *testing.T) {
 		ID:            invocationID,
 		Causation:     agent.CausationRef{Kind: agent.CausationRequest, ID: causationID},
 		Cause:         agent.CauseDirectRequest,
-		Input:         []agent.ContentPart{agent.TextPart{Text: "lease test"}},
+		Input:         []agent.ContentPart{agent.TextPart{Text: "crash test"}},
 		Capabilities:  capabilities,
 		PolicyVersion: agent.InitialConfigVersion,
 		RequestedAt:   clock.now,
 	}
-	claim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-		Key: key, Invocation: invocation, Now: clock.now,
-	})
-	if err != nil {
-		t.Fatalf("claim turn: %v", err)
+	// A turn still generating when it is claimed again was cut off by a
+	// crash; it is generated again, and that counts toward the bound.
+	for attempt := 1; attempt <= maxGenerationAttempts; attempt++ {
+		claim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
+		if err != nil || claim.State != agent.TurnGenerating {
+			t.Fatalf("claim attempt %d = %#v, err=%v", attempt, claim, err)
+		}
 	}
-	clock.now = clock.now.Add(time.Second)
-
-	_, err = store.Turns().CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocationID, Lease: claim.Lease,
-		ConfigVersion: agent.InitialConfigVersion, ResponseText: "too late",
-	})
-	if !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("expired commit error = %v, want conflict", err)
+	if _, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("exhausted claim error = %v, want provider_failure", err)
 	}
-	err = store.Turns().FailGeneration(context.Background(), agent.FailGenerationRequest{
-		Key: key, InvocationID: invocationID, Lease: claim.Lease, Code: agent.ErrorProviderFailure,
+	_, err := store.Turns().CommitPlan(context.Background(), agent.CommitPlanRequest{
+		Key: key, InvocationID: invocationID, ConfigVersion: agent.InitialConfigVersion, ResponseText: "too late",
 	})
 	if !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("expired failure error = %v, want conflict", err)
-	}
-
-	second, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-		Key: key, Invocation: invocation, Now: clock.now,
-	})
-	if err != nil {
-		t.Fatalf("reclaim expired turn: %v", err)
-	}
-	if second.Lease == "" || second.Lease == claim.Lease {
-		t.Fatalf("replacement lease = %q, original = %q", second.Lease, claim.Lease)
+		t.Fatalf("commit after terminal failure = %v, want conflict", err)
 	}
 }
 
@@ -1114,15 +1009,13 @@ func TestGenerationRetriesAreBoundedAndBecomeTerminal(t *testing.T) {
 		Capabilities: capabilities, PolicyVersion: agent.InitialConfigVersion, RequestedAt: clock.now,
 	}
 	for attempt := 1; attempt <= maxGenerationAttempts; attempt++ {
-		claim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
+		if _, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
 			Key: key, Invocation: invocation, Now: clock.now,
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("claim attempt %d: %v", attempt, err)
 		}
 		if err := store.Turns().FailGeneration(context.Background(), agent.FailGenerationRequest{
-			Key: key, InvocationID: invocationID, Lease: claim.Lease, Code: agent.ErrorUnavailable,
-			Retryable: true, RetryAfter: clock.now,
+			Key: key, InvocationID: invocationID, Code: agent.ErrorUnavailable, Retryable: true,
 		}); err != nil {
 			t.Fatalf("fail attempt %d: %v", attempt, err)
 		}
@@ -1142,15 +1035,9 @@ func TestGenerationRetriesAreBoundedAndBecomeTerminal(t *testing.T) {
 	}
 }
 
-func TestExpiredExecutingActionBecomesUnknownAndCannotBeReclaimed(t *testing.T) {
+func TestInterruptedActionBecomesUnknownAndIsNeverResent(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 4, 0, 0, 0, time.UTC)}
-	store, err := OpenWithOptions(context.Background(), filepath.Join(t.TempDir(), "app.db"), Options{
-		GenerationLeaseTTL: time.Minute, ActionLeaseTTL: time.Second, Clock: clock,
-	})
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
+	store := openTestStoreWithClock(t, clock)
 	candidate := testCandidate(t, "unknown-expired-action", "15550000041@s.whatsapp.net")
 	candidate.ReceivedAt = clock.now
 	candidate.OccurredAt = clock.now.Add(-time.Second)
@@ -1171,38 +1058,29 @@ func TestExpiredExecutingActionBecomesUnknownAndCannotBeReclaimed(t *testing.T) 
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	turnClaim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
-	if err != nil {
+	if _, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
 	plan, err := store.Turns().CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, ConfigVersion: snapshot.Version, ResponseText: "ambiguous send",
+		Key: key, InvocationID: invocation.ID, ConfigVersion: snapshot.Version, ResponseText: "ambiguous send",
 	})
 	if err != nil {
 		t.Fatalf("commit plan: %v", err)
 	}
-	stored, err := store.Actions().Claim(context.Background(), plan.Dispatch, clock.now)
-	if err != nil {
-		t.Fatalf("claim action: %v", err)
+	if err := store.Actions().Start(context.Background(), plan.Dispatch, clock.now); err != nil {
+		t.Fatalf("start action: %v", err)
 	}
-	if err := store.Actions().MarkExecuting(context.Background(), plan.Dispatch, stored.Lease, clock.now); err != nil {
-		t.Fatalf("mark action executing: %v", err)
+	// The process stops mid-send; the next start resolves what it left.
+	if err := store.ResolveInterrupted(context.Background(), key.TenantID); err != nil {
+		t.Fatalf("resolve interrupted: %v", err)
 	}
-	clock.now = clock.now.Add(time.Second)
-	recoverable, err := store.Actions().ListRecoverable(context.Background(), key.TenantID, clock.now, 10)
-	if err != nil || len(recoverable) != 1 || recoverable[0] != plan.Dispatch {
-		t.Fatalf("expired executing recovery list = %#v, err=%v", recoverable, err)
+	observed, err := store.Actions().Load(context.Background(), plan.Dispatch)
+	if err != nil || observed.State != action.StateUnknownOutcome {
+		t.Fatalf("interrupted action = %#v, err=%v", observed, err)
 	}
-	observed, err := store.Actions().Claim(context.Background(), plan.Dispatch, clock.now)
-	if err != nil {
-		t.Fatalf("observe expired action: %v", err)
-	}
-	if observed.State != action.StateUnknownOutcome {
-		t.Fatalf("expired action state = %v, want unknown", observed.State)
-	}
-	again, err := store.Actions().Claim(context.Background(), plan.Dispatch, clock.now.Add(time.Minute))
-	if err != nil || again.State != action.StateUnknownOutcome {
-		t.Fatalf("unknown action was reclaimable: state=%v err=%v", again.State, err)
+	pending, err := store.Actions().ListPending(context.Background(), key.TenantID)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("unknown action was listed for resend: %#v, err=%v", pending, err)
 	}
 	record, err := store.Turns().Load(context.Background(), key, invocation.ID)
 	if err != nil || record.State != agent.TurnUnknownOutcome || record.Delivery != agent.DeliveryUnknownOutcome {
@@ -1229,11 +1107,7 @@ func openTestStore(t *testing.T) *Store {
 
 func openTestStoreWithClock(t *testing.T, clock *testClock) *Store {
 	t.Helper()
-	store, err := OpenWithOptions(context.Background(), filepath.Join(t.TempDir(), "app.db"), Options{
-		GenerationLeaseTTL: time.Minute,
-		ActionLeaseTTL:     time.Minute,
-		Clock:              clock,
-	})
+	store, err := OpenWithOptions(context.Background(), filepath.Join(t.TempDir(), "app.db"), Options{Clock: clock})
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

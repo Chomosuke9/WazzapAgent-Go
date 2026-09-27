@@ -532,15 +532,15 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 	return access, nil
 }
 
-func (store *InboundStore) ListRecoverableInbound(
+// ListUnfinished returns every message the last run accepted but never
+// answered or ignored, oldest first. It runs once at startup, when nothing
+// else can be working on them.
+func (store *InboundStore) ListUnfinished(
 	ctx context.Context,
 	tenantID identity.TenantID,
-	now time.Time,
-	staleBefore time.Time,
-	limit uint32,
 ) ([]conversation.IncomingMessage, error) {
-	if tenantID.IsZero() || now.IsZero() || staleBefore.IsZero() || !staleBefore.Before(now) || limit == 0 || limit > 10_000 {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "list recoverable inbound", errors.New("valid tenant, times, and limit are required"))
+	if tenantID.IsZero() {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list unfinished inbound", errors.New("tenant is required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
@@ -551,19 +551,13 @@ func (store *InboundStore) ListRecoverableInbound(
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
       JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
-	  WHERE e.tenant_id = ? AND p.lid IS NOT NULL AND `+noOutboundAction("e")+` AND (
-        (e.turn_state = 0 AND e.updated_at_ms <= ?) OR
-        (e.turn_state = ? AND (e.generation_lease_until_ms IS NULL OR e.generation_lease_until_ms <= ?)) OR
-        (e.turn_state = ? AND (e.retry_after_ms IS NULL OR e.retry_after_ms <= ?))
-      )
-      ORDER BY e.updated_at_ms, e.invocation_id
-      LIMIT ?`,
-		tenantID.String(), staleBefore.UnixMilli(),
-		uint8(agent.TurnGenerating), now.UnixMilli(),
-		uint8(agent.TurnFailedRetryable), now.UnixMilli(), limit,
+	  WHERE e.tenant_id = ? AND p.lid IS NOT NULL AND `+noOutboundAction("e")+`
+        AND e.turn_state IN (0, ?, ?)
+      ORDER BY e.rowid`,
+		tenantID.String(), uint8(agent.TurnGenerating), uint8(agent.TurnFailedRetryable),
 	)
 	if err != nil {
-		return nil, storageError("list recoverable inbound", err)
+		return nil, storageError("list unfinished inbound", err)
 	}
 	defer rows.Close()
 	messages := make([]conversation.IncomingMessage, 0)
@@ -583,31 +577,31 @@ func (store *InboundStore) ListRecoverableInbound(
 			&quotedMessage, &quotedSequenceValue, &quotedRoleValue, &quotedSender, &quotedTextValue,
 			&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &repliedToBot, &chatKind, &mentionsBot,
 			&fromMe, &owner, &allowlisted, &occurredAt, &receivedAt); err != nil {
-			return nil, storageError("scan recoverable inbound", err)
+			return nil, storageError("scan unfinished inbound", err)
 		}
 		messageID, err := identity.ParseMessageID(messageValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		invocationID, err := identity.ParseInvocationID(invocationValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		causationID, err := identity.ParseCausationID(causationValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		accountID, err := identity.ParseAccountID(accountValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		chatID, err := identity.ParseChatID(chatValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		participantID, err := identity.ParseParticipantID(participantValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		senderLID, err := identity.ParseLID(senderLIDValue)
 		if err != nil {
@@ -615,7 +609,7 @@ func (store *InboundStore) ListRecoverableInbound(
 		}
 		senderRef, err := identity.ParseSenderRef(senderRefValue)
 		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode recoverable inbound", err)
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode unfinished inbound", err)
 		}
 		quote, err := decodeQuotedMessage(quotedMessage, quotedSequenceValue, quotedRoleValue, quotedSender, quotedTextValue,
 			quotedSenderIsAdmin == 1, quotedSenderIsSuperAdmin == 1)
@@ -634,10 +628,10 @@ func (store *InboundStore) ListRecoverableInbound(
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, storageError("iterate recoverable inbound", err)
+		return nil, storageError("iterate unfinished inbound", err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, storageError("close recoverable inbound", err)
+		return nil, storageError("close unfinished inbound", err)
 	}
 	for index := range messages {
 		message := &messages[index]

@@ -3,8 +3,6 @@ package inbound
 import (
 	"context"
 	"errors"
-	"hash/fnv"
-	"sync"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -25,29 +23,15 @@ type Store interface {
 	MarkIgnored(context.Context, conversation.IncomingMessage, IgnoreReason) error
 	command.Store
 	IsChatMuted(context.Context, agent.Key, identity.SenderRef, time.Time) (bool, error)
-	StageBatch(context.Context, conversation.IncomingMessage, time.Time) (BatchStage, error)
-	ClaimBatch(context.Context, conversation.IncomingMessage, time.Time, uint32) (BatchClaim, error)
-}
-
-type BatchStage struct {
-	ReadyAt time.Time
-	Handled bool
-	Wait    bool
-}
-
-type BatchClaim struct {
-	Messages []conversation.IncomingMessage
-	ReadyAt  time.Time
-	Handled  bool
-}
-
-type BatchOptions struct {
-	Debounce    time.Duration
-	BurstCap    uint32
-	Clock       agent.Clock
-	Activity    AIActivity
-	Events      AgentLifecycleObserver
-	ChatContext agent.ChatContextReader
+	// ClaimBatch starts one turn for messages queued in memory, in arrival
+	// order. It drops messages that no longer need a reply (already answered,
+	// or cleared by a history reset) and returns the rest; the last one is
+	// the anchor that gets the reply. It may consume only a prefix of the
+	// input, and reports how many messages it consumed.
+	ClaimBatch(context.Context, []conversation.IncomingMessage) ([]conversation.IncomingMessage, int, error)
+	// ListUnfinished returns messages the last run accepted but never
+	// finished, oldest first.
+	ListUnfinished(context.Context, identity.TenantID) ([]conversation.IncomingMessage, error)
 }
 
 type AgentLifecycleObserver interface {
@@ -83,11 +67,14 @@ const (
 	IgnoreGroupNotMentioned IgnoreReason = "group_not_mentioned"
 	IgnorePolicyDenied      IgnoreReason = "policy_denied"
 	IgnoreMuted             IgnoreReason = "muted"
+	// IgnoreCommandFailed records a command that failed, so it is never run
+	// again, not even by startup recovery.
+	IgnoreCommandFailed IgnoreReason = "command_failed"
 )
 
 func (reason IgnoreReason) Valid() bool {
 	switch reason {
-	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted:
+	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted, IgnoreCommandFailed:
 		return true
 	default:
 		return false
@@ -133,10 +120,7 @@ func (DiscardObserver) ObserveInboundIgnored()     {}
 func (DiscardObserver) ObserveInboundBatch(uint32) {}
 func (DiscardObserver) ObserveHistoryReset()       {}
 
-// handlerServices contains only infrastructure shared by the two independent
-// lanes. It deliberately contains no routing or lane-specific orchestration.
-// CommandHandler and AIHandler each receive their own value of this type, so
-// their serialization stripes and runtime state are not shared.
+// handlerServices is the infrastructure a Dispatcher routes messages to.
 type handlerServices struct {
 	store     Store
 	agents    Registry
@@ -144,18 +128,14 @@ type handlerServices struct {
 	responses ResponseWriter
 	observer  Observer
 	platform  command.Platform
-	stripes   *[64]sync.Mutex
 }
 
-func (handler *CommandHandler) resumeCommand(
+func (handler *handlerServices) resumeCommand(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 	request command.Request,
 	cmd command.Command,
 ) error {
-	stripe := handler.stripe(message.ChatID)
-	stripe.Lock()
-	defer stripe.Unlock()
 	currentAgent, snapshot, err := handler.loadAgent(ctx, message)
 	if err != nil {
 		return err
@@ -239,26 +219,7 @@ func (services *handlerServices) loadAgent(
 	return currentAgent, snapshot, nil
 }
 
-func (handler *AIHandler) waitUntil(ctx context.Context, readyAt time.Time) error {
-	delay := readyAt.Sub(handler.batch.Clock.Now())
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		code := agent.ErrorCancelled
-		if ctx.Err() == context.DeadlineExceeded {
-			code = agent.ErrorTimeout
-		}
-		return agent.NewError(code, "wait for message debounce", ctx.Err())
-	case <-timer.C:
-		return nil
-	}
-}
-
-func (handler *AIHandler) processBatch(
+func (handler *Dispatcher) processBatch(
 	ctx context.Context,
 	currentAgent *agent.Agent,
 	messages []conversation.IncomingMessage,
@@ -303,22 +264,22 @@ func (handler *AIHandler) processBatch(
 	var observedChat *agent.ChatContext
 	if anchorMessage.ChatKind == conversation.ChatGroup {
 		chatName = ""
-		if handler.batch.ChatContext != nil {
-			if chat, readErr := handler.batch.ChatContext.ReadChatContext(ctx, key); readErr == nil {
+		if handler.options.ChatContext != nil {
+			if chat, readErr := handler.options.ChatContext.ReadChatContext(ctx, key); readErr == nil {
 				chatName = chat.Name
 				observedChat = &chat
 			}
 		}
 	}
-	handler.batch.Events.ObserveAgentTriggered(anchorMessage, uint32(len(messages)), chatName)
+	handler.options.Events.ObserveAgentTriggered(anchorMessage, uint32(len(messages)), chatName)
 	for _, message := range messages {
-		_ = handler.batch.Activity.MarkRead(ctx, key, message.ID)
+		_ = handler.options.Activity.MarkRead(ctx, key, message.ID)
 	}
-	_ = handler.batch.Activity.SetComposing(ctx, key, true)
+	_ = handler.options.Activity.SetComposing(ctx, key, true)
 	defer func() {
 		pauseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = handler.batch.Activity.SetComposing(pauseCtx, key, false)
+		_ = handler.options.Activity.SetComposing(pauseCtx, key, false)
 	}()
 	for _, message := range messages[:len(messages)-1] {
 		invocation, err := invocationFromMessage(message, snapshot.Version, capabilities, commandNames)
@@ -346,7 +307,7 @@ func (handler *AIHandler) processBatch(
 		result, err = currentAgent.Invoke(ctx, anchor)
 	}
 	if err == nil && result.Delivery == agent.DeliverySucceeded {
-		handler.batch.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
+		handler.options.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
 	}
 	return err
 }
@@ -400,10 +361,4 @@ func (services *handlerServices) ignore(ctx context.Context, message conversatio
 	}
 	services.observer.ObserveInboundIgnored()
 	return nil
-}
-
-func (services *handlerServices) stripe(chatID identity.ChatID) *sync.Mutex {
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(chatID.String()))
-	return &services.stripes[hash.Sum32()%uint32(len(services.stripes))]
 }

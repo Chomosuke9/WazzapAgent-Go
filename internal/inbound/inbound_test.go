@@ -667,16 +667,15 @@ func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim before crash: %v", err)
 	}
-	now := time.Now().UTC()
-	messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+	messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
 	if err != nil {
-		t.Fatalf("list recoverable inbound: %v", err)
+		t.Fatalf("list unfinished inbound: %v", err)
 	}
 	if len(messages) != 1 || messages[0].InvocationID != claimed.Message.InvocationID {
-		t.Fatalf("recoverable messages = %#v", messages)
+		t.Fatalf("unfinished messages = %#v", messages)
 	}
-	if err := fixture.handler.Resume(context.Background(), messages[0]); err != nil {
-		t.Fatalf("resume durable inbound: %v", err)
+	if err := fixture.handler.Recover(context.Background(), fixture.tenantID); err != nil {
+		t.Fatalf("recover durable inbound: %v", err)
 	}
 	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
 		t.Fatalf("resumed model/sender calls = %d/%d", fixture.model.calls.Load(), fixture.sender.count())
@@ -708,12 +707,11 @@ func TestDispatcherRechecksCurrentAllowlistBeforeEverySend(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	turnClaim, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()})
-	if err != nil {
+	if _, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()}); err != nil {
 		t.Fatalf("claim planned turn: %v", err)
 	}
 	plan, err := fixture.store.Turns().CommitPlan(context.Background(), agent.CommitPlanRequest{
-		Key: key, InvocationID: invocation.ID, Lease: turnClaim.Lease, ConfigVersion: snapshot.Version, ResponseText: "pending response",
+		Key: key, InvocationID: invocation.ID, ConfigVersion: snapshot.Version, ResponseText: "pending response",
 	})
 	if err != nil {
 		t.Fatalf("commit pending plan: %v", err)
@@ -743,40 +741,41 @@ type fixture struct {
 	dispatcher *action.Dispatcher
 }
 
-// directIngress is a synchronous test harness for the two concrete lanes.
-// Production intake uses SplitDispatcher; this helper keeps unit tests
-// deterministic without reintroducing a combined production handler.
+// directIngress makes the dispatcher synchronous for tests: each call waits
+// until every chat is idle and returns what the background turns reported.
 type directIngress struct {
-	store    inbound.Store
-	command  *inbound.CommandHandler
-	ai       *inbound.AIHandler
-	observer inbound.Observer
+	dispatcher *inbound.Dispatcher
+	mu         sync.Mutex
+	reported   []error
+}
+
+func (handler *directIngress) report(err error) {
+	handler.mu.Lock()
+	handler.reported = append(handler.reported, err)
+	handler.mu.Unlock()
+}
+
+func (handler *directIngress) settle(err error) error {
+	handler.dispatcher.WaitIdle()
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	if err == nil && len(handler.reported) > 0 {
+		err = handler.reported[0]
+	}
+	handler.reported = nil
+	return err
 }
 
 func (handler *directIngress) Handle(ctx context.Context, candidate conversation.IncomingCandidate) error {
-	if err := candidate.Validate(); err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "handle incoming candidate", err)
-	}
-	claimed, err := handler.store.ClaimAndResolveSender(ctx, candidate)
-	if err != nil {
-		return err
-	}
-	if claimed.Duplicate {
-		handler.observer.ObserveInboundDuplicate()
-	} else {
-		handler.observer.ObserveInboundClaimed()
-	}
-	if claimed.Handled {
-		return nil
-	}
-	return handler.Resume(ctx, claimed.Message)
+	return handler.settle(handler.dispatcher.Handle(ctx, candidate))
 }
 
 func (handler *directIngress) Resume(ctx context.Context, message conversation.IncomingMessage) error {
-	if inbound.IsCommand(message.Text) {
-		return handler.command.Resume(ctx, message)
-	}
-	return handler.ai.Resume(ctx, message)
+	return handler.settle(handler.dispatcher.Resume(ctx, message))
+}
+
+func (handler *directIngress) Recover(ctx context.Context, tenantID identity.TenantID) error {
+	return handler.settle(handler.dispatcher.Recover(ctx, tenantID))
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -839,25 +838,26 @@ func newFixtureAtPath(
 	if err != nil {
 		t.Fatalf("create command responder: %v", err)
 	}
-	commandHandler, err := inbound.NewCommandHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender},
+	ingress := &directIngress{}
+	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report}
+	ingress.dispatcher, err = inbound.NewDispatcher(
+		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender}, dispatcherOptions,
 	)
 	if err != nil {
-		t.Fatalf("create command handler: %v", err)
+		t.Fatalf("create inbound dispatcher: %v", err)
 	}
-	aiHandler, err := inbound.NewAIHandler(
-		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{},
-		inbound.BatchOptions{Debounce: debounce, BurstCap: burstCap, Clock: agent.SystemClock{}},
-	)
-	if err != nil {
-		t.Fatalf("create AI handler: %v", err)
-	}
+	runCtx, stop := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { _ = ingress.dispatcher.Run(runCtx); close(stopped) }()
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
-		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
-		model:   model, sender: sender, dispatcher: dispatcher,
+		handler: ingress, model: model, sender: sender, dispatcher: dispatcher,
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		stop()
+		<-stopped
+		_ = store.Close()
+	})
 	return fixture
 }
 
