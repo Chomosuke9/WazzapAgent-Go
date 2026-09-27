@@ -161,7 +161,7 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 	if !exists {
 		return []control.BotMessage{}, nil
 	}
-	store := &Store{db: db, clock: agent.SystemClock{}}
+	store := &Store{db: db, read: db, clock: agent.SystemClock{}}
 	key := agent.Key{TenantID: scope.TenantID, AccountID: scope.AccountID, ChatID: chatID}
 	configSnapshot, err := store.Configs().Load(ctx, key)
 	var page agent.HistoryPage
@@ -323,7 +323,7 @@ func (reader *ConversationReader) open(ctx context.Context, scope control.Sessio
 	} else if err != nil {
 		return nil, false, agent.NewError(agent.ErrorStorageFailure, "inspect transcript database", errors.New("transcript database is unavailable"))
 	}
-	db, err := openDatabase(ctx, absolute, "")
+	db, err := openDatabase(ctx, absolute, "", 1)
 	if err != nil {
 		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", errors.New("transcript database is unavailable"))
 	}

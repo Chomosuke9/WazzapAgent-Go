@@ -66,7 +66,7 @@ func (store *ConfigStore) Load(ctx context.Context, key agent.Key) (agent.Config
 	if err := key.Validate(); err != nil {
 		return agent.ConfigSnapshot{}, err
 	}
-	return loadConfig(ctx, store.db, key)
+	return loadConfig(ctx, store.read, key)
 }
 
 func (store *ConfigStore) CompareAndSwap(

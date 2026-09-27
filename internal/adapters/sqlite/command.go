@@ -18,7 +18,7 @@ func (store *ActionStore) FindCommandResponse(
 	message conversation.IncomingMessage,
 ) (agent.DispatchRef, bool, error) {
 	var actionValue sql.NullString
-	err := store.db.QueryRowContext(ctx, `SELECT a.action_id FROM inbound_events e
+	err := store.read.QueryRowContext(ctx, `SELECT a.action_id FROM inbound_events e
       LEFT JOIN outbound_actions a ON a.tenant_id = e.tenant_id AND a.account_id = e.account_id
         AND a.chat_id = e.chat_id AND a.invocation_id = e.invocation_id
       WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.invocation_id = ?`,

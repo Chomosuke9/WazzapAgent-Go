@@ -525,7 +525,7 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 	if invocationID.IsZero() {
 		return agent.TurnRecord{}, agent.NewError(agent.ErrorInvalidArgument, "load turn", errors.New("invocation ID is required"))
 	}
-	row, err := loadTurnRow(ctx, store.db, key, invocationID)
+	row, err := loadTurnRow(ctx, store.read, key, invocationID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !row.claimed) {
 		return agent.TurnRecord{}, agent.NewError(agent.ErrorNotFound, "load turn", errors.New("claimed turn does not exist"))
 	}
@@ -549,7 +549,7 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 		if err != nil {
 			return agent.TurnRecord{}, err
 		}
-		plan.Effects, err = loadModelEffectRefs(ctx, store.db, key, invocationID)
+		plan.Effects, err = loadModelEffectRefs(ctx, store.read, key, invocationID)
 		if err != nil {
 			return agent.TurnRecord{}, err
 		}

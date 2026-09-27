@@ -66,7 +66,7 @@ func OpenSettings(ctx context.Context, path string) (*SettingsStore, error) {
 	// editors from both reading the same revision and one later failing with a
 	// low-level "database is locked" error instead of the documented CAS
 	// conflict.
-	db, err := openDatabase(ctx, absolute, "&_txlock=immediate")
+	db, err := openDatabase(ctx, absolute, "&_txlock=immediate", 1)
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "open settings store", err)
 	}

@@ -70,7 +70,7 @@ func (store *EffectStore) Load(ctx context.Context, ref effect.Ref) (effect.Stor
 	if err := ref.Validate(); err != nil {
 		return effect.Stored{}, err
 	}
-	stored, err := loadEffect(ctx, store.db, ref)
+	stored, err := loadEffect(ctx, store.read, ref)
 	if errors.Is(err, sql.ErrNoRows) {
 		return effect.Stored{}, agent.NewError(agent.ErrorNotFound, "load typed effect", errors.New("effect does not exist"))
 	}
@@ -117,7 +117,7 @@ func (store *EffectStore) ListPending(ctx context.Context, tenantID identity.Ten
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending effects", errors.New("tenant is required"))
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, effect_id FROM typed_effects
+	rows, err := store.read.QueryContext(ctx, `SELECT account_id, chat_id, effect_id FROM typed_effects
       WHERE tenant_id = ? AND state = ? AND created_at_ms < ?
 		AND (
 			model_call_id IS NULL OR EXISTS (

@@ -84,7 +84,7 @@ func (store *InboundStore) LoadGroupMetadata(ctx context.Context, tenantID ident
 	}
 	var payload []byte
 	var observedAt sql.NullInt64
-	err := store.db.QueryRowContext(ctx, `SELECT m.payload, m.observed_at_ms FROM group_metadata_state AS s
+	err := store.read.QueryRowContext(ctx, `SELECT m.payload, m.observed_at_ms FROM group_metadata_state AS s
 		LEFT JOIN group_metadata AS m ON m.tenant_id = s.tenant_id AND m.account_id = s.account_id AND m.group_address = ?
 		WHERE s.tenant_id = ? AND s.account_id = ? AND s.ready = 1`,
 		address, tenantID.String(), accountID.String()).Scan(&payload, &observedAt)
