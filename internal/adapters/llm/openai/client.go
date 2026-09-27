@@ -175,6 +175,13 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
+	if len(text) > int(client.maxResponseBytes) {
+		// Quiz choices must not push a reply over the configured limit; the
+		// reply still goes out, as plain text.
+		if plain, choices := action.SplitChoices(text); len(choices) > 0 {
+			text = plain
+		}
+	}
 	return agent.ModelResult{Text: text, ReplyToMessageID: replyTo, Effects: effects}, nil
 }
 

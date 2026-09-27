@@ -62,7 +62,7 @@ func SplitChoices(stored string) (string, []string) {
 	return strings.TrimRight(stored[:index], "\n "), choices
 }
 
-// FirstCodeBlock returns the trimmed body of the first fenced code block in
+// FirstCodeBlock returns the body of the first fenced code block in
 // text, or "" when there is none. A fence is 3 or more backticks or tildes,
 // an optional language tag and a newline; the block ends at the next line
 // that starts with the same fence, so a ```` block may contain ``` lines.
@@ -84,7 +84,13 @@ func FirstCodeBlock(text string) string {
 		if len(fence) >= 3 && lineEnd < len(text) && text[lineEnd] == '\n' {
 			body := text[lineEnd:]
 			if closing := strings.Index(body[1:], "\n"+fence); closing >= 0 {
-				return strings.TrimSpace(body[1 : closing+1])
+				// Drop only blank lines next to the fences: leading spaces
+				// on the first line are part of the code.
+				code := strings.TrimRight(strings.TrimLeft(body[1:closing+1], "\r\n"), " \t\r\n")
+				if strings.TrimSpace(code) == "" {
+					return ""
+				}
+				return code
 			}
 		}
 		start = end - 1

@@ -14,6 +14,7 @@ func TestFirstCodeBlock(t *testing.T) {
 		{name: "first of two", text: "```\na\n```\n```\nb\n```", want: "a"},
 		{name: "tildes", text: "~~~\nsome text\n~~~", want: "some text"},
 		{name: "longer fence keeps inner fence", text: "````md\n```\nx\n```\n````", want: "```\nx\n```"},
+		{name: "keeps first-line indentation", text: "```yaml\n\n  nested: true\n  other: 1\n\n```", want: "  nested: true\n  other: 1"},
 		{name: "unclosed", text: "```\nnever closed", want: ""},
 		{name: "inline triple backticks", text: "use ``` to fence", want: ""},
 	}

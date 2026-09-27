@@ -672,3 +672,22 @@ func TestReplyMessageChoicesRideInTheReplyText(t *testing.T) {
 		t.Fatalf("plain reply = %q, %v", text, err)
 	}
 }
+
+func TestChoicesAreDroppedWhenTheyExceedTheConfiguredLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Pick one\",\"choices\":[\"Jakarta\",\"Bandung\"],\"command\":null,\"command_context_msg_id\":null}"}}]}}]}`))
+	}))
+	defer server.Close()
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	client, err := New(Config{
+		Endpoint: server.URL, APIKey: "secret", ProviderID: providerID, SystemPolicy: "SAFETY",
+		Timeout: time.Second, Concurrency: 1, MaxResponseBytes: 20, Commands: inbound.CommandRegistry(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	result, err := client.Generate(context.Background(), modelRequest(t, providerID))
+	if err != nil || result.Text != "Pick one" {
+		t.Fatalf("generate = %q, %v", result.Text, err)
+	}
+}
