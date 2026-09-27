@@ -1195,6 +1195,33 @@ func resolveQuotedMessage(
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, storageError("resolve quoted assistant", err)
 	}
+	var stickerName string
+	var beforeReset bool
+	err = query.QueryRowContext(ctx, `SELECT s.message_id, s.name,
+        r.reset_at_ms IS NOT NULL AND s.sent_at_ms <= r.reset_at_ms
+      FROM sent_stickers s
+      LEFT JOIN history_resets r ON r.tenant_id = s.tenant_id AND r.account_id = s.account_id AND r.chat_id = s.chat_id
+      WHERE s.tenant_id = ? AND s.account_id = ? AND s.chat_id = ? AND s.provider_receipt = ?`,
+		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
+	).Scan(&responseValue, &stickerName, &beforeReset)
+	if err == nil {
+		messageID, parseErr := identity.ParseMessageID(responseValue)
+		if parseErr != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve quoted sticker", parseErr)
+		}
+		switch {
+		case beforeReset:
+			text = "[konten balasan sebelum reset tidak disertakan]"
+		case stickerName != "":
+			text = "[sticker: " + stickerName + "]"
+		default:
+			text = "[sticker]"
+		}
+		return &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, storageError("resolve quoted sticker", err)
+	}
 	var messageValue, senderRefValue string
 	var messageSequence sql.NullInt64
 	var senderIsAdmin, senderIsSuperAdmin int64

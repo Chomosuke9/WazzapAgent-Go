@@ -3,9 +3,13 @@ package sqlite
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
@@ -80,5 +84,66 @@ func TestCommandMediaIsStoredWithTheCommandMessage(t *testing.T) {
 	}
 	if _, err := store.Inbound().ReadCommandMedia(ctx, plain.Message); !agent.IsCode(err, agent.ErrorNotFound) {
 		t.Fatalf("message without media err = %v", err)
+	}
+}
+
+func TestReplyToASentStickerIsAReplyToTheBot(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sent-sticker-1", "15550000103@s.whatsapp.net"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	if err := store.Stickers().RecordSentSticker(ctx, key, "BOT-STICKER-1", "wave"); err != nil {
+		t.Fatal(err)
+	}
+	reply := testCandidate(t, "sent-sticker-2", "15550000103@s.whatsapp.net")
+	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
+	reply.ProviderQuotedMessageID = "BOT-STICKER-1"
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := claimed.Message.Quote
+	if !claimed.Message.RepliedToBot || quote == nil || quote.Role != conversation.QuoteAssistant || quote.Text != "[sticker: wave]" {
+		t.Fatalf("repliedToBot=%v quote=%#v", claimed.Message.RepliedToBot, quote)
+	}
+}
+
+func TestSentStickerQuotesRespectResetAndRetention(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "old-sticker-1", "15550000104@s.whatsapp.net"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	if err := store.Stickers().RecordSentSticker(ctx, key, "OLD-STICKER", "wave"); err != nil {
+		t.Fatal(err)
+	}
+	resetAt := time.Now().Add(time.Minute).UnixMilli()
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO history_resets(tenant_id, account_id, chat_id, cutoff_sequence, config_version, reset_at_ms)
+	  VALUES (?, ?, ?, 0, 1, ?)`, key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), resetAt); err != nil {
+		t.Fatal(err)
+	}
+	reply := testCandidate(t, "old-sticker-2", "15550000104@s.whatsapp.net")
+	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
+	reply.ProviderQuotedMessageID = "OLD-STICKER"
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote := claimed.Message.Quote; quote == nil || quote.Role != conversation.QuoteAssistant || strings.Contains(quote.Text, "wave") {
+		t.Fatalf("pre-reset sticker quote = %#v", quote)
+	}
+
+	now := time.Now().Add(2 * time.Hour)
+	if _, err := store.Maintain(ctx, maintenance.Request{TenantID: key.TenantID, Now: now, DeleteBefore: now.Add(-time.Hour), BatchSize: 10}); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sent_stickers WHERE tenant_id = ?`, key.TenantID.String()).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("sent stickers after maintenance = %d, err=%v", remaining, err)
 	}
 }

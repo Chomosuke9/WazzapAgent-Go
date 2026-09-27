@@ -64,6 +64,18 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	); err != nil {
 		return maintenance.Result{}, storageError("delete expired effects", err)
 	}
+	// A sent sticker stays a reply target as long as the turns that could
+	// have sent it.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sent_stickers
+      WHERE rowid IN (
+        SELECT rowid FROM sent_stickers
+        WHERE tenant_id = ? AND sent_at_ms <= ?
+        ORDER BY sent_at_ms LIMIT ?
+      )`,
+		request.TenantID.String(), request.DeleteBefore.UnixMilli(), request.BatchSize,
+	); err != nil {
+		return maintenance.Result{}, storageError("delete expired sent stickers", err)
+	}
 	if request.HistoryKeepLatest > 0 {
 		historyResult, err := tx.ExecContext(ctx, `DELETE FROM history_entries WHERE sequence IN (
           SELECT sequence FROM (

@@ -333,12 +333,7 @@ func (handler *Dispatcher) processBatch(
 	if err != nil {
 		return err
 	}
-	if handler.options.Stickers != nil {
-		// A catalog that cannot be read only hides send_sticker for this turn.
-		if names, listErr := handler.options.Stickers.StickerNames(ctx, key); listErr == nil {
-			anchor.Stickers = names
-		}
-	}
+	anchor.Stickers = handler.stickerNames(ctx, key)
 	started := time.Now()
 	var result agent.InvokeResult
 	result, err = currentAgent.InvokeWith(ctx, anchor, snapshot, observedChat)
@@ -361,6 +356,19 @@ func modelCommandNames(facts command.PermissionFacts) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// stickerNames is the chat's sticker catalog offered to send_sticker. A
+// catalog that cannot be read only hides the tool for this turn.
+func (handler *Dispatcher) stickerNames(ctx context.Context, key agent.Key) []string {
+	if handler.options.Stickers == nil {
+		return nil
+	}
+	names, err := handler.options.Stickers.StickerNames(ctx, key)
+	if err != nil {
+		return nil
+	}
+	return names
 }
 
 func invocationFromMessage(message conversation.IncomingMessage, version agent.ConfigVersion, capabilities agent.CapabilitySet, commands []string) (agent.Invocation, error) {
