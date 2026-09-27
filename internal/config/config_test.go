@@ -260,6 +260,7 @@ func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "very-secret-key",
 		"WAZZAP_LLM_MODEL":        "test-model",
+		"ASSISTANT_NAME":          "Vivy",
 		"WAZZAP_BASE_PROMPT":      "private base prompt",
 	}
 	cfg, err := Load(mapLookup(values))
@@ -295,6 +296,7 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://example.invalid/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "secret",
 		"WAZZAP_LLM_MODEL":        "model",
+		"ASSISTANT_NAME":          "Vivy",
 	}
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted an empty allowlist")
@@ -302,6 +304,23 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 	base["WAZZAP_CHAT_ALLOWLIST"] = "bad address with spaces"
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted malformed provider address")
+	}
+}
+
+func TestEnvRuntimeRequiresAgentSettingsEvenWithAgentOff(t *testing.T) {
+	// The environment-driven runtime composes the agent whenever WhatsApp is
+	// on, so pairing-only values must not pass with the agent switched off.
+	tenantID, _ := identity.NewTenantID()
+	accountID, _ := identity.NewAccountID()
+	_, err := Load(mapLookup(map[string]string{
+		"WAZZAP_WHATSAPP_ENABLED": "true",
+		"WAZZAP_AGENT_ENABLED":    "false",
+		"WAZZAP_TENANT_ID":        tenantID.String(),
+		"WAZZAP_ACCOUNT_ID":       accountID.String(),
+		"WAZZAP_PAIRING_OUTPUT":   "terminal",
+	}))
+	if err == nil {
+		t.Fatal("WhatsApp runtime accepted missing agent settings")
 	}
 }
 
@@ -318,6 +337,7 @@ func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
 		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":      "secret",
 		"WAZZAP_LLM_MODEL":        "test-model",
+		"ASSISTANT_NAME":          "Vivy",
 		"WAZZAP_PAIRING_OUTPUT":   "terminal",
 		"WAZZAP_BASE_PROMPT":      "test prompt",
 	}))
@@ -425,6 +445,7 @@ func enabledRuntimeValues(dataDir string) map[string]string {
 		"WAZZAP_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
 		"WAZZAP_LLM_API_KEY":    "very-secret-key",
 		"WAZZAP_LLM_MODEL":      "test-model",
+		"ASSISTANT_NAME":        "Vivy",
 		"WAZZAP_BASE_PROMPT":    "test prompt",
 	}
 }

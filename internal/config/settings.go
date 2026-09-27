@@ -345,10 +345,8 @@ func SessionSnapshotWithIdentity(settings Settings, tenantID identity.TenantID, 
 	return SessionSnapshotFromSettings(settings)
 }
 
-// Snapshot and ToSnapshot are method forms convenient for composition code.
-func (settings Settings) Snapshot() (Snapshot, error)   { return SnapshotFromSettings(settings) }
-func (settings Settings) ToSnapshot() (Snapshot, error) { return SnapshotFromSettings(settings) }
-func (settings Settings) ValidateDraft() error          { return ValidateDraft(settings) }
+func (settings Settings) Snapshot() (Snapshot, error) { return SnapshotFromSettings(settings) }
+func (settings Settings) ValidateDraft() error        { return ValidateDraft(settings) }
 func (settings Settings) ValidateSession(context ...SessionContext) error {
 	return ValidateSession(settings, context...)
 }

@@ -51,7 +51,7 @@ func (store *Store) IsMessageDeleted(ctx context.Context, key agent.Key, message
 		return false, agent.NewError(agent.ErrorInvalidArgument, "read WhatsApp message deletion state", errors.New("valid chat and message IDs are required"))
 	}
 	var deleted int
-	err := store.db.QueryRowContext(ctx, `SELECT EXISTS(
+	err := store.read.QueryRowContext(ctx, `SELECT EXISTS(
 	    SELECT 1 FROM typed_effects
 	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND target_message_id = ?
 	      AND kind = ? AND state = ?

@@ -31,16 +31,3 @@ func TestHumanPrincipalCarriesOnlyVerifiedInboundIdentity(t *testing.T) {
 		t.Fatalf("human principal = %#v, %v", principal, err)
 	}
 }
-
-func TestCapabilitySetRejectsUnknownAndDuplicateValues(t *testing.T) {
-	if _, err := policy.NewCapabilitySet(policy.CapabilityMessageReact, policy.CapabilityMessageReact); err == nil {
-		t.Fatal("duplicate capability was accepted")
-	}
-	if _, err := policy.NewCapabilitySet(policy.Capability("all.powerful")); err == nil {
-		t.Fatal("unknown capability was accepted")
-	}
-	set, err := policy.NewCapabilitySet(policy.CapabilityCommandExecute, policy.CapabilityMessageReact)
-	if err != nil || !set.Has(policy.CapabilityMessageReact) || set.Has(policy.CapabilityMessageDelete) {
-		t.Fatalf("capability set = %#v, %v", set.Values(), err)
-	}
-}

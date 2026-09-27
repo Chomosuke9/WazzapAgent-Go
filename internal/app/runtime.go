@@ -35,12 +35,13 @@ func (runtime *conversationRuntime) run(ctx context.Context) error {
 // connected. Younger rows belong to the turn that planned them.
 const outboxSweep = time.Minute
 
-// redeliver resumes the messages the last run left unanswered, then sends
-// whatever the outbox holds each time the account connects, and once a
+// redeliver resumes the messages the last run left unanswered once the
+// account first connects (a recovered command must be able to reply), then
+// sends whatever the outbox holds each time the account connects, and once a
 // minute whatever has been pending for over a minute. A failed recovery is
-// tried again on each sweep until it succeeds.
+// tried again on each sweep, while connected, until it succeeds.
 func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
-	recovered := runtime.recoverInbound(ctx)
+	recovered := false
 	sweep := time.NewTicker(outboxSweep)
 	defer sweep.Stop()
 	for {
@@ -48,9 +49,12 @@ func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-runtime.account.Opened():
+			if !recovered {
+				recovered = runtime.recoverInbound(ctx)
+			}
 			runtime.flushOutbox(ctx, time.Time{})
 		case now := <-sweep.C:
-			if !recovered {
+			if !recovered && runtime.account.Ready() {
 				recovered = runtime.recoverInbound(ctx)
 			}
 			runtime.flushOutbox(ctx, now.Add(-outboxSweep))

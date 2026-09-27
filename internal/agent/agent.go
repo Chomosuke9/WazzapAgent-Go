@@ -143,19 +143,25 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 }
 
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
-	return agent.invoke(ctx, invocation, nil)
+	return agent.invoke(ctx, invocation, nil, nil)
 }
 
-// InvokeWithChatContext reuses a provider observation already read for this
-// message batch. Effect authorization still rereads current policy and group state.
-func (agent *Agent) InvokeWithChatContext(ctx context.Context, invocation Invocation, chat ChatContext) (InvokeResult, error) {
-	if err := chat.Validate(); err != nil {
-		return InvokeResult{}, NewError(ErrorInvalidArgument, "invoke agent with chat context", err)
+// InvokeWith reuses what the caller already read for this turn: the config
+// it authorized the turn against and, when set, the chat it observed. Effect
+// authorization still rereads current policy and group state.
+func (agent *Agent) InvokeWith(ctx context.Context, invocation Invocation, config ConfigSnapshot, chat *ChatContext) (InvokeResult, error) {
+	if err := validateConfigSnapshot(config); err != nil {
+		return InvokeResult{}, NewError(ErrorInvalidArgument, "invoke agent with config", err)
 	}
-	return agent.invoke(ctx, invocation, &chat)
+	if chat != nil {
+		if err := chat.Validate(); err != nil {
+			return InvokeResult{}, NewError(ErrorInvalidArgument, "invoke agent with chat context", err)
+		}
+	}
+	return agent.invoke(ctx, invocation, &config, chat)
 }
 
-func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedChat *ChatContext) (InvokeResult, error) {
+func (agent *Agent) invoke(ctx context.Context, invocation Invocation, config *ConfigSnapshot, observedChat *ChatContext) (InvokeResult, error) {
 	if err := agent.gate.acquire(ctx); err != nil {
 		return InvokeResult{}, err
 	}
@@ -186,8 +192,11 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, observedC
 		return InvokeResult{}, loadErr
 	}
 
-	snapshot, err := agent.config.Refresh(ctx)
-	if err != nil {
+	var snapshot ConfigSnapshot
+	var err error
+	if config != nil {
+		snapshot = *config
+	} else if snapshot, err = agent.config.Refresh(ctx); err != nil {
 		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", err)
 	}
 	if snapshot.Version != invocation.PolicyVersion {

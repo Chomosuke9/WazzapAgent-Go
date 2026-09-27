@@ -181,7 +181,7 @@ func (store *InboundStore) ReadRawQuotedMessage(
 	}
 	var result command.RawQuotedMessage
 	var capturedFromMe, quoteRole sql.NullInt64
-	err := store.db.QueryRowContext(ctx, `SELECT
+	err := store.read.QueryRowContext(ctx, `SELECT
 		q.provider_message_id, c.provider_address, q.from_me, e.quoted_role, q.message_json
 	  FROM catch_raw_quotes q
 	  JOIN inbound_events e ON e.tenant_id = q.tenant_id AND e.account_id = q.account_id
@@ -301,7 +301,7 @@ func (store *InboundStore) MarkIgnored(ctx context.Context, message conversation
 	if changed == 0 {
 		// Repeated ignore is idempotent; a planned turn must never be overwritten.
 		var state int64
-		if err := store.db.QueryRowContext(ctx, `SELECT turn_state FROM inbound_events
+		if err := store.read.QueryRowContext(ctx, `SELECT turn_state FROM inbound_events
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
 			message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 		).Scan(&state); err != nil {
@@ -335,7 +335,7 @@ func (store *InboundStore) MarkCommandHandled(ctx context.Context, message conve
 		return nil
 	}
 	var state int64
-	if err := store.db.QueryRowContext(ctx, `SELECT turn_state FROM inbound_events
+	if err := store.read.QueryRowContext(ctx, `SELECT turn_state FROM inbound_events
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&state); err != nil {
@@ -355,7 +355,7 @@ func (store *InboundStore) IsChatAllowlisted(ctx context.Context, key agent.Key)
 		return false, err
 	}
 	var allowed int
-	err := store.db.QueryRowContext(ctx, `SELECT allowlisted FROM chats
+	err := store.read.QueryRowContext(ctx, `SELECT allowlisted FROM chats
       WHERE tenant_id = ? AND account_id = ? AND id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&allowed)
@@ -426,7 +426,7 @@ func (store *InboundStore) ResolveChatAddress(ctx context.Context, key agent.Key
 		return "", err
 	}
 	var address sql.NullString
-	err := store.db.QueryRowContext(ctx, `SELECT provider_address FROM chats
+	err := store.read.QueryRowContext(ctx, `SELECT provider_address FROM chats
       WHERE tenant_id = ? AND account_id = ? AND id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&address)
@@ -450,7 +450,7 @@ func (store *InboundStore) ResolveMessageTarget(
 		return "", "", "", time.Time{}, agent.NewError(agent.ErrorInvalidArgument, "resolve message target", errors.New("key and target message are required"))
 	}
 	var occurredAtMS int64
-	err := store.db.QueryRowContext(ctx, `SELECT c.provider_address, e.provider_message_id, p.lid, e.occurred_at_ms
+	err := store.read.QueryRowContext(ctx, `SELECT c.provider_address, e.provider_message_id, p.lid, e.occurred_at_ms
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
       JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
@@ -466,7 +466,7 @@ func (store *InboundStore) ResolveMessageTarget(
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", "", "", time.Time{}, storageError("resolve incoming message target", err)
 	}
-	err = store.db.QueryRowContext(ctx, `SELECT c.provider_address, a.provider_receipt, a.completed_at_ms
+	err = store.read.QueryRowContext(ctx, `SELECT c.provider_address, a.provider_receipt, a.completed_at_ms
       FROM outbound_actions a
       JOIN chats c ON c.tenant_id = a.tenant_id AND c.account_id = a.account_id AND c.id = a.chat_id
       WHERE a.tenant_id = ? AND a.account_id = ? AND a.chat_id = ? AND a.response_id = ?
@@ -474,7 +474,7 @@ func (store *InboundStore) ResolveMessageTarget(
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), targetID.String(),
 	).Scan(&chatAddress, &providerMessageID, &occurredAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = store.db.QueryRowContext(ctx, `SELECT c.provider_address, m.provider_receipt, m.created_at_ms
+		err = store.read.QueryRowContext(ctx, `SELECT c.provider_address, m.provider_receipt, m.created_at_ms
           FROM manual_message_targets m
           JOIN chats c ON c.tenant_id = m.tenant_id AND c.account_id = m.account_id AND c.id = m.chat_id
           WHERE m.tenant_id = ? AND m.account_id = ? AND m.chat_id = ? AND m.message_id = ?`,
@@ -509,7 +509,7 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 		return policy.HumanAccess{}, agent.NewError(agent.ErrorInvalidArgument, "read human access", errors.New("valid human principal is required"))
 	}
 	var kind, allowlisted, owner int64
-	err := store.db.QueryRowContext(ctx, `SELECT c.kind, c.allowlisted, p.owner
+	err := store.read.QueryRowContext(ctx, `SELECT c.kind, c.allowlisted, p.owner
 	  FROM chats c
 	  JOIN participants p ON p.tenant_id = c.tenant_id AND p.account_id = c.account_id
 	  WHERE c.tenant_id = ? AND c.account_id = ? AND c.id = ?
@@ -580,7 +580,7 @@ func (store *InboundStore) listUnfinished(
 ) ([]conversation.IncomingMessage, error) {
 	args := append([]any{tenantID.String()}, whereArgs...)
 	args = append(args, uint8(agent.TurnGenerating), uint8(agent.TurnFailedRetryable), limit)
-	rows, err := store.db.QueryContext(ctx, `SELECT
+	rows, err := store.read.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
 		e.participant_id, p.lid, e.sender_ref, e.sender_name, e.sender_is_admin, e.sender_is_super_admin, e.input_text,
 		e.quoted_message_id, e.quoted_sequence, e.quoted_role, e.quoted_sender_ref, e.quoted_text,
@@ -673,12 +673,12 @@ func (store *InboundStore) listUnfinished(
 	}
 	for index := range messages {
 		message := &messages[index]
-		message.Mentions, err = loadMentionBindings(ctx, store.db, message.TenantID, message.AccountID, message.ChatID, message.ID, message.Text, true)
+		message.Mentions, err = loadMentionBindings(ctx, store.read, message.TenantID, message.AccountID, message.ChatID, message.ID, message.Text, true)
 		if err != nil {
 			return nil, err
 		}
 		if message.Quote != nil && message.Quote.Role == conversation.QuoteUser {
-			message.Quote.Mentions, err = loadMentionBindings(ctx, store.db, message.TenantID, message.AccountID, message.ChatID, message.Quote.ID, message.Quote.Text, false)
+			message.Quote.Mentions, err = loadMentionBindings(ctx, store.read, message.TenantID, message.AccountID, message.ChatID, message.Quote.ID, message.Quote.Text, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1061,7 +1061,7 @@ func (store *InboundStore) ResolveLID(ctx context.Context, key agent.Key, ref id
 		return identity.LID{}, agent.NewError(agent.ErrorInvalidArgument, "resolve senderRef to LID", errors.New("valid key and senderRef are required"))
 	}
 	var value string
-	if err := store.db.QueryRowContext(ctx, `SELECT p.lid FROM sender_refs r
+	if err := store.read.QueryRowContext(ctx, `SELECT p.lid FROM sender_refs r
 	  JOIN participants p ON p.tenant_id = r.tenant_id AND p.account_id = r.account_id AND p.id = r.participant_id
 	  WHERE r.tenant_id = ? AND r.account_id = ? AND r.chat_id = ? AND r.sender_ref = ? AND p.lid IS NOT NULL`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String()).Scan(&value); errors.Is(err, sql.ErrNoRows) {
@@ -1103,7 +1103,7 @@ func (store *InboundStore) IsChatMuted(ctx context.Context, key agent.Key, ref i
 		return false, agent.NewError(agent.ErrorInvalidArgument, "read chat mute", errors.New("valid scope, senderRef, and time are required"))
 	}
 	var until int64
-	err := store.db.QueryRowContext(ctx, `SELECT muted_until_ms FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
+	err := store.read.QueryRowContext(ctx, `SELECT muted_until_ms FROM chat_mutes WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sender_ref = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), ref.String()).Scan(&until)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1125,7 +1125,7 @@ func (store *InboundStore) ResolveSenderRef(ctx context.Context, key agent.Key, 
 		return identity.SenderRef{}, agent.NewError(agent.ErrorInvalidArgument, "resolve LID to senderRef", errors.New("valid key and LID are required"))
 	}
 	var value string
-	if err := store.db.QueryRowContext(ctx, `SELECT r.sender_ref FROM sender_refs r
+	if err := store.read.QueryRowContext(ctx, `SELECT r.sender_ref FROM sender_refs r
 	  JOIN participants p ON p.tenant_id = r.tenant_id AND p.account_id = r.account_id AND p.id = r.participant_id
 	  WHERE r.tenant_id = ? AND r.account_id = ? AND r.chat_id = ? AND p.lid = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), lid.String()).Scan(&value); errors.Is(err, sql.ErrNoRows) {

@@ -340,11 +340,7 @@ func (handler *Dispatcher) processBatch(
 	}
 	started := time.Now()
 	var result agent.InvokeResult
-	if observedChat != nil {
-		result, err = currentAgent.InvokeWithChatContext(ctx, anchor, *observedChat)
-	} else {
-		result, err = currentAgent.Invoke(ctx, anchor)
-	}
+	result, err = currentAgent.InvokeWith(ctx, anchor, snapshot, observedChat)
 	if err == nil && result.Delivery == agent.DeliverySucceeded {
 		handler.options.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
 	}

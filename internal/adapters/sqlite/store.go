@@ -32,7 +32,8 @@ type Options struct {
 }
 
 type Store struct {
-	db         *sql.DB
+	db         *sql.DB // the one writer; transactions that write use it
+	read       *sql.DB // readers
 	clock      agent.Clock
 	senderRefs func() (identity.SenderRef, error)
 }
@@ -63,7 +64,7 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 	if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "create application store directory", err)
 	}
-	db, err := openDatabase(ctx, absolute, "")
+	db, err := openDatabase(ctx, absolute, "&_txlock=immediate", 1)
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "open application store", err)
 	}
@@ -71,16 +72,23 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		_ = db.Close()
 		return nil, err
 	}
+	// WAL lets readers run beside the one writer, so a slow write (a turn
+	// commit, maintenance) never makes a read wait behind it.
+	read, err := openDatabase(ctx, absolute, "", readConnections)
+	if err != nil {
+		_ = db.Close()
+		return nil, agent.NewError(agent.ErrorStorageFailure, "open application store readers", err)
+	}
 	if options.Clock == nil {
 		options.Clock = agent.SystemClock{}
 	}
 	if options.SenderRefFactory == nil {
 		options.SenderRefFactory = identity.NewSenderRef
 	}
-	return &Store{db: db, clock: options.Clock, senderRefs: options.SenderRefFactory}, nil
+	return &Store{db: db, read: read, clock: options.Clock, senderRefs: options.SenderRefFactory}, nil
 }
 
-func (store *Store) Close() error { return store.db.Close() }
+func (store *Store) Close() error { return errors.Join(store.read.Close(), store.db.Close()) }
 
 // ResolveInterrupted runs once at startup, before anything is sent. A send
 // or effect still marked executing was cut off by the last shutdown; it may
@@ -126,14 +134,17 @@ func safeDatabasePath(path string) (string, error) {
 	return filepath.Clean(absolute), nil
 }
 
-// openDatabase opens one single-connection WAL handle on path.
-func openDatabase(ctx context.Context, path, extraDSN string) (*sql.DB, error) {
+// readConnections bounds the application store's reader pool.
+const readConnections = 4
+
+// openDatabase opens a WAL handle on path with up to connections connections.
+func openDatabase(ctx context.Context, path, extraDSN string, connections int) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS)+extraDSN)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(connections)
+	db.SetMaxIdleConns(connections)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, err

@@ -19,7 +19,7 @@ func (store *ActionStore) Load(ctx context.Context, ref agent.DispatchRef) (acti
 	if ref.ActionID.IsZero() {
 		return action.StoredAction{}, agent.NewError(agent.ErrorInvalidArgument, "load outbound action", errors.New("action ID is required"))
 	}
-	stored, err := loadAction(ctx, store.db, ref)
+	stored, err := loadAction(ctx, store.read, ref)
 	if errors.Is(err, sql.ErrNoRows) {
 		return action.StoredAction{}, agent.NewError(agent.ErrorNotFound, "load outbound action", errors.New("action does not exist"))
 	}
@@ -73,7 +73,7 @@ func (store *ActionStore) ListPending(ctx context.Context, tenantID identity.Ten
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending actions", errors.New("tenant is required"))
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, action_id FROM outbound_actions
+	rows, err := store.read.QueryContext(ctx, `SELECT account_id, chat_id, action_id FROM outbound_actions
       WHERE tenant_id = ? AND state = ? AND created_at_ms < ? ORDER BY created_at_ms, action_id`,
 		tenantID.String(), uint8(action.StatePending), cutoffMillis(plannedBefore),
 	)
