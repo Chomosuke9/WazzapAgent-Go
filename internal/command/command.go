@@ -54,6 +54,7 @@ type Platform struct {
 	// Stickers sends stickers; Catalog is each chat's named sticker store.
 	Stickers StickerSender
 	Catalog  sticker.Catalog
+	Tasks    TaskScheduler
 }
 
 type TextSender interface {
@@ -108,6 +109,13 @@ type MediaDownloader interface {
 // StickerSender sends a sticker to a chat, quoting quoted when it is set.
 type StickerSender interface {
 	SendSticker(ctx context.Context, key agent.Key, sticker sticker.Sticker, quoted identity.MessageID) error
+}
+
+// TaskScheduler runs a prompt as an AI turn in a chat at a later time. The
+// task is saved, so it still runs after a restart. source is the command
+// message that asked for it: scheduling twice for one source keeps one task.
+type TaskScheduler interface {
+	ScheduleTask(ctx context.Context, key agent.Key, source identity.MessageID, fireAt time.Time, prompt string) error
 }
 
 // Store is the durable inbox a command message came from. The registry uses

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -169,7 +170,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 		t.Fatalf("handle dump: %v", err)
 	}
 	output := fixture.sender.last().Text
-	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
+	if !strings.Contains(output, "=== SYSTEM ===\n<additional>\nbase prompt\n</additional>") ||
 		!strings.Contains(output, "=== USER ===\n") ||
 		strings.Count(output, "=== USER ===") != 3 ||
 		!strings.Contains(output, "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>") ||
@@ -531,7 +532,7 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
 		t.Fatalf("denied reset: %v", err)
 	}
-	if !strings.Contains(fixture.sender.last().Text, "can only be used by the configured owner") {
+	if !strings.Contains(fixture.sender.last().Text, "can only be used by group admins or the owner") {
 		t.Fatalf("reset denial = %q", fixture.sender.last().Text)
 	}
 	reset := fixture.candidate("control-reset", chat, conversation.ChatDirect, "/reset")
@@ -577,7 +578,7 @@ func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
 	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
 		t.Fatalf("resume command: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "The /reset command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /reset command can only be used by group admins or the owner." {
 		t.Fatalf("forged owner command response = %q", got)
 	}
 }
@@ -624,7 +625,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if afterDenied.Version != snapshot.Version || afterDenied.PromptOverride.Text != "speak concisely" {
 		t.Fatalf("non-owner changed config: %#v", afterDenied)
 	}
-	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by group admins or the owner." {
 		t.Fatalf("denial response = %q", got)
 	}
 
@@ -739,8 +740,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	if len(request.Commands) != 3 ||
-		request.Commands[0] != "catch" || request.Commands[1] != "help" || request.Commands[2] != "info" {
+	if !slices.Equal(request.Commands, []string{"catch", "help", "info", "schedule-task"}) {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 
@@ -752,7 +752,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	if err != nil || afterDenied.Permission.ModerationLevel != agent.ModerationDeleteMuteKick {
 		t.Fatalf("non-owner changed moderation level: %#v, %v", afterDenied.Permission, err)
 	}
-	if got := fixture.sender.last().Text; got != "The /permission command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /permission command can only be used by group admins or the owner." {
 		t.Fatalf("permission denial response = %q", got)
 	}
 }
@@ -871,6 +871,8 @@ type fixture struct {
 	dispatcher *action.Dispatcher
 	gate       *policy.FixedGate
 	responder  *action.CommandResponder
+	// stop ends the inbound dispatcher, as a shutdown would.
+	stop func()
 }
 
 // directIngress makes the dispatcher synchronous for tests: each call waits
@@ -1046,13 +1048,15 @@ func newFixtureAtPath(
 	stopped := make(chan struct{})
 	running := ingress.dispatcher
 	go func() { _ = running.Run(runCtx); close(stopped) }()
+	var stopOnce sync.Once
+	stopDispatcher := func() { stopOnce.Do(func() { stop(); <-stopped }) }
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
 		handler: ingress, model: model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
+		stop: stopDispatcher,
 	}
 	t.Cleanup(func() {
-		stop()
-		<-stopped
+		stopDispatcher()
 		_ = store.Close()
 	})
 	return fixture
@@ -1136,6 +1140,10 @@ func (authority staticChatAuthority) ReadChatAuthority(ctx context.Context, prin
 }
 
 func (sender *recordingSender) Ready() bool { return sender.ready.Load() }
+
+func (sender *recordingSender) SendCopyCode(context.Context, action.SendCopyCodeRequest) error {
+	return nil
+}
 
 func (sender *recordingSender) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
 	sender.mu.Lock()

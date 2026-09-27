@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
@@ -19,15 +21,26 @@ import (
 var outboundMentionPattern = regexp.MustCompile(`@([^@()\r\n]+?)\s*\(([0-9A-Za-z]{3,16})\)`)
 
 func (adapter *Adapter) textMessage(ctx context.Context, request action.SendTextRequest, address string, target types.JID) (*waE2E.Message, error) {
-	renderedText, mentionedJIDs, nonJIDMentions := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key))
+	rendered, err := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key), adapter.groupAdmins(ctx, target))
+	if err != nil {
+		return nil, err
+	}
+	mentionedJIDs := rendered.jids
 	message := &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text: proto.String(renderedText),
+			Text: proto.String(rendered.text),
 		},
 	}
 	contextInfo := &waE2E.ContextInfo{MentionedJID: mentionedJIDs}
-	if nonJIDMentions > 0 {
-		contextInfo.NonJIDMentions = proto.Uint32(nonJIDMentions)
+	if rendered.nonJID > 0 {
+		contextInfo.NonJIDMentions = proto.Uint32(rendered.nonJID)
+	}
+	if rendered.admins {
+		// WhatsApp shows a mention of the group's own JID with this subject
+		// as "@admin"; the admins themselves are in MentionedJID.
+		contextInfo.GroupMentions = []*waE2E.GroupMention{{
+			GroupJID: proto.String(target.ToNonAD().String()), GroupSubject: proto.String("admin"),
+		}}
 	}
 
 	quote, err := adapter.quoteContext(ctx, request.Key, address, target, request.QuotedMessageID)
@@ -37,7 +50,7 @@ func (adapter *Adapter) textMessage(ctx context.Context, request action.SendText
 	if quote != nil {
 		contextInfo.StanzaID, contextInfo.RemoteJID, contextInfo.Participant = quote.StanzaID, quote.RemoteJID, quote.Participant
 	}
-	if quote != nil || len(mentionedJIDs) > 0 || nonJIDMentions > 0 {
+	if quote != nil || len(mentionedJIDs) > 0 || rendered.nonJID > 0 || rendered.admins {
 		message.ExtendedTextMessage.ContextInfo = contextInfo
 	}
 	return message, nil
@@ -69,8 +82,7 @@ func (adapter *Adapter) quoteContext(ctx context.Context, key agent.Key, address
 }
 
 // buttonsMessage builds a native-flow message with one quick_reply button per
-// request button. It is wrapped in viewOnceMessage like WhatsApp's own clients
-// send it; hypermeow adds the biz node that makes the buttons render.
+// request button.
 func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 	if strings.TrimSpace(request.Text) == "" || len(request.Buttons) == 0 || len(request.Buttons) > action.MaxButtons {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("text and 1 to 10 buttons are required"))
@@ -80,27 +92,91 @@ func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 		if strings.TrimSpace(button.ID) == "" || strings.TrimSpace(button.Label) == "" {
 			return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("every button needs an ID and a label"))
 		}
-		params, err := json.Marshal(map[string]string{"display_text": button.Label, "id": button.ID})
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorInternal, "build WhatsApp buttons", err)
-		}
-		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
-			Name:             proto.String("quick_reply"),
-			ButtonParamsJSON: proto.String(string(params)),
-		})
+		buttons = append(buttons, nativeFlowButton("quick_reply", map[string]string{"display_text": button.Label, "id": button.ID}))
 	}
+	return nativeFlowMessage(request.Text, nil, buttons), nil
+}
+
+// quizMessage turns a built text message (mentions and quote already
+// resolved) into the same text with one quick_reply button per choice. The
+// button IDs do not start with "/", so a tap arrives as the choice's label.
+func quizMessage(text *waE2E.ExtendedTextMessage, choices []string) *waE2E.Message {
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(choices))
+	for index, choice := range choices {
+		buttons = append(buttons, nativeFlowButton("quick_reply", map[string]string{"display_text": choice, "id": fmt.Sprintf("quiz:%d", index+1)}))
+	}
+	return nativeFlowMessage(text.GetText(), text.GetContextInfo(), buttons)
+}
+
+// quizFallbackText is the quiz as plain text, for when buttons are rejected.
+func quizFallbackText(text string, choices []string) string {
+	var builder strings.Builder
+	builder.WriteString(strings.TrimSpace(text))
+	builder.WriteString("\n")
+	for index, choice := range choices {
+		fmt.Fprintf(&builder, "\n%d. %s", index+1, choice)
+	}
+	builder.WriteString("\n\n_Reply with your choice._")
+	return builder.String()
+}
+
+// copyCodeMessage is a cta_copy button carrying code. Like the legacy bot, it
+// quotes a synthetic message holding a short preview of the code, so the
+// bubble shows what the button copies.
+func copyCodeMessage(code string, target, own types.JID) (*waE2E.Message, error) {
+	if strings.TrimSpace(code) == "" {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp copy button", errors.New("code is required"))
+	}
+	contextInfo := &waE2E.ContextInfo{
+		StanzaID:      proto.String(fmt.Sprintf("CPY%X", time.Now().UnixNano())),
+		RemoteJID:     proto.String(target.ToNonAD().String()),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(codePreview(code))},
+	}
+	if !own.IsEmpty() {
+		contextInfo.Participant = proto.String(own.String())
+	}
+	button := nativeFlowButton("cta_copy", map[string]string{"display_text": "Copy code", "copy_code": code})
+	return nativeFlowMessage("", contextInfo, []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button}), nil
+}
+
+// codePreview is the code on one line, cut to 120 characters.
+func codePreview(code string) string {
+	preview := []rune(strings.Join(strings.Fields(code), " "))
+	if len(preview) > 120 {
+		return string(preview[:119]) + "…"
+	}
+	return string(preview)
+}
+
+func plainTextMessage(text string) *waE2E.Message {
+	return &waE2E.Message{Conversation: proto.String(text)}
+}
+
+func nativeFlowButton(name string, params map[string]string) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
+	// Marshalling a map of strings cannot fail.
+	encoded, _ := json.Marshal(params)
+	return &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+		Name:             proto.String(name),
+		ButtonParamsJSON: proto.String(string(encoded)),
+	}
+}
+
+// nativeFlowMessage wraps buttons in viewOnceMessage like WhatsApp's own
+// clients send them; hypermeow adds the biz node that makes them render.
+func nativeFlowMessage(body string, contextInfo *waE2E.ContextInfo, buttons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) *waE2E.Message {
 	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
 		MessageContextInfo: &waE2E.MessageContextInfo{
 			DeviceListMetadata:        &waE2E.DeviceListMetadata{},
 			DeviceListMetadataVersion: proto.Int32(2),
 		},
 		InteractiveMessage: &waE2E.InteractiveMessage{
-			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(request.Text)},
+			Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
+			ContextInfo: contextInfo,
 			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
 			},
 		},
-	}}}, nil
+	}}}
 }
 
 // ownJID is the paired device's phone JID, or empty before pairing completes.
@@ -130,19 +206,51 @@ func (adapter *Adapter) mentionResolver(ctx context.Context, key agent.Key) func
 	}
 }
 
+// groupAdmins lists the admins of a group chat from the synchronized group
+// snapshot. It fails while the snapshot is not ready, so the send is tried
+// again later instead of showing "@admin" that notifies nobody.
+func (adapter *Adapter) groupAdmins(ctx context.Context, chat types.JID) func() ([]types.JID, error) {
+	return func() ([]types.JID, error) {
+		info, err := adapter.readGroupInfo(ctx, chat)
+		if err != nil {
+			return nil, err
+		}
+		admins := make([]types.JID, 0, 4)
+		for _, participant := range info.Participants {
+			if !participant.IsAdmin && !participant.IsSuperAdmin {
+				continue
+			}
+			if !participant.LID.IsEmpty() {
+				admins = append(admins, participant.LID)
+			} else {
+				admins = append(admins, participant.JID)
+			}
+		}
+		return admins, nil
+	}
+}
+
+type renderedMentions struct {
+	text   string
+	jids   []string
+	nonJID uint32
+	// admins is set when the text mentions the group's admins.
+	admins bool
+}
+
 // renderOutboundMentions rewrites the model's "@Name (ref)" markup into
-// WhatsApp wire mentions. "all" becomes a non-JID group mention, "bot" the
-// account itself, and any other ref is resolved to a member JID; unresolved
-// refs degrade to plain "@Name" text rather than failing the send.
-func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool)) (string, []string, uint32) {
+// WhatsApp wire mentions. "all" becomes a non-JID group mention, "admin" a
+// group mention that tags every admin listed by admins, "bot" the account
+// itself, and any other ref is resolved to a member JID; unresolved refs
+// degrade to plain "@Name" text rather than failing the send.
+func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool), admins func() ([]types.JID, error)) (renderedMentions, error) {
 	matches := outboundMentionPattern.FindAllStringSubmatchIndex(rawText, -1)
 	if len(matches) == 0 {
-		return rawText, nil, 0
+		return renderedMentions{text: rawText}, nil
 	}
 	var rendered strings.Builder
-	mentioned := make([]string, 0, len(matches))
+	result := renderedMentions{jids: make([]string, 0, len(matches))}
 	seen := make(map[string]struct{}, len(matches))
-	var nonJIDMentions uint32
 	cursor := 0
 	addMention := func(jid types.JID) {
 		if jid.IsEmpty() {
@@ -153,7 +261,7 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 			return
 		}
 		seen[value] = struct{}{}
-		mentioned = append(mentioned, value)
+		result.jids = append(result.jids, value)
 	}
 	for _, match := range matches {
 		rendered.WriteString(rawText[cursor:match[0]])
@@ -164,7 +272,22 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 		case "all":
 			replacement = "@all"
 			if target.Server == types.GroupServer {
-				nonJIDMentions = 1
+				result.nonJID = 1
+			}
+		case "admin":
+			replacement = "@admin"
+			if target.Server == types.GroupServer {
+				// The text carries the full group JID; WhatsApp replaces it
+				// with the group mention's subject.
+				replacement = "@" + target.ToNonAD().String()
+				result.admins = true
+				list, err := admins()
+				if err != nil {
+					return renderedMentions{}, err
+				}
+				for _, admin := range list {
+					addMention(admin)
+				}
 			}
 		case "bot":
 			if !bot.IsEmpty() {
@@ -184,5 +307,6 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 		cursor = match[1]
 	}
 	rendered.WriteString(rawText[cursor:])
-	return rendered.String(), mentioned, nonJIDMentions
+	result.text = rendered.String()
+	return result, nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -107,6 +108,15 @@ func (c *Context) Group() (GroupModerator, error) {
 		return nil, c.unavailable("group moderation")
 	}
 	return c.invocation.Platform.Group, nil
+}
+
+// ScheduleTask makes the bot run prompt in this chat at fireAt, as if asked
+// then. It returns an error if the host cannot schedule tasks.
+func (c *Context) ScheduleTask(ctx context.Context, fireAt time.Time, prompt string) error {
+	if c.invocation.Platform.Tasks == nil {
+		return c.unavailable("scheduled tasks")
+	}
+	return c.invocation.Platform.Tasks.ScheduleTask(ctx, c.Key(), c.invocation.Message.ID, fireAt, prompt)
 }
 
 // QuotedRaw returns the raw provider payload of the message this command

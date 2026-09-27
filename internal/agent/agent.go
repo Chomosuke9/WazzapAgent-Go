@@ -223,7 +223,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, config *C
 	if claim.MessageID.IsZero() {
 		return InvokeResult{}, NewError(ErrorIntegrityFailure, "invoke agent", fmt.Errorf("turn store returned an empty message ID"))
 	}
-	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(claim.MessageID, invocation)); err != nil {
+	if err := agent.history.appendWithinGate(ctx, invocationHistoryEntry(claim.MessageID, invocation)); err != nil {
 		agent.failGeneration(invocation.ID, err)
 		return InvokeResult{}, err
 	}
@@ -322,10 +322,17 @@ func contextMessageMap(entries []HistoryEntry) map[string]identity.MessageID {
 	return result
 }
 
-func userHistoryEntry(messageID identity.MessageID, invocation Invocation) HistoryEntry {
+// invocationHistoryEntry is the transcript entry an invocation answers: a
+// chat message from its sender, or a system entry when the invocation has no
+// sender (a scheduled task).
+func invocationHistoryEntry(messageID identity.MessageID, invocation Invocation) HistoryEntry {
+	role := HistoryUser
+	if invocation.Sender == nil {
+		role = HistorySystem
+	}
 	return HistoryEntry{
 		MessageID: messageID, InvocationID: invocation.ID, Causation: invocation.Causation,
-		Role: HistoryUser, Sender: cloneSender(invocation.Sender), Quote: cloneQuote(invocation.Quote),
+		Role: role, Sender: cloneSender(invocation.Sender), Quote: cloneQuote(invocation.Quote),
 		Content: cloneContent(invocation.Input), Mentions: cloneMentions(invocation.Mentions),
 		Delivery: DeliveryNotStarted, CreatedAt: invocation.RequestedAt,
 	}
@@ -341,7 +348,7 @@ func (agent *Agent) ensureInvocationHistory(
 	if messageID.IsZero() {
 		return Errorf(ErrorIntegrityFailure, "restore invocation history", "turn message ID is missing")
 	}
-	if err := agent.history.appendWithinGate(ctx, userHistoryEntry(messageID, invocation)); err != nil {
+	if err := agent.history.appendWithinGate(ctx, invocationHistoryEntry(messageID, invocation)); err != nil {
 		return NewError(ErrorStorageFailure, "restore invocation history", err)
 	}
 	if plan == nil {
