@@ -9,6 +9,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
@@ -89,5 +90,31 @@ func TestButtonsMessageUsesNativeFlowQuickReplies(t *testing.T) {
 	}
 	if _, err := buttonsMessage(action.SendButtonsRequest{Text: "Pick"}); err == nil {
 		t.Fatal("buttons message without buttons was accepted")
+	}
+}
+
+func TestWrapNativeFlowWrapsBareBroadcastPayload(t *testing.T) {
+	payload := `{"interactiveMessage":{"nativeFlowMessage":{"buttons":[{"name":"quick_reply","buttonParamsJSON":"{\"display_text\":\"Pilihan 1\",\"id\":\"opt_1\"}"}]},"header":{"title":"Hasil"},"body":{"text":"Silakan pilih"}}}`
+	message := &waE2E.Message{}
+	if err := protojson.Unmarshal([]byte(payload), message); err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	wrapped := wrapNativeFlow(message)
+	inner := wrapped.GetViewOnceMessage().GetMessage()
+	if inner.GetInteractiveMessage().GetHeader().GetTitle() != "Hasil" || len(inner.GetInteractiveMessage().GetNativeFlowMessage().GetButtons()) != 1 {
+		t.Fatalf("wrapped message lost content: %v", wrapped)
+	}
+	if inner.GetMessageContextInfo().GetDeviceListMetadata() == nil || inner.GetMessageContextInfo().GetDeviceListMetadataVersion() != 2 {
+		t.Fatalf("wrapped message has no device-list metadata: %v", wrapped)
+	}
+	if message.GetViewOnceMessage() != nil || message.GetMessageContextInfo() != nil {
+		t.Fatal("wrapNativeFlow modified its input")
+	}
+	if again := wrapNativeFlow(wrapped); again != wrapped {
+		t.Fatal("an already wrapped message was wrapped twice")
+	}
+	text := &waE2E.Message{Conversation: proto.String("hi")}
+	if wrapNativeFlow(text) != text {
+		t.Fatal("a plain text message was wrapped")
 	}
 }

@@ -77,18 +77,35 @@ func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 			ButtonParamsJSON: proto.String(string(params)),
 		})
 	}
-	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			DeviceListMetadata:        &waE2E.DeviceListMetadata{},
-			DeviceListMetadataVersion: proto.Int32(2),
+	return wrapNativeFlow(&waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
+		Header: &waE2E.InteractiveMessage_Header{HasMediaAttachment: proto.Bool(false)},
+		Body:   &waE2E.InteractiveMessage_Body{Text: proto.String(request.Text)},
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
 		},
-		InteractiveMessage: &waE2E.InteractiveMessage{
-			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(request.Text)},
-			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
-				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
-			},
-		},
-	}}}, nil
+	}}), nil
+}
+
+// wrapNativeFlow puts a bare native-flow InteractiveMessage inside the
+// viewOnce envelope with device-list metadata, which is the shape WhatsApp
+// clients render. Command buttons and broadcast payloads both go through it,
+// so a pasted {"interactiveMessage": ...} is sent the same way. Any other
+// message is returned unchanged.
+func wrapNativeFlow(message *waE2E.Message) *waE2E.Message {
+	if message.GetInteractiveMessage().GetNativeFlowMessage() == nil {
+		return message
+	}
+	inner := proto.Clone(message).(*waE2E.Message)
+	if inner.MessageContextInfo == nil {
+		inner.MessageContextInfo = &waE2E.MessageContextInfo{}
+	}
+	if inner.MessageContextInfo.DeviceListMetadata == nil {
+		inner.MessageContextInfo.DeviceListMetadata = &waE2E.DeviceListMetadata{}
+	}
+	if inner.MessageContextInfo.DeviceListMetadataVersion == nil {
+		inner.MessageContextInfo.DeviceListMetadataVersion = proto.Int32(2)
+	}
+	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: inner}}
 }
 
 // ownJID is the paired device's phone JID, or empty before pairing completes.

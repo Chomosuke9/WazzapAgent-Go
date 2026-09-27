@@ -157,6 +157,7 @@ func (adapter *Adapter) joinedBroadcastGroups(ctx context.Context, operation str
 }
 
 func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broadcastGroupTarget, ids []string, joinedSet map[types.JID]struct{}, message *waE2E.Message, batchSize, batchDelaySeconds int) []BroadcastGroupResult {
+	message = wrapNativeFlow(message)
 	results := make([]BroadcastGroupResult, len(targets))
 	for start := 0; start < len(targets); start += batchSize {
 		end := start + batchSize
