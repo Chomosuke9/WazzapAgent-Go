@@ -24,8 +24,11 @@ sudah tersimpan. UI membaca status sesi dengan polling `GetWhatsAppSessionStatus
 
 Halaman Log membaca buffer terbaru melalui `GetLogs` dan menerima catatan
 terstruktur dari logger runtime serta operasi yang dipicu UI. Buffer menyimpan
-maksimal 500 aktivitas di memori proses dan direset saat aplikasi ditutup.
-Field rahasia, QR/kode pairing, ID pesan, dan payload provider mentah tidak
+maksimal 500 aktivitas di memori proses. Setiap warning dan error juga membawa
+detail lengkap (semua field dan seluruh rantai error asli) yang dibuka lewat
+tombol "Full error" (`GetLogDetails`), dan 200 warning/error terbaru disimpan
+di `problems.jsonl` di data root agar tetap ada setelah restart. Field rahasia,
+QR/kode pairing, alamat WhatsApp, ID pesan, dan payload provider mentah tidak
 diteruskan ke UI.
 
 Halaman Chat membaca daftar chat dan transkrip sisi Agent melalui

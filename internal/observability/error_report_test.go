@@ -73,6 +73,30 @@ func TestWarningKeepsTheFullErrorBehindTheShortLine(t *testing.T) {
 	}
 }
 
+func TestFullDetailsHideProviderPayloadsAndAddresses(t *testing.T) {
+	buffer := NewLogBuffer(10)
+	logger := slog.New(buffer.Handler())
+	logger.Warn("WhatsApp stream error", "code", "503", "raw", "<stream:error secret-node/>", "continuation", "passkey-state")
+	logger.Warn("WhatsApp library: Failed to encrypt 3EB0C4F2A1B2C3D4E5F6 for 6281234567890@s.whatsapp.net and 12345678901234@lid in 120363000000000001@g.us")
+	logger.Warn("WhatsApp account disconnected; reconnecting")
+
+	entries := buffer.Entries()
+	if strings.Contains(entries[0].Full, "secret-node") || strings.Contains(entries[0].Full, "passkey-state") || !strings.Contains(entries[0].Full, "code=503") {
+		t.Fatalf("opaque attributes reached full details:\n%s", entries[0].Full)
+	}
+	for _, hidden := range []string{"6281234567890", "12345678901234", "120363000000000001", "3EB0C4F2A1B2C3D4E5F6"} {
+		if strings.Contains(entries[1].Full, hidden) {
+			t.Fatalf("%q reached full details:\n%s", hidden, entries[1].Full)
+		}
+	}
+	if !strings.Contains(entries[1].Full, "<redacted>@s.whatsapp.net") || !strings.Contains(entries[1].Full, "<redacted>@g.us") {
+		t.Fatalf("address kinds were lost:\n%s", entries[1].Full)
+	}
+	if entries[2].Full != "WhatsApp account disconnected; reconnecting" {
+		t.Fatalf("a warning without fields has no full details: %q", entries[2].Full)
+	}
+}
+
 func TestPersistKeepsWarningsAndErrorsAcrossRestarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", ProblemLogFile)
 	first := NewLogBuffer(10)

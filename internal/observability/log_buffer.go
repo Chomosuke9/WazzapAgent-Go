@@ -69,6 +69,10 @@ func (buffer *LogBuffer) record(level, message, details, full string) {
 	}
 	problem := entry.Level == "WARN" || entry.Level == "ERROR"
 	if problem {
+		if strings.TrimSpace(full) == "" {
+			// Every warning and error gets a details view, even without fields.
+			full = strings.TrimSpace(message + "\n" + details)
+		}
 		entry.Full = sanitizeFullText(full)
 	}
 	buffer.mu.Lock()
@@ -216,7 +220,7 @@ func (handler *logBufferHandler) Handle(_ context.Context, record slog.Record) e
 func fullAttributes(attrs []slog.Attr) string {
 	var lines, errorsText []string
 	for _, attr := range attrs {
-		if attr.Key == "instance_id" {
+		if hiddenFullAttribute(attr.Key) {
 			continue
 		}
 		value := attr.Value.Resolve()
@@ -241,6 +245,17 @@ func (handler *logBufferHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (handler *logBufferHandler) WithGroup(_ string) slog.Handler {
 	return handler
+}
+
+// hiddenFullAttribute names the fields kept out of the full details because
+// they are opaque provider payloads or pairing state, not diagnostics.
+func hiddenFullAttribute(key string) bool {
+	switch strings.ToLower(key) {
+	case "instance_id", "raw", "continuation", "qr", "qr_code", "pairing_code", "code_payload", "payload":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeLogAttribute(key string) bool {
@@ -268,6 +283,13 @@ func logLevelName(level slog.Level) string {
 var sensitiveLogValue = regexp.MustCompile(`(?i)(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|password|secret|authorization)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)`)
 var bearerLogValue = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]+`)
 
+// whatsAppAddress matches phone, LID and group addresses; the server part is
+// kept so the kind of chat stays readable.
+var whatsAppAddress = regexp.MustCompile(`\b[0-9]+(?:[-.:][0-9]+)*@(s\.whatsapp\.net|c\.us|lid|g\.us)\b`)
+
+// whatsAppMessageID matches WhatsApp message IDs (long upper-case hex).
+var whatsAppMessageID = regexp.MustCompile(`\b[0-9A-F]{16,}\b`)
+
 func sanitizeLogText(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
@@ -288,11 +310,19 @@ func sanitizeFullText(value string) string {
 	value = strings.ReplaceAll(value, "\r\n", "\n")
 	value = sensitiveLogValue.ReplaceAllString(value, "$1=<redacted>")
 	value = bearerLogValue.ReplaceAllString(value, "Bearer <redacted>")
+	value = RedactWhatsAppIdentifiers(value)
 	value = strings.TrimSpace(value)
 	if len(value) > maxFullLogText {
 		value = strings.ToValidUTF8(value[:maxFullLogText], "") + "\n…(truncated)"
 	}
 	return value
+}
+
+// RedactWhatsAppIdentifiers hides WhatsApp addresses and message IDs in free
+// text, such as a library error message.
+func RedactWhatsAppIdentifiers(value string) string {
+	value = whatsAppAddress.ReplaceAllString(value, "<redacted>@$1")
+	return whatsAppMessageID.ReplaceAllString(value, "<message-id>")
 }
 
 func errorsJoin(failures []error) error {

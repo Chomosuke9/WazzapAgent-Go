@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 	waLog "github.com/polymorfa/hypermeow/util/log"
 )
 
 // libraryLogger forwards the WhatsApp library's own warnings and errors to
 // slog, so its native failure messages reach the app log instead of being
 // dropped. Info and debug output is too chatty for the app log and is skipped.
+// Addresses and message IDs in the library's text are redacted first.
 type libraryLogger struct {
 	logger *slog.Logger
 	module string
@@ -43,5 +45,5 @@ func (library libraryLogger) log(level slog.Level, message string, args []any) {
 	if !library.logger.Enabled(ctx, level) {
 		return
 	}
-	library.logger.Log(ctx, level, "WhatsApp library: "+fmt.Sprintf(message, args...), "module", library.module)
+	library.logger.Log(ctx, level, "WhatsApp library: "+observability.RedactWhatsAppIdentifiers(fmt.Sprintf(message, args...)), "module", library.module)
 }
