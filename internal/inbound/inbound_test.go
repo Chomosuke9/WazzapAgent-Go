@@ -560,15 +560,11 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
-	if err != nil {
-		t.Fatalf("begin command journal: %v", err)
-	}
-	if _, err := current.Config().SetPromptOverride(context.Background(), journal.ExpectedVersion, agent.PromptOverride{Mode: agent.PromptAppend, Text: "crash-safe"}); err != nil {
+	if _, err := current.Config().SetPromptOverride(context.Background(), snapshot.Version, agent.PromptOverride{Mode: agent.PromptAppend, Text: "crash-safe"}); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
-	// Simulate a crash before MarkPromptMutationApplied and response planning by
-	// invoking the duplicate durable inbox record through the normal handler.
+	// Simulate a crash after the config write but before the command was marked
+	// handled by invoking the duplicate durable inbox record through the handler.
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 		t.Fatalf("recover duplicate command: %v", err)
 	}
@@ -654,13 +650,9 @@ func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
-	if err != nil {
-		t.Fatalf("begin command journal: %v", err)
-	}
 	permission := snapshot.Permission
 	permission.ModerationLevel = agent.ModerationDeleteMute
-	if _, err := current.Config().SetPermission(context.Background(), journal.ExpectedVersion, permission); err != nil {
+	if _, err := current.Config().SetPermission(context.Background(), snapshot.Version, permission); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {

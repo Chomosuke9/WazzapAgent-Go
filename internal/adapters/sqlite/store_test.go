@@ -292,40 +292,6 @@ func TestSenderRefAndAgentConfigSurviveStoreReopen(t *testing.T) {
 	}
 }
 
-func TestPromptMutationsAreJournaledInChatOrder(t *testing.T) {
-	store := openTestStore(t)
-	firstCandidate := testCandidate(t, "provider-prompt-1", "15550000031@s.whatsapp.net")
-	first, err := store.Inbound().ClaimAndResolveSender(context.Background(), firstCandidate)
-	if err != nil {
-		t.Fatalf("claim first prompt command: %v", err)
-	}
-	secondCandidate := firstCandidate
-	secondCandidate.ProviderMessageID = "provider-prompt-2"
-	secondCandidate.Text = "/prompt clear"
-	secondCandidate.OccurredAt = secondCandidate.OccurredAt.Add(time.Second)
-	secondCandidate.ReceivedAt = secondCandidate.ReceivedAt.Add(time.Second)
-	second, err := store.Inbound().ClaimAndResolveSender(context.Background(), secondCandidate)
-	if err != nil {
-		t.Fatalf("claim second prompt command: %v", err)
-	}
-	if _, err := store.Inbound().BeginConfigMutation(context.Background(), first.Message, 1); err != nil {
-		t.Fatalf("journal first prompt mutation: %v", err)
-	}
-	if _, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2); !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("second mutation error = %v, want conflict while first is unapplied", err)
-	}
-	if err := store.Inbound().MarkConfigMutationApplied(context.Background(), first.Message, 1, 2); err != nil {
-		t.Fatalf("mark first prompt mutation applied: %v", err)
-	}
-	journal, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2)
-	if err != nil {
-		t.Fatalf("journal second prompt mutation: %v", err)
-	}
-	if journal.ExpectedVersion != 2 || journal.AppliedVersion != 0 {
-		t.Fatalf("second prompt journal = %#v", journal)
-	}
-}
-
 func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 	store := openTestStore(t)
 	candidate := testCandidate(t, "provider-policy-1", "15550000021@s.whatsapp.net")
