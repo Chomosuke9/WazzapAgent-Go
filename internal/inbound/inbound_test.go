@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -739,8 +740,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	if len(request.Commands) != 3 ||
-		request.Commands[0] != "catch" || request.Commands[1] != "help" || request.Commands[2] != "info" {
+	if !slices.Equal(request.Commands, []string{"catch", "help", "info", "schedule-task"}) {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 
@@ -871,6 +871,8 @@ type fixture struct {
 	dispatcher *action.Dispatcher
 	gate       *policy.FixedGate
 	responder  *action.CommandResponder
+	// stop ends the inbound dispatcher, as a shutdown would.
+	stop func()
 }
 
 // directIngress makes the dispatcher synchronous for tests: each call waits
@@ -1046,13 +1048,15 @@ func newFixtureAtPath(
 	stopped := make(chan struct{})
 	running := ingress.dispatcher
 	go func() { _ = running.Run(runCtx); close(stopped) }()
+	var stopOnce sync.Once
+	stopDispatcher := func() { stopOnce.Do(func() { stop(); <-stopped }) }
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
 		handler: ingress, model: model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
+		stop: stopDispatcher,
 	}
 	t.Cleanup(func() {
-		stop()
-		<-stopped
+		stopDispatcher()
 		_ = store.Close()
 	})
 	return fixture

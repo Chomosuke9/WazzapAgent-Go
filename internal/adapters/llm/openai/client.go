@@ -320,7 +320,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 			"text": map[string]any{
 				"type":        "string",
 				"minLength":   1,
-				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)` and the bot mention `@<assistant name> (bot)` using the configured assistant name from the system prompt.",
+				"description": "Visible reply text. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (bot)` using the configured assistant name from the system prompt.",
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},

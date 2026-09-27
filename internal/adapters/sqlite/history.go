@@ -74,9 +74,9 @@ func (store *HistoryStore) list(
 	if !query.ThroughInvocationID.IsZero() {
 		err = tx.QueryRowContext(ctx, `SELECT sequence FROM history_entries
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-            AND role = ? AND sequence > ?`,
+            AND role IN (?, ?) AND sequence > ?`,
 			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), query.ThroughInvocationID.String(),
-			uint8(agent.HistoryUser), resetCutoff,
+			uint8(agent.HistoryUser), uint8(agent.HistorySystem), resetCutoff,
 		).Scan(&through)
 		if errors.Is(err, sql.ErrNoRows) {
 			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "bound history context", errors.New("current invocation history is missing or reset"))

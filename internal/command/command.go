@@ -49,6 +49,7 @@ type Platform struct {
 	Text    TextSender
 	Buttons ButtonSender
 	Group   GroupModerator
+	Tasks   TaskScheduler
 }
 
 type TextSender interface {
@@ -71,6 +72,13 @@ type GroupModerator interface {
 	RemoveGroupMember(ctx context.Context, key agent.Key, ref identity.SenderRef) error
 	// MuteGroupMember silences ref for minutes starting at now; zero unmutes.
 	MuteGroupMember(ctx context.Context, key agent.Key, ref identity.SenderRef, minutes uint32, now time.Time) error
+}
+
+// TaskScheduler runs a prompt as an AI turn in a chat at a later time. The
+// task is saved, so it still runs after a restart. source is the command
+// message that asked for it: scheduling twice for one source keeps one task.
+type TaskScheduler interface {
+	ScheduleTask(ctx context.Context, key agent.Key, source identity.MessageID, fireAt time.Time, prompt string) error
 }
 
 // Store is the durable inbox a command message came from. The registry uses
