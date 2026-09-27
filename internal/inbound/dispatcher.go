@@ -17,10 +17,6 @@ const (
 	// (rate limit, timeout, outage) is generated again in this process.
 	maxGenerationRetries = 2
 	generationRetryDelay = 2 * time.Second
-	// maxCommandAttempts bounds how often a command that failed only because
-	// WhatsApp was not ready yet (still connecting, group data syncing) runs.
-	maxCommandAttempts = 3
-	commandRetryDelay  = 2 * time.Second
 )
 
 type Options struct {
@@ -206,51 +202,20 @@ func (dispatcher *Dispatcher) runCommand(ctx context.Context, key agent.Key, mes
 	case !message.Allowlisted:
 		return dispatcher.ignore(ctx, message, IgnoreNotAllowlisted)
 	}
-	return dispatcher.runCommandAttempt(ctx, key, message, request, cmd, 1)
-}
-
-// runCommandAttempt runs a command once. A command that failed is recorded
-// as failed and never runs again; only "not ready" gets a few more tries,
-// on a timer so no caller waits.
-func (dispatcher *Dispatcher) runCommandAttempt(ctx context.Context, key agent.Key, message conversation.IncomingMessage, request command.Request, cmd command.Command, attempt int) error {
 	dispatcher.mu.Lock()
 	queue := dispatcher.chat(key)
 	queue.users++
 	dispatcher.mu.Unlock()
 	queue.commands.Lock()
-	err := dispatcher.resumeCommand(ctx, message, request, cmd)
-	queue.commands.Unlock()
-	dispatcher.mu.Lock()
-	retry := err != nil && agent.IsCode(err, agent.ErrorNotReady) && attempt < maxCommandAttempts && dispatcher.ctx.Err() == nil
-	if retry {
-		// The chat's queue stays alive while the retry waits.
-		dispatcher.turns.Add(1)
-		time.AfterFunc(commandRetryDelay, func() {
-			defer dispatcher.turns.Done()
-			if dispatcher.ctx.Err() == nil {
-				if err := dispatcher.runCommandAttempt(dispatcher.ctx, key, message, request, cmd, attempt+1); err != nil {
-					dispatcher.options.Report(err)
-				}
-			}
-			dispatcher.mu.Lock()
-			queue.users--
-			dispatcher.forgetIfIdle(key, queue)
-			dispatcher.mu.Unlock()
-		})
-	} else {
+	defer func() {
+		queue.commands.Unlock()
+		dispatcher.mu.Lock()
 		queue.users--
 		dispatcher.forgetIfIdle(key, queue)
-	}
-	dispatcher.mu.Unlock()
-	if err == nil || retry {
-		return nil
-	}
-	recordCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	// A command that already recorded its reply is past this point; the
-	// conflict that MarkIgnored reports for it changes nothing.
-	_ = dispatcher.store.MarkIgnored(recordCtx, message, IgnoreCommandFailed)
-	return err
+		dispatcher.mu.Unlock()
+	}()
+	// A command runs once: resumeCommand closes a failed one (failCommand).
+	return dispatcher.resumeCommand(ctx, message, request, cmd)
 }
 
 func (dispatcher *Dispatcher) queueAI(ctx context.Context, key agent.Key, message conversation.IncomingMessage) error {

@@ -67,14 +67,11 @@ const (
 	IgnoreGroupNotMentioned IgnoreReason = "group_not_mentioned"
 	IgnorePolicyDenied      IgnoreReason = "policy_denied"
 	IgnoreMuted             IgnoreReason = "muted"
-	// IgnoreCommandFailed records a command that failed, so it is never run
-	// again, not even by startup recovery.
-	IgnoreCommandFailed IgnoreReason = "command_failed"
 )
 
 func (reason IgnoreReason) Valid() bool {
 	switch reason {
-	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted, IgnoreCommandFailed:
+	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted:
 		return true
 	default:
 		return false
@@ -182,7 +179,7 @@ func (handler *handlerServices) resumeCommand(
 // command every few seconds, repeating whatever it already sent. Only a
 // cancelled context (shutdown) leaves the message for recovery after restart.
 // The original error is still returned so the lane logs it.
-func (handler *CommandHandler) failCommand(
+func (handler *handlerServices) failCommand(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 	version agent.ConfigVersion,

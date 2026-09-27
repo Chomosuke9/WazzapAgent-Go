@@ -836,13 +836,14 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 		t.Run(string(test.code), func(t *testing.T) {
 			fixture := newFixture(t)
 			failing := &failingText{code: test.code}
-			commandHandler, err := inbound.NewCommandHandler(
-				fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{}, command.Platform{Text: failing},
+			dispatcher, err := inbound.NewDispatcher(
+				fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+				command.Platform{Text: failing}, inbound.Options{BurstCap: 1, Report: fixture.handler.report},
 			)
 			if err != nil {
-				t.Fatalf("create command handler: %v", err)
+				t.Fatalf("create inbound dispatcher: %v", err)
 			}
-			fixture.handler.command = commandHandler
+			fixture.handler.dispatcher = dispatcher
 			candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
 			candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
 			candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
@@ -859,13 +860,12 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 			if test.reply != "" && !strings.Contains(fixture.sender.last().Text, test.reply) {
 				t.Fatalf("failure reply = %q, want it to contain %q", fixture.sender.last().Text, test.reply)
 			}
-			now := time.Now().UTC()
-			messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+			messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
 			if err != nil {
-				t.Fatalf("list recoverable inbound: %v", err)
+				t.Fatalf("list unfinished inbound: %v", err)
 			}
 			if len(messages) != 0 {
-				t.Fatalf("failed command is still recoverable: %#v", messages)
+				t.Fatalf("failed command is still unfinished: %#v", messages)
 			}
 			if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 				t.Fatalf("redelivered failed command: %v", err)
@@ -947,10 +947,11 @@ func newFixtureAtPath(
 	}
 	runCtx, stop := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
-	go func() { _ = ingress.dispatcher.Run(runCtx); close(stopped) }()
+	running := ingress.dispatcher
+	go func() { _ = running.Run(runCtx); close(stopped) }()
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
-		handler: ingress, model: model, sender: sender, dispatcher: dispatcher,
+		handler: ingress, model: model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
 	}
 	t.Cleanup(func() {
 		stop()
