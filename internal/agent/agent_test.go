@@ -363,8 +363,8 @@ func TestRegistryReturnsOneAgentPerChat(t *testing.T) {
 		}
 	}
 	other, err := registry.AgentFor(context.Background(), newKey(t))
-	if err != nil || other == first || constructions.Load() != 2 {
-		t.Fatalf("other chat agent = %p, %v; constructions = %d", other, err, constructions.Load())
+	if err != nil || other == first {
+		t.Fatalf("other chat agent = %p, %v", other, err)
 	}
 }
 

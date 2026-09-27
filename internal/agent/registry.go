@@ -34,15 +34,18 @@ func NewRegistry(factory Factory) (*Registry, error) {
 }
 
 // AgentFor returns the chat's Agent, creating it on first use. Creation runs
-// under the registry lock so concurrent callers for one chat share an Agent.
+// outside the lock so one slow config load does not stall other chats. If two
+// callers race on a new chat, both build one and the first stored wins; the
+// loser is dropped before anyone uses it.
 func (registry *Registry) AgentFor(ctx context.Context, key Key) (*Agent, error) {
 	if err := key.Validate(); err != nil {
 		return nil, NewError(ErrorInvalidArgument, "get agent", err)
 	}
 	registry.mu.Lock()
-	defer registry.mu.Unlock()
-	if agent, exists := registry.agents[key]; exists {
-		return agent, nil
+	existing, exists := registry.agents[key]
+	registry.mu.Unlock()
+	if exists {
+		return existing, nil
 	}
 	agent, err := registry.factory.NewAgent(ctx, key)
 	if err != nil {
@@ -50,6 +53,11 @@ func (registry *Registry) AgentFor(ctx context.Context, key Key) (*Agent, error)
 	}
 	if agent == nil || agent.key != key {
 		return nil, Errorf(ErrorIntegrityFailure, "construct agent", "factory returned no agent or the wrong chat's agent")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if existing, exists := registry.agents[key]; exists {
+		return existing, nil
 	}
 	registry.agents[key] = agent
 	return agent, nil
