@@ -53,6 +53,15 @@ type SendTextRequest struct {
 	ActionID        identity.ActionID
 	Text            string
 	QuotedMessageID identity.MessageID
+	// Choices, when set, are sent as quick-reply buttons under Text (a quiz).
+	// A tap comes back as the tapped choice's text.
+	Choices []string
+}
+
+// SendCopyCodeRequest sends Code behind a single "copy" button.
+type SendCopyCodeRequest struct {
+	Key  agent.Key
+	Code string
 }
 
 // Button is one quick-reply button. Tapping it sends ID back as the user's
@@ -79,6 +88,9 @@ type SendTextResult struct {
 type TextSender interface {
 	Ready() bool
 	SendText(context.Context, SendTextRequest) (SendTextResult, error)
+	// SendCopyCode is a best-effort follow-up; its error never changes the
+	// outcome of the reply it follows.
+	SendCopyCode(context.Context, SendCopyCodeRequest) error
 }
 
 type Observer interface {
@@ -147,7 +159,8 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 		}
 		return pending, err
 	}
-	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: action.Text, QuotedMessageID: action.ReplyToMessageID})
+	text, choices := SplitChoices(action.Text)
+	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Choices: choices})
 	if sendErr != nil {
 		// The request may have reached WhatsApp. Never send it a second time.
 		code := agent.CodeOf(sendErr)
@@ -162,6 +175,9 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 			return dispatcher.store.MarkUnknown(ctx, ref, agent.ErrorStorageFailure, dispatcher.clock.Now())
 		})
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", fmt.Errorf("complete storage failed: %w", err))
+	}
+	if code := FirstCodeBlock(text); code != "" {
+		_ = dispatcher.sender.SendCopyCode(ctx, SendCopyCodeRequest{Key: ref.Key, Code: code})
 	}
 	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: &completedAt}, nil
 }

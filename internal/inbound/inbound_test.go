@@ -1137,6 +1137,10 @@ func (authority staticChatAuthority) ReadChatAuthority(ctx context.Context, prin
 
 func (sender *recordingSender) Ready() bool { return sender.ready.Load() }
 
+func (sender *recordingSender) SendCopyCode(context.Context, action.SendCopyCodeRequest) error {
+	return nil
+}
+
 func (sender *recordingSender) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
 	sender.mu.Lock()
 	sender.requests = append(sender.requests, request)
