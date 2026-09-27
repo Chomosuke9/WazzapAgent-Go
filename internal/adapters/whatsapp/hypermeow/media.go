@@ -3,6 +3,8 @@ package hypermeow
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -130,13 +132,74 @@ func (adapter *Adapter) DownloadMedia(ctx context.Context, payload []byte) (comm
 	}
 	downloadCtx, cancel := context.WithTimeout(ctx, mediaDownloadTimeout)
 	defer cancel()
-	data, err := adapter.client.Download(downloadCtx, downloadable)
+	data, err := adapter.downloadBounded(downloadCtx, downloadable)
+	if errors.Is(err, errMediaTooLarge) {
+		return command.Media{}, agent.NewError(agent.ErrorInvalidArgument, "download WhatsApp media", err)
+	}
 	if err != nil {
 		return command.Media{}, nativeEffectError(downloadCtx, "download WhatsApp media", err)
 	}
 	media.Data = data
 	return media, nil
 }
+
+var errMediaTooLarge = errors.New("media is too large")
+
+// downloadBounded downloads through a temp file that refuses writes past
+// maxMediaDownloadBytes, so a message that understates its file length
+// cannot make the download take unbounded memory or disk.
+func (adapter *Adapter) downloadBounded(ctx context.Context, downloadable whatsmeow.DownloadableMessage) ([]byte, error) {
+	temp, err := os.CreateTemp("", "wazzapagent-media-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(temp.Name())
+	defer temp.Close()
+	if err := adapter.client.DownloadToFile(ctx, downloadable, &boundedFile{file: temp, limit: maxMediaDownloadBytes}); err != nil {
+		return nil, err
+	}
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(temp, maxMediaDownloadBytes))
+}
+
+// boundedFile is a whatsmeow.File that fails any write reaching past limit.
+// It does not embed *os.File, whose ReadFrom would bypass Write.
+type boundedFile struct {
+	file  *os.File
+	limit int64
+}
+
+func (bounded *boundedFile) Write(data []byte) (int, error) {
+	offset, err := bounded.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if offset+int64(len(data)) > bounded.limit {
+		return 0, errMediaTooLarge
+	}
+	return bounded.file.Write(data)
+}
+
+func (bounded *boundedFile) WriteAt(data []byte, offset int64) (int, error) {
+	if offset+int64(len(data)) > bounded.limit {
+		return 0, errMediaTooLarge
+	}
+	return bounded.file.WriteAt(data, offset)
+}
+
+func (bounded *boundedFile) Read(data []byte) (int, error) { return bounded.file.Read(data) }
+func (bounded *boundedFile) ReadAt(data []byte, offset int64) (int, error) {
+	return bounded.file.ReadAt(data, offset)
+}
+func (bounded *boundedFile) Seek(offset int64, whence int) (int64, error) {
+	return bounded.file.Seek(offset, whence)
+}
+func (bounded *boundedFile) Truncate(size int64) error  { return bounded.file.Truncate(size) }
+func (bounded *boundedFile) Stat() (os.FileInfo, error) { return bounded.file.Stat() }
+
+var _ whatsmeow.File = (*boundedFile)(nil)
 
 // SendSticker sends a catalog or freshly made sticker, quoting quoted when set.
 func (adapter *Adapter) SendSticker(ctx context.Context, key agent.Key, value sticker.Sticker, quoted identity.MessageID) error {

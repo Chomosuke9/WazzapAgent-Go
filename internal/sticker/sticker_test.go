@@ -144,3 +144,9 @@ func TestHugeAnimationsAreRefusedBeforeDecoding(t *testing.T) {
 		t.Fatalf("small animated WebP refused: %v", err)
 	}
 }
+
+func TestTooManyTinyFramesAreRefused(t *testing.T) {
+	if _, err := FromImage(testGIF(t, maxSourceFrames+1, 1), Text{}); err != ErrTooLarge {
+		t.Fatalf("err = %v, want ErrTooLarge", err)
+	}
+}

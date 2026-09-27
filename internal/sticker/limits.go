@@ -12,6 +12,9 @@ const (
 	// maxAnimationPixels bounds all frames of an animation together, since
 	// DecodeAll keeps every frame before any are dropped.
 	maxAnimationPixels = 32 << 20
+	// maxSourceFrames bounds the per-frame objects DecodeAll allocates even
+	// for tiny frames; only the first MaxFrames are used.
+	maxSourceFrames = 1000
 )
 
 // checkDecodedSize reads only headers to refuse input whose decoded frames
@@ -59,7 +62,7 @@ func checkDecodedSize(data []byte) error {
 		width, height = config.Width, config.Height
 	}
 	pixels := int64(width) * int64(height)
-	if pixels > maxStillPixels || (frames > 1 && pixels*int64(frames) > maxAnimationPixels) {
+	if pixels > maxStillPixels || frames > maxSourceFrames || (frames > 1 && pixels*int64(frames) > maxAnimationPixels) {
 		return ErrTooLarge
 	}
 	return nil

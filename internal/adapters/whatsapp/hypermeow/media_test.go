@@ -2,6 +2,10 @@ package hypermeow
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
@@ -60,5 +64,23 @@ func TestCommandMediaUnwrapsViewOnceAndMarksLottie(t *testing.T) {
 	if err := protojson.Unmarshal(commandMedia("/sticker", &waE2E.Message{Conversation: proto.String("/sticker")}, viewOnce), message); err != nil ||
 		message.GetVideoMessage().GetDirectPath() != "/video" {
 		t.Fatalf("view-once media = %v, err=%v", message, err)
+	}
+}
+
+func TestBoundedFileRefusesWritesPastTheLimit(t *testing.T) {
+	temp, err := os.CreateTemp(t.TempDir(), "bounded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer temp.Close()
+	bounded := &boundedFile{file: temp, limit: 8}
+	if _, err := io.Copy(bounded, strings.NewReader("12345678")); err != nil {
+		t.Fatalf("write within limit: %v", err)
+	}
+	if _, err := io.Copy(bounded, strings.NewReader("9")); !errors.Is(err, errMediaTooLarge) {
+		t.Fatalf("write past limit err = %v", err)
+	}
+	if _, err := bounded.WriteAt([]byte("xx"), 7); !errors.Is(err, errMediaTooLarge) {
+		t.Fatalf("WriteAt past limit err = %v", err)
 	}
 }
