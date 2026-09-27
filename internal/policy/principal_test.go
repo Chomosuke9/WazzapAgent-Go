@@ -39,7 +39,7 @@ func TestCapabilitySetRejectsUnknownAndDuplicateValues(t *testing.T) {
 	if _, err := policy.NewCapabilitySet(policy.Capability("all.powerful")); err == nil {
 		t.Fatal("unknown capability was accepted")
 	}
-	set, err := policy.NewCapabilitySet(policy.CapabilityChatPresence, policy.CapabilityMessageReact)
+	set, err := policy.NewCapabilitySet(policy.CapabilityCommandExecute, policy.CapabilityMessageReact)
 	if err != nil || !set.Has(policy.CapabilityMessageReact) || set.Has(policy.CapabilityMessageDelete) {
 		t.Fatalf("capability set = %#v, %v", set.Values(), err)
 	}

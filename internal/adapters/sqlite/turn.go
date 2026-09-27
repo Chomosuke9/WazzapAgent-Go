@@ -498,12 +498,6 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 	switch intent.Kind {
 	case agent.EffectReact:
 		return effect.React{TargetMessageID: intent.TargetMessageID, Emoji: intent.Emoji}, nil
-	case agent.EffectDeleteMessage:
-		return effect.DeleteMessage{TargetMessageID: intent.TargetMessageID}, nil
-	case agent.EffectMarkRead:
-		return effect.MarkRead{TargetMessageID: intent.TargetMessageID}, nil
-	case agent.EffectSetChatPresence:
-		return effect.SetChatPresence{State: effect.PresenceState(intent.Presence)}, nil
 	case agent.EffectRunCommand:
 		return effect.RunCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
 	default:

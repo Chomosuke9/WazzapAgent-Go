@@ -84,65 +84,37 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
+	var targetID identity.MessageID
 	switch typed := stored.Request.Effect.(type) {
-	case effect.SetChatPresence:
-		target, err := adapter.resolveChatTarget(requestCtx, stored.Request.Ref.Key)
-		if err != nil {
-			return "", err
-		}
-		state := types.ChatPresenceComposing
-		if typed.State == effect.PresencePaused {
-			state = types.ChatPresencePaused
-		}
-		if err := adapter.client.SendChatPresence(requestCtx, target, state, types.ChatPresenceMediaText); err != nil {
-			return "", nativeEffectError(requestCtx, "send WhatsApp presence", err)
-		}
-		return "ephemeral-presence", nil
-	case effect.React, effect.DeleteMessage, effect.MarkRead:
-		chat, messageID, sender, occurredAt, err := adapter.resolveEffectTarget(requestCtx, stored.Request.Ref.Key, targetMessageID(typed))
-		if err != nil {
-			return "", err
-		}
-		stripe := adapter.sendStripe(stored.Request.Ref.Key.ChatID.String())
-		stripe.Lock()
-		defer stripe.Unlock()
-		switch value := typed.(type) {
-		case effect.React:
-			response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildReaction(chat, sender, messageID, value.Emoji))
-			if sendErr != nil {
-				return "", nativeEffectError(requestCtx, "send WhatsApp reaction", sendErr)
-			}
-			return string(response.ID), nil
-		case effect.DeleteMessage:
-			if err := adapter.authorizeMessageDeletion(requestCtx, chat, sender); err != nil {
-				return "", err
-			}
-			response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
-			if sendErr != nil {
-				return "", nativeEffectError(requestCtx, "send WhatsApp revoke", sendErr)
-			}
-			return string(response.ID), nil
-		case effect.MarkRead:
-			if sendErr := adapter.client.MarkRead(requestCtx, []types.MessageID{messageID}, occurredAt, chat, sender); sendErr != nil {
-				return "", nativeEffectError(requestCtx, "send WhatsApp read receipt", sendErr)
-			}
-			return "ephemeral-read", nil
-		}
-	}
-	return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
-}
-
-func targetMessageID(value effect.Effect) identity.MessageID {
-	switch typed := value.(type) {
 	case effect.React:
-		return typed.TargetMessageID
+		targetID = typed.TargetMessageID
 	case effect.DeleteMessage:
-		return typed.TargetMessageID
-	case effect.MarkRead:
-		return typed.TargetMessageID
+		targetID = typed.TargetMessageID
 	default:
-		return identity.MessageID{}
+		return "", agent.NewError(agent.ErrorIntegrityFailure, "execute WhatsApp effect", errors.New("effect type is invalid"))
 	}
+	chat, messageID, sender, _, err := adapter.resolveEffectTarget(requestCtx, stored.Request.Ref.Key, targetID)
+	if err != nil {
+		return "", err
+	}
+	stripe := adapter.sendStripe(stored.Request.Ref.Key.ChatID.String())
+	stripe.Lock()
+	defer stripe.Unlock()
+	if value, ok := stored.Request.Effect.(effect.React); ok {
+		response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildReaction(chat, sender, messageID, value.Emoji))
+		if sendErr != nil {
+			return "", nativeEffectError(requestCtx, "send WhatsApp reaction", sendErr)
+		}
+		return string(response.ID), nil
+	}
+	if err := adapter.authorizeMessageDeletion(requestCtx, chat, sender); err != nil {
+		return "", err
+	}
+	response, sendErr := adapter.client.SendMessage(requestCtx, chat, adapter.client.BuildRevoke(chat, sender, messageID))
+	if sendErr != nil {
+		return "", nativeEffectError(requestCtx, "send WhatsApp revoke", sendErr)
+	}
+	return string(response.ID), nil
 }
 
 func (adapter *Adapter) resolveChatTarget(ctx context.Context, key agent.Key) (types.JID, error) {

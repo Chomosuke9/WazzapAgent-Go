@@ -532,38 +532,6 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 	return access, nil
 }
 
-// InvocationHumanPrincipal binds a model's privileged effect back to the
-// actual inbound requester. Scheduled/system invocations have no human actor
-// and therefore cannot obtain group-management authority through this path.
-func (store *InboundStore) InvocationHumanPrincipal(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (policy.Principal, error) {
-	if err := key.Validate(); err != nil || invocationID.IsZero() {
-		return policy.Principal{}, agent.NewError(agent.ErrorInvalidArgument, "read invocation requester", errors.New("valid scope and invocation ID are required"))
-	}
-	var participantValue, lidValue string
-	err := store.db.QueryRowContext(ctx, `SELECT e.participant_id, p.lid FROM inbound_events e
-	  JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
-	  WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.invocation_id = ?
-	    AND e.invocation_cause = ? AND p.lid IS NOT NULL`,
-		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(), uint8(agent.CauseInboundMessage),
-	).Scan(&participantValue, &lidValue)
-	if errors.Is(err, sql.ErrNoRows) {
-		return policy.Principal{}, agent.NewError(agent.ErrorPermissionDenied, "read invocation requester", errors.New("invocation has no human requester"))
-	}
-	if err != nil {
-		return policy.Principal{}, storageError("read invocation requester", err)
-	}
-	participantID, err := identity.ParseParticipantID(participantValue)
-	if err != nil {
-		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "read invocation requester", err)
-	}
-	lid, err := identity.ParseLID(lidValue)
-	if err != nil {
-		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "read invocation requester", err)
-	}
-	principal := policy.Principal{Kind: policy.PrincipalHuman, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, ParticipantID: participantID, LID: lid}
-	return principal, principal.Validate()
-}
-
 func (store *InboundStore) ListRecoverableInbound(
 	ctx context.Context,
 	tenantID identity.TenantID,

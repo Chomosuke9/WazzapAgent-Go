@@ -183,73 +183,43 @@ type ModelRequest struct {
 
 const MaxModelEffects = 8
 
-// EffectIntent is a closed, provider-neutral model output. Unlike a command
-// string or JSON blob, every variant is typed, chat-bound by the invocation,
-// and validated before a durable effect row can be planned.
+// EffectIntent is a closed, provider-neutral model output: a reaction from
+// react_to_message or a command from reply_message. Each is chat-bound by the
+// invocation and validated before a durable effect row can be planned.
 type EffectKind uint8
 
 const (
-	EffectReact EffectKind = iota + 1
-	EffectDeleteMessage
-	EffectMarkRead
-	EffectSetChatPresence
-	EffectRunCommand
-)
-
-type PresenceState string
-
-const (
-	PresenceComposing PresenceState = "composing"
-	PresencePaused    PresenceState = "paused"
+	EffectReact      EffectKind = 1
+	EffectRunCommand EffectKind = 5
 )
 
 type EffectIntent struct {
 	Kind            EffectKind
 	TargetMessageID identity.MessageID
 	Emoji           string
-	Presence        PresenceState
 	Command         string
 }
 
+// Capability is the tool capability the intent needs. RunCommand has none:
+// the command registry's permission expression is the only check, evaluated
+// when the command runs.
 func (intent EffectIntent) Capability() Capability {
-	switch intent.Kind {
-	case EffectReact:
+	if intent.Kind == EffectReact {
 		return "message.react"
-	case EffectDeleteMessage:
-		return "message.delete"
-	case EffectMarkRead:
-		return "message.mark-read"
-	case EffectSetChatPresence:
-		return "chat.presence"
-	default:
-		// RunCommand has no capability: the command registry's permission
-		// expression is the only check, evaluated when the command runs.
-		return ""
 	}
-}
-
-func (intent EffectIntent) Durable() bool {
-	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage || intent.Kind == EffectRunCommand
+	return ""
 }
 
 func (intent EffectIntent) Validate() error {
 	switch intent.Kind {
 	case EffectReact:
-		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Presence != "" || intent.Command != "" {
+		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Command != "" {
 			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))
-		}
-	case EffectDeleteMessage, EffectMarkRead:
-		if intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Presence != "" || intent.Command != "" {
-			return NewError(ErrorInvalidArgument, "validate message effect intent", fmt.Errorf("only a target message is allowed"))
-		}
-	case EffectSetChatPresence:
-		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Command != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
-			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
 		}
 	case EffectRunCommand:
 		if strings.TrimSpace(intent.Command) != intent.Command || !strings.HasPrefix(intent.Command, "/") ||
 			len(intent.Command) == 0 || len(intent.Command) > MaxInputBytes || !utf8.ValidString(intent.Command) ||
-			intent.Emoji != "" || intent.Presence != "" {
+			intent.Emoji != "" {
 			return NewError(ErrorInvalidArgument, "validate command intent", fmt.Errorf("registered command is malformed"))
 		}
 	default:

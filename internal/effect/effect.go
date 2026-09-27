@@ -21,16 +21,8 @@ type Kind uint8
 const (
 	KindReact Kind = iota + 1
 	KindDeleteMessage
-	KindMarkRead
-	KindSetChatPresence
-	KindRunCommand
-)
-
-type PresenceState string
-
-const (
-	PresenceComposing PresenceState = "composing"
-	PresencePaused    PresenceState = "paused"
+	// Kinds 3 and 4 were mark-read and presence hints that nothing planned.
+	KindRunCommand Kind = 5
 )
 
 type Effect interface {
@@ -38,7 +30,6 @@ type Effect interface {
 	Validate() error
 	Kind() Kind
 	Capability() policy.Capability
-	Durable() bool
 }
 
 type React struct {
@@ -49,7 +40,6 @@ type React struct {
 func (React) isEffect()                     {}
 func (effect React) Kind() Kind             { return KindReact }
 func (React) Capability() policy.Capability { return policy.CapabilityMessageReact }
-func (React) Durable() bool                 { return true }
 func (effect React) Validate() error {
 	if effect.TargetMessageID.IsZero() || strings.TrimSpace(effect.Emoji) == "" || !utf8.ValidString(effect.Emoji) || len(effect.Emoji) > MaxEmojiBytes {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate reaction effect", errors.New("target and bounded emoji are required"))
@@ -62,36 +52,9 @@ type DeleteMessage struct{ TargetMessageID identity.MessageID }
 func (DeleteMessage) isEffect()                     {}
 func (DeleteMessage) Kind() Kind                    { return KindDeleteMessage }
 func (DeleteMessage) Capability() policy.Capability { return policy.CapabilityMessageDelete }
-func (DeleteMessage) Durable() bool                 { return true }
 func (effect DeleteMessage) Validate() error {
 	if effect.TargetMessageID.IsZero() {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate delete effect", errors.New("target message is required"))
-	}
-	return nil
-}
-
-type MarkRead struct{ TargetMessageID identity.MessageID }
-
-func (MarkRead) isEffect()                     {}
-func (MarkRead) Kind() Kind                    { return KindMarkRead }
-func (MarkRead) Capability() policy.Capability { return policy.CapabilityMessageMarkRead }
-func (MarkRead) Durable() bool                 { return false }
-func (effect MarkRead) Validate() error {
-	if effect.TargetMessageID.IsZero() {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate mark-read effect", errors.New("target message is required"))
-	}
-	return nil
-}
-
-type SetChatPresence struct{ State PresenceState }
-
-func (SetChatPresence) isEffect()                     {}
-func (SetChatPresence) Kind() Kind                    { return KindSetChatPresence }
-func (SetChatPresence) Capability() policy.Capability { return policy.CapabilityChatPresence }
-func (SetChatPresence) Durable() bool                 { return false }
-func (effect SetChatPresence) Validate() error {
-	if effect.State != PresenceComposing && effect.State != PresencePaused {
-		return agent.NewError(agent.ErrorInvalidArgument, "validate presence effect", errors.New("presence state is invalid"))
 	}
 	return nil
 }
@@ -103,7 +66,6 @@ type RunCommand struct {
 
 func (RunCommand) isEffect()                     {}
 func (RunCommand) Kind() Kind                    { return KindRunCommand }
-func (RunCommand) Durable() bool                 { return true }
 func (RunCommand) Capability() policy.Capability { return policy.CapabilityCommandExecute }
 func (command RunCommand) Validate() error {
 	if strings.TrimSpace(command.Command) != command.Command || !strings.HasPrefix(command.Command, "/") ||
@@ -157,7 +119,6 @@ const (
 	StateSucceeded
 	StateFailedTerminal
 	StateUnknownOutcome
-	StateSkipped
 )
 
 type Lease string
@@ -178,7 +139,6 @@ type Store interface {
 	Complete(context.Context, Ref, Lease, string, time.Time) error
 	FailTerminal(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
 	MarkUnknown(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
-	Skip(context.Context, Ref, Lease, agent.ErrorCode, time.Time) error
 }
 
 type Authorizer interface {
@@ -196,9 +156,7 @@ type CommandExecutor interface {
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
-// Dispatcher is an outbox state machine for durable effects. Ephemeral
-// mark-read and presence hints are persisted for auditing/planning but are
-// never retried: an interrupted or failed attempt becomes skipped.
+// Dispatcher is an outbox state machine for durable effects.
 type Dispatcher struct {
 	store      Store
 	authorizer Authorizer
@@ -238,7 +196,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 		return err
 	}
 	switch stored.State {
-	case StateSucceeded, StateFailedTerminal, StateUnknownOutcome, StateSkipped:
+	case StateSucceeded, StateFailedTerminal, StateUnknownOutcome:
 		return terminalStateError(stored.State)
 	case StateClaimed:
 		// Continue below: this dispatcher owns the returned lease.
@@ -290,20 +248,12 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 			// The registry refused the command before it ran, so nothing happened.
 			return dispatcher.finalizePreExecution(stored, agent.ErrorPermissionDenied, executeErr)
 		}
-		if stored.Request.Effect.Durable() {
-			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
-			return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)
-		}
-		_ = dispatcher.store.Skip(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
-		return executeErr
+		_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
+		return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)
 	}
 	if err := dispatcher.store.Complete(ctx, ref, stored.Lease, receipt, dispatcher.clock.Now()); err != nil {
-		if stored.Request.Effect.Durable() {
-			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.ErrorStorageFailure, dispatcher.clock.Now())
-			return agent.NewError(agent.ErrorUnknownOutcome, "record effect receipt", err)
-		}
-		_ = dispatcher.store.Skip(context.Background(), ref, stored.Lease, agent.ErrorStorageFailure, dispatcher.clock.Now())
-		return err
+		_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.ErrorStorageFailure, dispatcher.clock.Now())
+		return agent.NewError(agent.ErrorUnknownOutcome, "record effect receipt", err)
 	}
 	return nil
 }
@@ -321,11 +271,7 @@ func (dispatcher *Dispatcher) DispatchEffect(ctx context.Context, ref agent.Effe
 func (dispatcher *Dispatcher) finalizePreExecution(stored Stored, code agent.ErrorCode, resultErr error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if stored.Request.Effect.Durable() {
-		_ = dispatcher.store.FailTerminal(ctx, stored.Request.Ref, stored.Lease, code, dispatcher.clock.Now())
-	} else {
-		_ = dispatcher.store.Skip(ctx, stored.Request.Ref, stored.Lease, code, dispatcher.clock.Now())
-	}
+	_ = dispatcher.store.FailTerminal(ctx, stored.Request.Ref, stored.Lease, code, dispatcher.clock.Now())
 	return resultErr
 }
 
@@ -353,8 +299,6 @@ func terminalStateError(state State) error {
 		return nil
 	case StateUnknownOutcome:
 		return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", errors.New("effect outcome is unknown"))
-	case StateSkipped:
-		return agent.NewError(agent.ErrorUnsupported, "dispatch effect", errors.New("ephemeral effect was skipped"))
 	default:
 		return agent.NewError(agent.ErrorProviderFailure, "dispatch effect", errors.New("effect previously failed terminally"))
 	}
