@@ -40,7 +40,7 @@ func ignoredNativeReason(event *events.Message) string {
 	if event.IsEdit {
 		return "edited_message"
 	}
-	if text, _ := buttonReply(event.Message); event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil && text == "" {
+	if text, _ := messageContent(event.Message); text == "" {
 		return "unsupported_content"
 	}
 	return "invalid_metadata"
@@ -50,27 +50,7 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 	if event == nil || event.Message == nil || event.IsEdit {
 		return conversation.IncomingCandidate{}, false
 	}
-	// A button tap routes by its ID before anything else, so a
-	// "/command args" button re-enters its command like typed text.
-	text, contextInfo := buttonReply(event.Message)
-	extended := event.Message.GetExtendedTextMessage()
-	if text == "" {
-		text = event.Message.GetConversation()
-		if text == "" && extended != nil {
-			text = extended.GetText()
-		}
-		if extended != nil {
-			contextInfo = extended.GetContextInfo()
-		}
-	}
-	if text == "" {
-		if sticker := event.Message.GetStickerMessage(); sticker != nil {
-			// Part 2 remains text-only for the model, but the canonical transcript
-			// must not lose visible group chronology when someone sends a sticker.
-			text = "【sticker】"
-			contextInfo = sticker.GetContextInfo()
-		}
-	}
+	text, contextInfo := messageContent(event.Message)
 	if text == "" {
 		return conversation.IncomingCandidate{}, false
 	}
@@ -150,6 +130,58 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 		OccurredAt:                event.Info.Timestamp.UTC(),
 		ReceivedAt:                time.Now().UTC(),
 	}, true
+}
+
+// messageContent returns the text the pipeline sees and the context info that
+// carries its mentions and quote. A button tap routes by its ID before anything
+// else, so a "/command args" button re-enters its command like typed text.
+// Media is still text-only for the model, but the transcript must not lose it:
+// it becomes a placeholder followed by its caption, and a caption that starts
+// with "/" stays bare so it routes as a command.
+func messageContent(message *waE2E.Message) (string, *waE2E.ContextInfo) {
+	if text, contextInfo := buttonReply(message); text != "" {
+		return text, contextInfo
+	}
+	if text := message.GetConversation(); text != "" {
+		return text, message.GetExtendedTextMessage().GetContextInfo()
+	}
+	if extended := message.GetExtendedTextMessage(); extended.GetText() != "" {
+		return extended.GetText(), extended.GetContextInfo()
+	}
+	media := func(placeholder, caption string, contextInfo *waE2E.ContextInfo) (string, *waE2E.ContextInfo) {
+		caption = strings.TrimSpace(caption)
+		switch {
+		case caption == "":
+			return placeholder, contextInfo
+		case strings.HasPrefix(caption, "/"):
+			return caption, contextInfo
+		default:
+			return placeholder + " " + caption, contextInfo
+		}
+	}
+	// Protobuf getters are nil-safe, so each branch runs only when present.
+	if image := message.GetImageMessage(); image != nil {
+		return media(conversation.PlaceholderImage, image.GetCaption(), image.GetContextInfo())
+	}
+	if video := message.GetVideoMessage(); video != nil {
+		if video.GetGifPlayback() {
+			return media(conversation.PlaceholderGIF, video.GetCaption(), video.GetContextInfo())
+		}
+		return media(conversation.PlaceholderVideo, video.GetCaption(), video.GetContextInfo())
+	}
+	if document := message.GetDocumentMessage(); document != nil {
+		return media(conversation.PlaceholderDocument, document.GetCaption(), document.GetContextInfo())
+	}
+	if audio := message.GetAudioMessage(); audio != nil {
+		if audio.GetPTT() {
+			return media(conversation.PlaceholderVoiceNote, "", audio.GetContextInfo())
+		}
+		return media(conversation.PlaceholderAudio, "", audio.GetContextInfo())
+	}
+	if sticker := message.GetStickerMessage(); sticker != nil {
+		return media(conversation.PlaceholderSticker, "", sticker.GetContextInfo())
+	}
+	return "", nil
 }
 
 // buttonReply extracts a tap on a list, buttons, template, or native-flow

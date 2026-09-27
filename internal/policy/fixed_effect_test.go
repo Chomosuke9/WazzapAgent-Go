@@ -60,6 +60,19 @@ func TestFixedGateUsesPerChatInvocationTriggers(t *testing.T) {
 	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: triggers}); err != nil {
 		t.Fatalf("custom regex trigger was denied: %v", err)
 	}
+	triggers = agent.TriggerConfig{Name: true, NameRegex: true, NamePattern: `^Vivy`}
+	message.Text = conversation.PlaceholderImage + " Vivy, what is this?"
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: triggers}); err != nil {
+		t.Fatalf("anchored trigger did not match an image caption: %v", err)
+	}
+	imageGate, err := policy.NewFixedGate(policyID, 1, &fixedConfigReader{}, fixedChatAccess{}, &fixedAuthority{}, "Image", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Text = conversation.PlaceholderImage
+	if err := imageGate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: agent.TriggerConfig{Name: true}}); err == nil {
+		t.Fatal("a media placeholder matched the assistant-name trigger")
+	}
 	message.ChatKind = conversation.ChatDirect
 	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission}); err != nil {
 		t.Fatalf("direct chat was incorrectly gated by group triggers: %v", err)

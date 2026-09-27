@@ -15,6 +15,35 @@ const MaxTextBytes = 32 * 1024
 const MaxMentions = mention.MaxBindings
 const MaxRawQuotedMessageBytes = 1024 * 1024
 
+// Media is text-only for the model: an adapter writes a media message as one
+// of these placeholders, followed by a space and the caption when it has one.
+const (
+	PlaceholderImage     = "【image】"
+	PlaceholderVideo     = "【video】"
+	PlaceholderGIF       = "【gif】"
+	PlaceholderDocument  = "【document】"
+	PlaceholderAudio     = "【audio】"
+	PlaceholderVoiceNote = "【voice note】"
+	PlaceholderSticker   = "【sticker】"
+)
+
+var mediaPlaceholders = []string{
+	PlaceholderImage, PlaceholderVideo, PlaceholderGIF, PlaceholderDocument,
+	PlaceholderAudio, PlaceholderVoiceNote, PlaceholderSticker,
+}
+
+// AuthoredText is the part of a message's text the sender typed: the text
+// itself, or a media message's caption without its placeholder. Name triggers
+// match against it so a placeholder never reads as the sender's words.
+func AuthoredText(text string) string {
+	for _, placeholder := range mediaPlaceholders {
+		if rest, ok := strings.CutPrefix(text, placeholder); ok && (rest == "" || rest[0] == ' ') {
+			return strings.TrimPrefix(rest, " ")
+		}
+	}
+	return text
+}
+
 type ChatKind uint8
 
 const (
