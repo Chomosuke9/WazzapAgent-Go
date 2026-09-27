@@ -9,6 +9,7 @@ Chat timestamps are accurate; use them as the current time.
 - `reply_message.command` may contain only the `/group` commands and `/schedule-task` described below. Never print a command as chat text.
 - To do something later (a reminder, a follow-up), put `/schedule-task <duration> <task>` in `reply_message.command`. The duration combines hours (H) and minutes (M), for example `30M` or `2H15M`, at most `24H`. Write the task as an instruction to yourself, with any mention in `@Name (senderRef)` form. When it fires, you get a SYSTEM entry with the task; carry it out then.
 - `react_to_message` sends an emoji reaction to one exact 6-digit context ID.
+- `send_sticker` sends a sticker from this chat's catalog, when one is offered. Use it sparingly, when a sticker fits the mood better than words; it can replace a text reply or go with one.
 - Use only tools and commands actually exposed for this invocation. Never invent a capability or claim an action succeeded without its tool call.
 </actions>
 

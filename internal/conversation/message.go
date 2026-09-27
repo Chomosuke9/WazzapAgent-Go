@@ -82,8 +82,13 @@ type IncomingCandidate struct {
 	// the model context.
 	ProviderQuotedMessageJSON []byte
 	ProviderQuotedFromMe      *bool
-	ProviderChatAddress       string
-	SenderLID                 identity.LID
+	// ProviderMediaJSON is set only for slash commands that carry an image,
+	// video or sticker, or reply to one. It is the provider's serialized media
+	// message, kept so the command can download it; it never enters the model
+	// context.
+	ProviderMediaJSON   []byte
+	ProviderChatAddress string
+	SenderLID           identity.LID
 	// ProviderSenderPhone is an optional delivery/addressing alias, never identity.
 	ProviderSenderPhone string
 	SenderName          string
@@ -114,6 +119,10 @@ func (candidate IncomingCandidate) Validate() error {
 		(len(candidate.ProviderQuotedMessageJSON) > 0 &&
 			(strings.TrimSpace(candidate.ProviderQuotedMessageID) == "" || !json.Valid(candidate.ProviderQuotedMessageJSON))) {
 		return fmt.Errorf("provider quoted message payload is invalid")
+	}
+	if len(candidate.ProviderMediaJSON) > MaxRawQuotedMessageBytes ||
+		(len(candidate.ProviderMediaJSON) > 0 && !json.Valid(candidate.ProviderMediaJSON)) {
+		return fmt.Errorf("provider media payload is invalid")
 	}
 	if candidate.ProviderQuotedFromMe != nil && len(candidate.ProviderQuotedMessageJSON) == 0 {
 		return fmt.Errorf("provider quoted message origin has no payload")

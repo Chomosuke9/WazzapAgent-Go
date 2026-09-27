@@ -89,8 +89,12 @@ jobs:
             goarch: arm64
           - goos: windows
             goarch: amd64
+          # gen2brain/webp loads a system libwebp through purego, which
+          # needs cgo on Android; nodynamic keeps its pure-Go encoder only.
+          # The APK build (app.yml) uses cgo and needs no tag.
           - goos: android
             goarch: arm64
+            tags: nodynamic
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -103,4 +107,4 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build ./cmd/wazzapagent
+        run: go build -tags "${{ matrix.tags }}" ./cmd/wazzapagent

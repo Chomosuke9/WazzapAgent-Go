@@ -82,6 +82,9 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 	if !adapter.Ready() {
 		return "", agent.NewError(agent.ErrorNotReady, "execute WhatsApp effect", errors.New("account is not connected"))
 	}
+	if value, ok := stored.Request.Effect.(effect.Sticker); ok {
+		return adapter.executeSticker(ctx, stored.Request.Ref.Key, value)
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, adapter.sendTimeout)
 	defer cancel()
 	var targetID identity.MessageID
@@ -115,6 +118,19 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 		return "", nativeEffectError(requestCtx, "send WhatsApp revoke", sendErr)
 	}
 	return string(response.ID), nil
+}
+
+// executeSticker sends a catalog sticker the model chose. A name that was
+// removed from the catalog since the model saw it fails without sending.
+func (adapter *Adapter) executeSticker(ctx context.Context, key agent.Key, value effect.Sticker) (string, error) {
+	if adapter.stickers == nil {
+		return "", agent.NewError(agent.ErrorUnavailable, "send WhatsApp sticker", errors.New("sticker catalog is not configured"))
+	}
+	stored, err := adapter.stickers.LoadSticker(ctx, key, value.Name)
+	if err != nil {
+		return "", err
+	}
+	return adapter.sendSticker(ctx, key, stored, value.QuotedMessageID)
 }
 
 func (adapter *Adapter) resolveChatTarget(ctx context.Context, key agent.Key) (types.JID, error) {

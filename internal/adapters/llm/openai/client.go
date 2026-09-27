@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -342,7 +343,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {
-		name, description, parameters, ok := toolSchema(capability, contextIDs)
+		name, description, parameters, ok := toolSchema(capability, contextIDs, request.Stickers)
 		if !ok {
 			// Group command capabilities authorize command strings carried by
 			// reply_message. They are deliberately not standalone provider tools.
@@ -362,8 +363,30 @@ func sortedContextMessageIDs(contextMessages map[string]identity.MessageID) []st
 	return ids
 }
 
-func toolSchema(capability agent.Capability, contextIDs []string) (string, string, json.RawMessage, bool) {
+func toolSchema(capability agent.Capability, contextIDs, stickers []string) (string, string, json.RawMessage, bool) {
 	switch capability {
+	case agent.CapabilityMessageSticker:
+		// Without a catalog there is nothing to send, so no tool is offered.
+		if len(stickers) == 0 {
+			return "", "", nil, false
+		}
+		parameters, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sticker_name": map[string]any{"type": "string", "enum": stickers},
+				"context_msg_id": map[string]any{
+					"type":        "string",
+					"enum":        append([]string{"none"}, contextIDs...),
+					"description": "Use none to send the sticker on its own; otherwise one exact six-digit ID from the supplied compact history to reply to.",
+				},
+			},
+			"required":             []string{"sticker_name", "context_msg_id"},
+			"additionalProperties": false,
+		})
+		if err != nil {
+			return "", "", nil, false
+		}
+		return "send_sticker", "Send one sticker from this chat's sticker catalog, by exact name. It can stand in for a text reply or go with one.", parameters, true
 	case "message.react":
 		contextProperty := map[string]any{"type": "string", "minLength": 6, "maxLength": 6}
 		if len(contextIDs) > 0 {
@@ -460,6 +483,19 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reaction context message is not in the supplied history"))
 		}
 		return agent.EffectIntent{Kind: agent.EffectReact, TargetMessageID: target, Emoji: args.Emoji}, "message.react", nil
+	case "send_sticker":
+		var args struct {
+			StickerName      string `json:"sticker_name"`
+			ContextMessageID string `json:"context_msg_id"`
+		}
+		if err := decodeArguments(function.Arguments, &args); err != nil {
+			return agent.EffectIntent{}, "", err
+		}
+		if !slices.Contains(request.Stickers, args.StickerName) {
+			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("sticker is not in the chat's catalog"))
+		}
+		// Like reply_message, an unknown anchor only drops the quote.
+		return agent.EffectIntent{Kind: agent.EffectSticker, Sticker: args.StickerName, TargetMessageID: request.ContextMessages[args.ContextMessageID]}, agent.CapabilityMessageSticker, nil
 	default:
 		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool name is not declared"))
 	}

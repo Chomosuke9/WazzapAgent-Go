@@ -143,7 +143,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Allowlist: application.config.Allowlist(), QueueCapacity: application.config.InboundQueue(),
 		Workers: application.config.InboundWorkers(), ConnectTimeout: application.config.ConnectTimeout(),
 		SendTimeout: application.config.SendTimeout(), Pairing: application.options.Pairing,
-		Targets: store.Inbound(), GroupNames: store.Inbound(), GroupMetadata: store.Inbound(), Broadcasts: store, Logger: application.logger,
+		Targets: store.Inbound(), GroupNames: store.Inbound(), GroupMetadata: store.Inbound(), Broadcasts: store,
+		Stickers: store.Stickers(), Logger: application.logger,
 	})
 	if err != nil {
 		return nil, err
@@ -175,7 +176,10 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			InvokeEvents: agentLogs, Clock: agent.SystemClock{},
 		})
 	})
-	commandPlatform := command.Platform{Text: waAdapter, Buttons: waAdapter, Group: waAdapter}
+	commandPlatform := command.Platform{
+		Text: waAdapter, Buttons: waAdapter, Group: waAdapter,
+		Media: waAdapter, Stickers: waAdapter, Catalog: store.Stickers(),
+	}
 	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		return nil, err
@@ -186,7 +190,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter, Muter: waAdapter,
+		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter, Muter: waAdapter, Stickers: store.Stickers(),
 		Report: func(err error) {
 			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 		},

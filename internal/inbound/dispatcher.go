@@ -27,9 +27,15 @@ type Options struct {
 	ChatContext agent.ChatContextReader
 	// Muter, when set, deletes group messages from muted senders.
 	Muter MuteDeleter
-	Clock agent.Clock
+	// Stickers, when set, lists the chat's sticker catalog for send_sticker.
+	Stickers StickerLister
+	Clock    agent.Clock
 	// Report receives errors from turns that run after Handle returned.
 	Report func(error)
+}
+
+type StickerLister interface {
+	StickerNames(context.Context, agent.Key) ([]string, error)
 }
 
 type MuteDeleter interface {
