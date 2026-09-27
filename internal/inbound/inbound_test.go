@@ -231,7 +231,9 @@ func TestFullGroupTranscriptIncludesPassiveMessagesInNextInvocation(t *testing.T
 }
 
 func TestRapidMessagesAreDurablyDebouncedIntoOneBoundedBatch(t *testing.T) {
-	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 8)
+	// The window must outlast the second Handle's store writes, which can
+	// take tens of milliseconds under the race detector on a slow runner.
+	fixture := newFixtureWithBatching(t, 500*time.Millisecond, 8)
 	chat := "15550000012@s.whatsapp.net"
 	first := fixture.candidate("batch-1", chat, conversation.ChatDirect, "first")
 	second := fixture.candidate("batch-2", chat, conversation.ChatDirect, "second")
