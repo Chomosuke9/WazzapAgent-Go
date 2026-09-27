@@ -325,12 +325,15 @@ func TestAgentControllerStopCancelsLongChatActionInsteadOfWaitingForIt(t *testin
 	entered := make(chan struct{})
 	actionDone := make(chan error, 1)
 	go func() {
-		actionDone <- controller.WithChatActions(context.Background(), func(ctx context.Context, _ ManagedAgentChatActions) error {
+		_ = controller.WithChatActions(context.Background(), func(ctx context.Context, _ ManagedAgentChatActions) error {
 			close(entered)
 			<-ctx.Done() // stands in for a broadcast sleeping between batches
 			if factory.runtimes[0].closeCall.Load() != 0 {
 				t.Error("runtime was closed while a chat action was still running")
 			}
+			// Sent from inside the action: Stop waits for the action, not
+			// for this goroutine to be scheduled after it.
+			actionDone <- ctx.Err()
 			return ctx.Err()
 		})
 	}()
