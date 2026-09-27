@@ -352,8 +352,7 @@ func (agent *Agent) ensureInvocationHistory(
 		return nil
 	}
 	if strings.TrimSpace(plan.Text) == "" {
-		// Terminal plan content may already have been scrubbed while its
-		// independently retained history/receipt tombstones remain valid.
+		// An effect-only plan has no reply to restore.
 		return nil
 	}
 	var quote *QuoteContext

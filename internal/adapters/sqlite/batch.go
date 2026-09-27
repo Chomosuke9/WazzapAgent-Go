@@ -60,7 +60,7 @@ func (store *InboundStore) StageBatch(
 		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
             turn_state = ?, ignored_reason = 'history_reset', updated_at_ms = ?
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-            AND turn_state = 0 AND invocation_digest IS NULL AND action_id IS NULL`,
+            AND turn_state = 0 AND invocation_digest IS NULL`,
 			ignoredTurnState, store.clock.Now().UnixMilli(), message.TenantID.String(),
 			message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 		)

@@ -368,7 +368,7 @@ func (store *HistoryStore) ResetIfConfigVersion(
         turn_state = ?, ignored_reason = 'history_reset',
         generation_lease = NULL, generation_lease_until_ms = NULL, retry_after_ms = NULL,
         updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id IS NULL
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND `+noOutboundAction("inbound_events")+`
         AND received_at_ms <= (SELECT reset_at_ms FROM history_resets
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ?) AND (
           batch_ready_at_ms IS NOT NULL OR batch_anchor_invocation_id IS NOT NULL OR

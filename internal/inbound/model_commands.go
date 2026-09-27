@@ -104,7 +104,7 @@ func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, 
 		message.Quote = &conversation.QuotedMessage{ID: value.TargetMessageID, Role: conversation.QuoteUser, Text: "command target"}
 	}
 	// A model-issued command has no inbox record, so it runs without a Store:
-	// nothing to mark handled and no inbox journal for config writes.
+	// there is no inbox record to mark handled.
 	err = builtinCommandRegistry.Dispatch(ctx, request, command.Invocation{
 		Agent: current, Config: snapshot, Message: message, Facts: facts,
 		Platform: executor.platform, Observer: executor.observer,

@@ -4,11 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,8 +21,14 @@ import (
 
 const transcriptPageSize = 100
 
+// ConversationReader serves the UI transcript views. It keeps one handle per
+// tenant database for the life of the process instead of reopening the file
+// on every request, and it migrates the schema on first open so queries can
+// rely on the current columns even while the Agent runtime is stopped.
 type ConversationReader struct {
 	dataRoot string
+	mu       sync.Mutex
+	dbs      map[string]*sql.DB
 }
 
 func NewConversationReader(dataRoot string) (*ConversationReader, error) {
@@ -34,7 +39,22 @@ func NewConversationReader(dataRoot string) (*ConversationReader, error) {
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create transcript reader", errors.New("data root is invalid"))
 	}
-	return &ConversationReader{dataRoot: filepath.Clean(absolute)}, nil
+	return &ConversationReader{dataRoot: filepath.Clean(absolute), dbs: make(map[string]*sql.DB)}, nil
+}
+
+// Close releases every cached tenant database handle.
+func (reader *ConversationReader) Close() error {
+	if reader == nil {
+		return nil
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	var result error
+	for path, db := range reader.dbs {
+		result = errors.Join(result, db.Close())
+		delete(reader.dbs, path)
+	}
+	return result
 }
 
 func (reader *ConversationReader) ListBotConversations(ctx context.Context, scope control.SessionScope, limit uint32) ([]control.BotConversation, error) {
@@ -51,15 +71,6 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 	if !exists {
 		return []control.BotConversation{}, nil
 	}
-	defer db.Close()
-	groupNameColumn, err := hasGroupNameColumn(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	groupNameExpression := "''"
-	if groupNameColumn {
-		groupNameExpression = "COALESCE(c.group_name, '')"
-	}
 
 	rows, err := db.QueryContext(ctx, `WITH visible_history AS (
 	    SELECT h.sequence, h.chat_id, h.message_id, h.sender_name, h.content_text, h.role, h.created_at_ms
@@ -71,12 +82,12 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 	    SELECT chat_id, MAX(sequence) AS last_sequence, COUNT(*) AS message_count
 	    FROM visible_history GROUP BY chat_id
 	)
-	SELECT c.id, c.kind, COALESCE(c.provider_address, ''), `+groupNameExpression+`,
+	SELECT c.id, c.kind, COALESCE(c.provider_address, ''), c.group_name,
 	       COALESCE((SELECT v.sender_name FROM visible_history v WHERE v.chat_id = l.chat_id AND v.role = ? ORDER BY v.sequence DESC LIMIT 1), ''),
 	       CASE WHEN EXISTS (
 	           SELECT 1 FROM typed_effects e
 	           WHERE e.tenant_id = c.tenant_id AND e.account_id = c.account_id AND e.chat_id = c.id
-	             AND e.target_message_id = last_entry.message_id AND e.effect_kind = ? AND e.state = ?
+	             AND e.target_message_id = last_entry.message_id AND e.kind = ? AND e.state = ?
 	       ) THEN 'Message deleted on WhatsApp' ELSE last_entry.content_text END,
 	       last_entry.message_id, last_entry.role, last_entry.created_at_ms, l.message_count
 	FROM latest l
@@ -150,7 +161,6 @@ func (reader *ConversationReader) ListBotMessages(ctx context.Context, scope con
 	if !exists {
 		return []control.BotMessage{}, nil
 	}
-	defer db.Close()
 	store := &Store{db: db, clock: agent.SystemClock{}}
 	key := agent.Key{TenantID: scope.TenantID, AccountID: scope.AccountID, ChatID: chatID}
 	configSnapshot, err := store.Configs().Load(ctx, key)
@@ -275,7 +285,7 @@ func deletedMessageIDs(ctx context.Context, db *sql.DB, scope control.SessionSco
 		args = append(args, message.ID.String())
 	}
 	rows, err := db.QueryContext(ctx, `SELECT target_message_id FROM typed_effects
-	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_kind = ? AND state = ?
+	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND kind = ? AND state = ?
 	      AND target_message_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, transcriptStorageError("query deleted message markers", err)
@@ -303,30 +313,31 @@ func (reader *ConversationReader) open(ctx context.Context, scope control.Sessio
 	if err != nil {
 		return nil, false, agent.NewError(agent.ErrorInvalidArgument, "open transcript database", errors.New("transcript database path is invalid"))
 	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if db, ok := reader.dbs[absolute]; ok {
+		return db, true, nil
+	}
 	if _, err := os.Stat(absolute); errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	} else if err != nil {
 		return nil, false, agent.NewError(agent.ErrorStorageFailure, "inspect transcript database", errors.New("transcript database is unavailable"))
 	}
-	db, err := sql.Open("sqlite", readOnlyDatabaseDSN(absolute, defaultBusyTimeoutMS))
+	db, err := openDatabase(ctx, absolute, "")
 	if err != nil {
 		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", errors.New("transcript database is unavailable"))
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if err := db.PingContext(ctx); err != nil {
+	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
-		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", errors.New("transcript database is unavailable"))
+		return nil, false, err
 	}
+	// The UI only reads; query_only keeps this handle from ever writing.
+	if _, err := db.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		_ = db.Close()
+		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", err)
+	}
+	reader.dbs[absolute] = db
 	return db, true, nil
-}
-
-func readOnlyDatabaseDSN(path string, busyTimeoutMS int) string {
-	query := make(url.Values)
-	query.Set("mode", "ro")
-	query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMS))
-	query.Set("_foreign_keys", "on")
-	return "file:" + filepath.ToSlash(path) + "?" + query.Encode()
 }
 
 func validateTranscriptScope(scope control.SessionScope) error {
@@ -369,29 +380,6 @@ func transcriptChatName(kind uint8, address, groupName, senderName string) strin
 	default:
 		return "Conversation"
 	}
-}
-
-func hasGroupNameColumn(ctx context.Context, db *sql.DB) (bool, error) {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(chats)`)
-	if err != nil {
-		return false, transcriptStorageError("inspect conversation schema", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var columnID, notNull, primaryKey int
-		var name, columnType string
-		var defaultValue sql.NullString
-		if err := rows.Scan(&columnID, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, transcriptStorageError("inspect conversation schema", err)
-		}
-		if name == "group_name" {
-			return true, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, transcriptStorageError("inspect conversation schema", err)
-	}
-	return false, nil
 }
 
 func transcriptDelivery(delivery agent.DeliveryStatus) string {

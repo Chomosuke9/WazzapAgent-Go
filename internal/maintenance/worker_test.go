@@ -16,7 +16,7 @@ func TestWorkerRunsImmediatelyAndStopsWithContext(t *testing.T) {
 	store := &recordingStore{called: make(chan maintenance.Request, 1)}
 	worker, err := maintenance.NewWorker(
 		tenantID, store, fixedClock{now: time.Date(2026, 9, 8, 5, 0, 0, 0, time.UTC)},
-		time.Hour, 24*time.Hour, 30*24*time.Hour, 500,
+		time.Hour, 30*24*time.Hour, 500, agent.RetentionPolicy{},
 	)
 	if err != nil {
 		t.Fatalf("create worker: %v", err)
@@ -25,7 +25,7 @@ func TestWorkerRunsImmediatelyAndStopsWithContext(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- worker.Run(ctx) }()
 	request := <-store.called
-	if request.TenantID != tenantID || request.BatchSize != 500 || !request.DeleteBefore.Before(request.ScrubBefore) {
+	if request.TenantID != tenantID || request.BatchSize != 500 || !request.DeleteBefore.Before(request.Now) {
 		t.Fatalf("maintenance request = %#v", request)
 	}
 	cancel()

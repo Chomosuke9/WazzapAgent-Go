@@ -139,6 +139,9 @@ func main() {
 				return
 			}
 			cancel()
+			if err := conversationReader.Close(); err != nil {
+				log.Printf("close transcript reader: %v", err)
+			}
 			if err := settingsStore.Checkpoint(context.Background()); err != nil {
 				log.Printf("checkpoint settings database: %v", err)
 			}

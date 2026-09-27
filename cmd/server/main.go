@@ -121,6 +121,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer reader.Close()
 	conversations, err := control.NewConversationController(bindings, reader)
 	if err != nil {
 		return err

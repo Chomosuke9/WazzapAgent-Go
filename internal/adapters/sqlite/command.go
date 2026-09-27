@@ -19,8 +19,10 @@ func (store *ActionStore) FindCommandResponse(
 	message conversation.IncomingMessage,
 ) (agent.DispatchRef, bool, error) {
 	var actionValue sql.NullString
-	err := store.db.QueryRowContext(ctx, `SELECT action_id FROM inbound_events
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+	err := store.db.QueryRowContext(ctx, `SELECT a.action_id FROM inbound_events e
+      LEFT JOIN outbound_actions a ON a.tenant_id = e.tenant_id AND a.account_id = e.account_id
+        AND a.chat_id = e.chat_id AND a.invocation_id = e.invocation_id
+      WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.invocation_id = ?`,
 		message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 	).Scan(&actionValue)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -61,8 +63,10 @@ func (store *ActionStore) PlanCommandResponse(
 	}
 	defer tx.Rollback()
 	var existingAction, existingText sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT action_id, response_text FROM inbound_events
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+	err = tx.QueryRowContext(ctx, `SELECT a.action_id, a.text FROM inbound_events e
+      LEFT JOIN outbound_actions a ON a.tenant_id = e.tenant_id AND a.account_id = e.account_id
+        AND a.chat_id = e.chat_id AND a.invocation_id = e.invocation_id
+      WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.invocation_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), message.InvocationID.String(),
 	).Scan(&existingAction, &existingText)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -93,26 +97,17 @@ func (store *ActionStore) PlanCommandResponse(
 		return agent.DispatchRef{}, agent.NewError(agent.ErrorInternal, "create command action ID", err)
 	}
 	nowMS := store.clock.Now().UnixMilli()
-	payloadDigest := digestAction(key, actionID, text)
 	invocationDigest := sha256.Sum256([]byte("wazzapagent.command.v1\x00" + message.InvocationID.String() + "\x00" + message.Text))
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbound_actions(
         tenant_id, account_id, chat_id, action_id, invocation_id, response_id,
-        payload_digest, text, state, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        text, state, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), actionID.String(),
-		message.InvocationID.String(), responseID.String(), payloadDigest[:], text,
+		message.InvocationID.String(), responseID.String(), text,
 		uint8(action.StatePending), nowMS, nowMS,
 	)
 	if err != nil {
 		return agent.DispatchRef{}, storageError("insert command action", err)
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO action_receipts(
-        tenant_id, account_id, chat_id, action_id, status, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), actionID.String(), uint8(agent.DeliveryPending), nowMS,
-	)
-	if err != nil {
-		return agent.DispatchRef{}, storageError("insert command receipt", err)
 	}
 	if err := store.Store.appendHistoryEntryTx(ctx, tx, key, agent.HistoryEntry{
 		MessageID: responseID, InvocationID: message.InvocationID,
@@ -123,11 +118,10 @@ func (store *ActionStore) PlanCommandResponse(
 		return agent.DispatchRef{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        invocation_digest = ?, config_version = ?, turn_state = ?, response_id = ?,
-        action_id = ?, response_text = ?, delivery_status = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND action_id IS NULL`,
-		invocationDigest[:], uint64(version), uint8(agent.TurnResponsePlanned), responseID.String(), actionID.String(), text,
-		uint8(agent.DeliveryPending), nowMS, key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), message.InvocationID.String(),
+        invocation_digest = ?, config_version = ?, turn_state = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+		invocationDigest[:], uint64(version), uint8(agent.TurnResponsePlanned),
+		nowMS, key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), message.InvocationID.String(),
 	)
 	if err := requireOne(result, err, "publish command response"); err != nil {
 		return agent.DispatchRef{}, err

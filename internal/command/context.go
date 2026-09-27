@@ -118,44 +118,19 @@ func (c *Context) ResetHistory(ctx context.Context) error {
 }
 
 // UpdateConfig applies change to the chat's config and returns the new
-// snapshot. change must set absolute values: a replay after a crash re-runs
-// it, and the journal recognises the write as already applied when running
-// change again would not alter the stored config.
+// snapshot. change must set absolute values: a command replayed after a crash
+// runs change again, and a write that already landed then changes nothing, so
+// it is skipped instead of being applied twice.
 func (c *Context) UpdateConfig(ctx context.Context, change func(*agent.ConfigValues)) (agent.ConfigSnapshot, error) {
 	desired := c.Config.Values()
 	change(&desired)
 	if err := agent.ValidateConfigValues(desired); err != nil {
 		return agent.ConfigSnapshot{}, err
 	}
-	store := c.invocation.Store
-	if store == nil {
-		return c.Agent.Config().Update(ctx, c.Config.Version, change)
-	}
-	journal, err := store.BeginConfigMutation(ctx, c.Message, c.Config.Version)
-	if err != nil {
-		return agent.ConfigSnapshot{}, err
-	}
-	if journal.AppliedVersion != 0 {
+	if reflect.DeepEqual(desired, c.Config.Values()) {
 		return c.Config, nil
 	}
-	if c.Config.Version == journal.ExpectedVersion+1 && reflect.DeepEqual(desired, c.Config.Values()) {
-		// The write committed before a crash; only the journal is behind.
-		if err := store.MarkConfigMutationApplied(ctx, c.Message, journal.ExpectedVersion, c.Config.Version); err != nil {
-			return agent.ConfigSnapshot{}, err
-		}
-		return c.Config, nil
-	}
-	if c.Config.Version != journal.ExpectedVersion {
-		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorConflict, "update config from /"+c.Name, errors.New("config changed after the command started; resend the command"))
-	}
-	updated, err := c.Agent.Config().Update(ctx, c.Config.Version, change)
-	if err != nil {
-		return agent.ConfigSnapshot{}, err
-	}
-	if err := store.MarkConfigMutationApplied(ctx, c.Message, journal.ExpectedVersion, updated.Version); err != nil {
-		return agent.ConfigSnapshot{}, err
-	}
-	return updated, nil
+	return c.Agent.Config().Update(ctx, c.Config.Version, change)
 }
 
 func (c *Context) unavailable(capability string) error {
