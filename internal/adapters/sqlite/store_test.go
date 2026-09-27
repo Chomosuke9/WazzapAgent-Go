@@ -590,9 +590,10 @@ func TestBatchClaimRecordsMembersAndUnfinishedAnchorSurvivesReopen(t *testing.T)
 	if err != nil || len(unfinished) != 2 || unfinished[0].InvocationID != firstID || unfinished[1].InvocationID != secondID {
 		t.Fatalf("unfinished before claim = %#v, err=%v", unfinished, err)
 	}
-	batch, used, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{first.Message, second.Message})
-	if err != nil || used != 2 || len(batch) != 2 || batch[1].InvocationID != secondID {
-		t.Fatalf("claim batch = %#v, used=%d, err=%v", batch, used, err)
+	// Queued in the wrong order, the batch still follows arrival order.
+	batch, rest, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{second.Message, first.Message})
+	if err != nil || len(rest) != 0 || len(batch) != 2 || batch[0].InvocationID != firstID || batch[1].InvocationID != secondID {
+		t.Fatalf("claim batch = %#v, rest=%d, err=%v", batch, len(rest), err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close before restart: %v", err)
@@ -655,14 +656,10 @@ func TestStartedTurnOnlyEverRunsAsAnAnchor(t *testing.T) {
 		t.Fatalf("unfinished = %#v, err=%v", unfinished, err)
 	}
 	// The started turn is first, so it runs alone.
-	batch, used, err := store.Inbound().ClaimBatch(ctx, unfinished)
-	if err != nil || used != 1 || len(batch) != 1 || batch[0].InvocationID != first.Message.InvocationID {
-		t.Fatalf("started turn batch = %#v, used=%d, err=%v", batch, used, err)
-	}
-	// Queued after a new message, the batch stops just before it.
-	batch, used, err = store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{second.Message, first.Message})
-	if err != nil || used != 1 || len(batch) != 1 || batch[0].InvocationID != second.Message.InvocationID {
-		t.Fatalf("batch ahead of started turn = %#v, used=%d, err=%v", batch, used, err)
+	batch, rest, err := store.Inbound().ClaimBatch(ctx, unfinished)
+	if err != nil || len(rest) != 1 || rest[0].InvocationID != second.Message.InvocationID ||
+		len(batch) != 1 || batch[0].InvocationID != first.Message.InvocationID {
+		t.Fatalf("started turn batch = %#v, rest=%#v, err=%v", batch, rest, err)
 	}
 }
 
@@ -688,9 +685,9 @@ func TestPreResetMessageIsDroppedFromBatch(t *testing.T) {
 	if err := store.History().ResetIfConfigVersion(ctx, key, snapshot.Version, clock.now); err != nil {
 		t.Fatalf("reset history: %v", err)
 	}
-	batch, used, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{claimed.Message})
-	if err != nil || used != 1 || len(batch) != 0 {
-		t.Fatalf("pre-reset batch = %#v, used=%d, err=%v", batch, used, err)
+	batch, rest, err := store.Inbound().ClaimBatch(ctx, []conversation.IncomingMessage{claimed.Message})
+	if err != nil || len(rest) != 0 || len(batch) != 0 {
+		t.Fatalf("pre-reset batch = %#v, rest=%d, err=%v", batch, len(rest), err)
 	}
 	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID)
 	if err != nil || len(unfinished) != 0 {

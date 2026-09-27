@@ -312,6 +312,38 @@ func TestMessageBurstCapSplitsOversizedBurstWithoutLosingRemainder(t *testing.T)
 	}
 }
 
+func TestMessagesBeyondTheMemoryBoundAreReadBackFromTheInbox(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 2)
+	chat := "15550000015@s.whatsapp.net"
+	var wait sync.WaitGroup
+	errors := make(chan error, 6)
+	for index := 0; index < 6; index++ {
+		candidate := fixture.candidate(fmt.Sprintf("overflow-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
+		candidate.OccurredAt = candidate.OccurredAt.Add(time.Duration(index) * time.Millisecond)
+		candidate.ReceivedAt = candidate.ReceivedAt.Add(time.Duration(index) * time.Millisecond)
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			errors <- fixture.handler.Handle(context.Background(), candidate)
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("handle overflowing burst: %v", err)
+		}
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+	if err != nil || len(unfinished) != 0 {
+		t.Fatalf("messages left unanswered after overflow: %d, err=%v", len(unfinished), err)
+	}
+	if fixture.model.calls.Load() < 3 {
+		t.Fatalf("model calls = %d, want at least 3 batches of at most 2", fixture.model.calls.Load())
+	}
+}
+
 func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
 	fixture := newFixture(t)
 	chat := "120363000000000012@g.us"

@@ -14,3 +14,10 @@ func (dispatcher *Dispatcher) WaitIdle() {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// SetMaxPending lowers the per-chat memory bound for a test.
+func SetMaxPending(limit int) (restore func()) {
+	previous := maxPending
+	maxPending = limit
+	return func() { maxPending = previous }
+}

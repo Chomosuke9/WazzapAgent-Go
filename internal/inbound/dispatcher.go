@@ -62,14 +62,25 @@ type chatQueue struct {
 	users    int        // callers holding or waiting on commands
 
 	pending []conversation.IncomingMessage
-	timer   *time.Timer
-	running bool
-	retries int
+	// overflow is set when a message was left in the inbox because pending
+	// was full.
+	overflow bool
+	timer    *time.Timer
+	// timerSeq identifies the current timer, so a callback that fired just
+	// before its timer was replaced does nothing.
+	timerSeq uint64
+	running  bool
+	retries  int
 }
 
 func (queue *chatQueue) idle() bool {
 	return queue.users == 0 && !queue.running && queue.timer == nil && len(queue.pending) == 0
 }
+
+// maxPending bounds how many messages one chat keeps in memory. Beyond it,
+// messages stay in the durable inbox and are read back once the chat's queue
+// drains. A variable only so tests can lower it.
+var maxPending = 256
 
 func NewDispatcher(
 	store Store,
@@ -269,6 +280,10 @@ func (dispatcher *Dispatcher) queueAI(ctx context.Context, key agent.Key, messag
 			return nil
 		}
 	}
+	if len(queue.pending) >= maxPending {
+		queue.overflow = true
+		return nil
+	}
 	queue.pending = append(queue.pending, message)
 	if !queue.running {
 		delay := dispatcher.options.Debounce
@@ -286,15 +301,21 @@ func (dispatcher *Dispatcher) schedule(key agent.Key, queue *chatQueue, delay ti
 	if queue.timer != nil {
 		queue.timer.Stop()
 	}
+	queue.timerSeq++
 	if dispatcher.ctx.Err() != nil {
 		queue.timer = nil
 		return
 	}
-	queue.timer = time.AfterFunc(delay, func() { dispatcher.startTurn(key, queue) })
+	seq := queue.timerSeq
+	queue.timer = time.AfterFunc(delay, func() { dispatcher.startTurn(key, queue, seq) })
 }
 
-func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue) {
+func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue, seq uint64) {
 	dispatcher.mu.Lock()
+	if seq != queue.timerSeq {
+		dispatcher.mu.Unlock()
+		return // a newer schedule replaced this timer
+	}
 	queue.timer = nil
 	if queue.running || len(queue.pending) == 0 || dispatcher.ctx.Err() != nil {
 		dispatcher.forgetIfIdle(key, queue)
@@ -310,12 +331,12 @@ func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue) {
 
 	go func() {
 		defer dispatcher.turns.Done()
-		used, anchor, err := dispatcher.runTurn(dispatcher.ctx, batch)
+		rest, anchor, err := dispatcher.runTurn(dispatcher.ctx, batch)
 		dispatcher.mu.Lock()
 		defer dispatcher.mu.Unlock()
 		queue.running = false
 		// Messages the claim did not consume go back to the front of the queue.
-		requeue := append([]conversation.IncomingMessage(nil), batch[used:]...)
+		requeue := rest
 		retry := err != nil && anchor != nil && agent.RetryableGeneration(err) && dispatcher.ctx.Err() == nil &&
 			queue.retries < maxGenerationRetries
 		switch {
@@ -331,6 +352,11 @@ func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue) {
 			queue.retries = 0
 		}
 		queue.pending = append(requeue, queue.pending...)
+		if len(queue.pending) == 0 && queue.overflow && dispatcher.ctx.Err() == nil {
+			queue.overflow = false
+			dispatcher.refill(key, queue)
+			return
+		}
 		if len(queue.pending) > 0 {
 			delay := time.Duration(0)
 			if retry {
@@ -343,26 +369,58 @@ func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue) {
 	}()
 }
 
-// runTurn claims batch and answers it. It returns how many messages of batch
-// were consumed and the anchor that was answered, if any. A batch that
+// runTurn claims batch and answers it. It returns the messages of batch it
+// did not consume and the anchor that was answered, if any. A batch that
 // cannot be claimed is dropped here; the next startup recovers it.
-func (dispatcher *Dispatcher) runTurn(ctx context.Context, batch []conversation.IncomingMessage) (int, *conversation.IncomingMessage, error) {
-	messages, used, err := dispatcher.store.ClaimBatch(ctx, batch)
+func (dispatcher *Dispatcher) runTurn(ctx context.Context, batch []conversation.IncomingMessage) ([]conversation.IncomingMessage, *conversation.IncomingMessage, error) {
+	messages, rest, err := dispatcher.store.ClaimBatch(ctx, batch)
 	if err != nil {
-		return len(batch), nil, err
+		return nil, nil, err
 	}
 	if len(messages) == 0 {
-		return used, nil, nil
+		return rest, nil, nil
 	}
 	anchor := messages[len(messages)-1]
 	currentAgent, err := dispatcher.agents.AgentFor(ctx, agent.Key{
 		TenantID: anchor.TenantID, AccountID: anchor.AccountID, ChatID: anchor.ChatID,
 	})
 	if err != nil {
-		return used, nil, err
+		return rest, nil, err
 	}
 	dispatcher.observer.ObserveInboundBatch(uint32(len(messages)))
-	return used, &anchor, dispatcher.processBatch(ctx, currentAgent, messages)
+	return rest, &anchor, dispatcher.processBatch(ctx, currentAgent, messages)
+}
+
+// refill reads back the messages that were left in the inbox while the
+// chat's queue was full. Callers hold mu; the read runs outside it.
+func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
+	queue.running = true // keeps the chat's turns serial while reading
+	dispatcher.turns.Add(1)
+	go func() {
+		defer dispatcher.turns.Done()
+		messages, err := dispatcher.store.ListUnfinished(dispatcher.ctx, key.TenantID)
+		if err != nil && dispatcher.ctx.Err() == nil {
+			dispatcher.options.Report(err)
+		}
+		dispatcher.mu.Lock()
+		defer dispatcher.mu.Unlock()
+		queue.running = false
+		for _, message := range messages {
+			if message.AccountID != key.AccountID || message.ChatID != key.ChatID {
+				continue
+			}
+			if len(queue.pending) >= maxPending {
+				queue.overflow = true
+				break
+			}
+			queue.pending = append(queue.pending, message)
+		}
+		if len(queue.pending) > 0 {
+			dispatcher.schedule(key, queue, 0)
+			return
+		}
+		dispatcher.forgetIfIdle(key, queue)
+	}()
 }
 
 // chat returns the chat's queue, creating it. Callers hold mu.

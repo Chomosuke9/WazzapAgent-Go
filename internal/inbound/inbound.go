@@ -26,9 +26,9 @@ type Store interface {
 	// ClaimBatch starts one turn for messages queued in memory, in arrival
 	// order. It drops messages that no longer need a reply (already answered,
 	// or cleared by a history reset) and returns the rest; the last one is
-	// the anchor that gets the reply. It may consume only a prefix of the
-	// input, and reports how many messages it consumed.
-	ClaimBatch(context.Context, []conversation.IncomingMessage) ([]conversation.IncomingMessage, int, error)
+	// the anchor that gets the reply. It may consume only part of the input
+	// and returns the rest, in arrival order, to queue again.
+	ClaimBatch(context.Context, []conversation.IncomingMessage) ([]conversation.IncomingMessage, []conversation.IncomingMessage, error)
 	// ListUnfinished returns messages the last run accepted but never
 	// finished, oldest first.
 	ListUnfinished(context.Context, identity.TenantID) ([]conversation.IncomingMessage, error)

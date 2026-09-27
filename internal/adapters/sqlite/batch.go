@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
@@ -16,28 +17,28 @@ const batchedTurnState = -2
 // ignored, or received before a history reset. A message whose turn already
 // started (a crash or a failed generation) can only be an anchor, so it ends
 // the batch: either it is first and runs alone, or the batch stops just
-// before it. The second result is how many input messages were consumed;
-// the caller queues the rest again. Every returned message except the last
+// before it. The second result holds the messages not consumed, in arrival
+// order, for the caller to queue again. Every returned message except the last
 // is recorded as batched into the last one.
 func (store *InboundStore) ClaimBatch(
 	ctx context.Context,
 	batch []conversation.IncomingMessage,
-) ([]conversation.IncomingMessage, int, error) {
+) ([]conversation.IncomingMessage, []conversation.IncomingMessage, error) {
 	if len(batch) == 0 {
-		return nil, 0, nil
+		return nil, nil, nil
 	}
 	first := batch[0]
 	for _, message := range batch {
 		if err := message.Validate(); err != nil {
-			return nil, 0, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", err)
+			return nil, nil, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", err)
 		}
 		if message.TenantID != first.TenantID || message.AccountID != first.AccountID || message.ChatID != first.ChatID {
-			return nil, 0, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", errors.New("batch spans more than one chat"))
+			return nil, nil, agent.NewError(agent.ErrorInvalidArgument, "claim message batch", errors.New("batch spans more than one chat"))
 		}
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, 0, storageError("begin message batch claim", err)
+		return nil, nil, storageError("begin message batch claim", err)
 	}
 	defer tx.Rollback()
 	var resetAtMS sql.NullInt64
@@ -45,8 +46,29 @@ func (store *InboundStore) ClaimBatch(
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
 		first.TenantID.String(), first.AccountID.String(), first.ChatID.String(),
 	).Scan(&resetAtMS); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, 0, storageError("load message batch reset", err)
+		return nil, nil, storageError("load message batch reset", err)
 	}
+	// Messages can reach the queue out of order when two workers accept them
+	// at the same moment; the inbox's row order is the arrival order.
+	rowIDs := make(map[string]int64, len(batch))
+	for _, message := range batch {
+		var rowID int64
+		err := tx.QueryRowContext(ctx, `SELECT rowid FROM inbound_events
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
+			message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
+		).Scan(&rowID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, agent.NewError(agent.ErrorNotFound, "claim message batch", errors.New("message does not exist"))
+		}
+		if err != nil {
+			return nil, nil, storageError("order message batch", err)
+		}
+		rowIDs[message.InvocationID.String()] = rowID
+	}
+	batch = append([]conversation.IncomingMessage(nil), batch...)
+	sort.SliceStable(batch, func(left, right int) bool {
+		return rowIDs[batch[left].InvocationID.String()] < rowIDs[batch[right].InvocationID.String()]
+	})
 	nowMS := store.clock.Now().UnixMilli()
 	claimed := make([]conversation.IncomingMessage, 0, len(batch))
 	used := 0
@@ -57,10 +79,10 @@ func (store *InboundStore) ClaimBatch(
 			message.TenantID.String(), message.AccountID.String(), message.ChatID.String(), message.InvocationID.String(),
 		).Scan(&state, &started, &receivedAtMS)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, agent.NewError(agent.ErrorNotFound, "claim message batch", errors.New("message does not exist"))
+			return nil, nil, agent.NewError(agent.ErrorNotFound, "claim message batch", errors.New("message does not exist"))
 		}
 		if err != nil {
-			return nil, 0, storageError("load message batch member", err)
+			return nil, nil, storageError("load message batch member", err)
 		}
 		if started == 1 {
 			if state != int64(agent.TurnGenerating) && state != int64(agent.TurnFailedRetryable) {
@@ -71,7 +93,7 @@ func (store *InboundStore) ClaimBatch(
 				break
 			}
 			if err := refreshMessagePolicy(ctx, tx, &message); err != nil {
-				return nil, 0, err
+				return nil, nil, err
 			}
 			claimed = append(claimed, message)
 			used++
@@ -88,12 +110,12 @@ func (store *InboundStore) ClaimBatch(
 				ignoredTurnState, nowMS, message.TenantID.String(), message.AccountID.String(),
 				message.ChatID.String(), message.InvocationID.String(),
 			); err != nil {
-				return nil, 0, storageError("discard pre-reset message", err)
+				return nil, nil, storageError("discard pre-reset message", err)
 			}
 			continue
 		}
 		if err := refreshMessagePolicy(ctx, tx, &message); err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		claimed = append(claimed, message)
 	}
@@ -106,13 +128,13 @@ func (store *InboundStore) ClaimBatch(
 			message.ChatID.String(), message.InvocationID.String(),
 		)
 		if err := requireOne(result, err, "record batched message"); err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, 0, storageError("commit message batch claim", err)
+		return nil, nil, storageError("commit message batch claim", err)
 	}
-	return claimed, used, nil
+	return claimed, batch[used:], nil
 }
 
 func refreshMessagePolicy(ctx context.Context, query actionQuerier, message *conversation.IncomingMessage) error {
