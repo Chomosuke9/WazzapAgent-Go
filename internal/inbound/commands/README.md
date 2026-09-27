@@ -23,8 +23,8 @@ WhatsApp message "/trigger mention off"        (or a tap on a button with that I
   │         denied → DeniedReply is sent, Run is not called
   │    2. calls Run(ctx, c)
   │    3. Run returned nil → message marked handled
-  │       Run returned an error → the user gets a short "failed" reply,
-  │       the error is logged, and the message is closed (never retried)
+  │       Run returned an error → error logged, message closed (never
+  │       retried), and a short "failed" reply unless a send may have landed
   └─ your Run function                         this folder
 ```
 
@@ -128,9 +128,10 @@ Never check permissions inside `Run`. The registry has already done it.
 - **Bad input is not an error.** Reply with the usage text and return
   `nil`, so the message is marked handled.
 - **Return an error only for real failures** (storage, provider, network).
-  The command lane then replies "Sorry, /<name> failed. Please try again
-  later." (or a "still starting up" message for `ErrorNotReady`), logs the
-  error, and closes the message. A failed command is never re-run
+  The command lane logs the error and closes the message. It also replies
+  "Sorry, /<name> failed. Please try again later." (or a "still starting up"
+  message for `ErrorNotReady`), except after a timeout or provider failure,
+  where your own reply may already have been delivered. A failed command is never re-run
   automatically, because re-running would repeat anything it already sent.
 - If `Run` returns `nil` without replying, that's fine. `/group delete`
   does this on purpose.

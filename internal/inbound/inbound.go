@@ -197,8 +197,8 @@ func (handler *CommandHandler) resumeCommand(
 	return nil
 }
 
-// failCommand makes a failed command final: the user gets one short reply and
-// the message is closed. Leaving it unhandled would make recovery re-run the
+// failCommand makes a failed command final: the message is closed, and the
+// user gets one short reply unless a send may already have reached the chat. Leaving it unhandled would make recovery re-run the
 // command every few seconds, repeating whatever it already sent. Only a
 // cancelled context (shutdown) leaves the message for recovery after restart.
 // The original error is still returned so the lane logs it.
@@ -210,6 +210,15 @@ func (handler *CommandHandler) failCommand(
 	cause error,
 ) error {
 	if ctx.Err() != nil {
+		return cause
+	}
+	switch agent.CodeOf(cause) {
+	case agent.ErrorTimeout, agent.ErrorProviderFailure, agent.ErrorUnknownOutcome:
+		// A send may have reached the chat before it failed, so an apology
+		// could contradict a reply the user already has. Close quietly.
+		if err := handler.store.MarkCommandHandled(ctx, message); err != nil {
+			return errors.Join(cause, err)
+		}
 		return cause
 	}
 	reply := "Sorry, /" + cmd.Name + " failed. Please try again later."

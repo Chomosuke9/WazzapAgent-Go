@@ -782,45 +782,67 @@ func (handler *directIngress) Resume(ctx context.Context, message conversation.I
 	return handler.ai.Resume(ctx, message)
 }
 
-type failingText struct{ calls atomic.Int32 }
+type failingText struct {
+	code  agent.ErrorCode
+	calls atomic.Int32
+}
 
 func (sender *failingText) SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error) {
 	sender.calls.Add(1)
-	return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", errors.New("server returned error 405"))
+	return action.SendTextResult{}, agent.NewError(sender.code, "send WhatsApp text", errors.New("send failed"))
 }
 
-func TestFailedCommandRepliesOnceAndIsNotRetried(t *testing.T) {
-	fixture := newFixture(t)
-	failing := &failingText{}
-	commandHandler, err := inbound.NewCommandHandler(
-		fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{}, command.Platform{Text: failing},
-	)
-	if err != nil {
-		t.Fatalf("create command handler: %v", err)
-	}
-	fixture.handler.command = commandHandler
-	candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
-	candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
-	candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
-	if err := fixture.handler.Handle(context.Background(), candidate); !agent.IsCode(err, agent.ErrorProviderFailure) {
-		t.Fatalf("handle failing command error = %v, want the provider failure", err)
-	}
-	if failing.calls.Load() != 1 || fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "/help failed") {
-		t.Fatalf("command sends=%d failure replies=%d", failing.calls.Load(), fixture.sender.count())
-	}
-	now := time.Now().UTC()
-	messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
-	if err != nil {
-		t.Fatalf("list recoverable inbound: %v", err)
-	}
-	if len(messages) != 0 {
-		t.Fatalf("failed command is still recoverable: %#v", messages)
-	}
-	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
-		t.Fatalf("redelivered failed command: %v", err)
-	}
-	if failing.calls.Load() != 1 || fixture.sender.count() != 1 {
-		t.Fatalf("redelivery re-ran the command: sends=%d replies=%d", failing.calls.Load(), fixture.sender.count())
+func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
+	for _, test := range []struct {
+		code  agent.ErrorCode
+		reply string // empty: the failed send may have been delivered, so no apology
+	}{
+		{code: agent.ErrorProviderFailure},
+		{code: agent.ErrorTimeout},
+		{code: agent.ErrorUnavailable, reply: "Sorry, /help failed"},
+		{code: agent.ErrorNotReady, reply: "still starting up"},
+	} {
+		t.Run(string(test.code), func(t *testing.T) {
+			fixture := newFixture(t)
+			failing := &failingText{code: test.code}
+			commandHandler, err := inbound.NewCommandHandler(
+				fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{}, command.Platform{Text: failing},
+			)
+			if err != nil {
+				t.Fatalf("create command handler: %v", err)
+			}
+			fixture.handler.command = commandHandler
+			candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
+			candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
+			candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
+			if err := fixture.handler.Handle(context.Background(), candidate); !agent.IsCode(err, test.code) {
+				t.Fatalf("handle failing command error = %v, want %s", err, test.code)
+			}
+			wantReplies := 0
+			if test.reply != "" {
+				wantReplies = 1
+			}
+			if failing.calls.Load() != 1 || fixture.sender.count() != wantReplies {
+				t.Fatalf("command sends=%d failure replies=%d, want 1/%d", failing.calls.Load(), fixture.sender.count(), wantReplies)
+			}
+			if test.reply != "" && !strings.Contains(fixture.sender.last().Text, test.reply) {
+				t.Fatalf("failure reply = %q, want it to contain %q", fixture.sender.last().Text, test.reply)
+			}
+			now := time.Now().UTC()
+			messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+			if err != nil {
+				t.Fatalf("list recoverable inbound: %v", err)
+			}
+			if len(messages) != 0 {
+				t.Fatalf("failed command is still recoverable: %#v", messages)
+			}
+			if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+				t.Fatalf("redelivered failed command: %v", err)
+			}
+			if failing.calls.Load() != 1 || fixture.sender.count() != wantReplies {
+				t.Fatalf("redelivery re-ran the command: sends=%d replies=%d", failing.calls.Load(), fixture.sender.count())
+			}
+		})
 	}
 }
 
