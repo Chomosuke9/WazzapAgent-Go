@@ -15,38 +15,35 @@ import (
 )
 
 const (
-	defaultDataDir             = "./data"
-	defaultHTTPAddress         = "127.0.0.1:8080"
-	defaultLogLevel            = "info"
-	defaultLogFormat           = "compact"
-	defaultShutdownTimeout     = 30 * time.Second
-	defaultLLMTimeout          = 60 * time.Second
-	defaultConnectTimeout      = 90 * time.Second
-	defaultSendTimeout         = 30 * time.Second
-	defaultRegistryIdleTTL     = 15 * time.Minute
-	defaultConstructionTimeout = 10 * time.Second
-	defaultInboundQueue        = 512
-	defaultInboundWorkers      = 4
-	defaultCommandQueue        = 128
-	defaultCommandWorkers      = 2
-	defaultAIQueue             = 512
-	defaultAIWorkers           = 4
-	defaultMessageDebounce     = 350 * time.Millisecond
-	defaultMessageBurstCap     = 8
-	defaultHistoryWindow       = 64
-	defaultMaxContextBytes     = 64 * 1024
-	defaultHistoryKeepLatest   = 256
-	defaultHistoryMaxAge       = 30 * 24 * time.Hour
-	defaultLLMConcurrency      = 4
-	defaultRegistryMaxLive     = 256
-	defaultMaxOutputTokens     = 1024
-	defaultMaxResponseBytes    = 16 * 1024
-	defaultProviderID          = "openai-compatible"
-	defaultPolicyID            = "part1-chat-gate.v1"
-	defaultWhatsAppEnabled     = true
-	defaultPairingOutput       = "terminal"
-	maxShutdownTimeout         = 5 * time.Minute
-	maxResponseBytes           = 16 * 1024
+	defaultDataDir           = "./data"
+	defaultHTTPAddress       = "127.0.0.1:8080"
+	defaultLogLevel          = "info"
+	defaultLogFormat         = "compact"
+	defaultShutdownTimeout   = 30 * time.Second
+	defaultLLMTimeout        = 60 * time.Second
+	defaultConnectTimeout    = 90 * time.Second
+	defaultSendTimeout       = 30 * time.Second
+	defaultInboundQueue      = 512
+	defaultInboundWorkers    = 4
+	defaultCommandQueue      = 128
+	defaultCommandWorkers    = 2
+	defaultAIQueue           = 512
+	defaultAIWorkers         = 4
+	defaultMessageDebounce   = 350 * time.Millisecond
+	defaultMessageBurstCap   = 8
+	defaultHistoryWindow     = 64
+	defaultMaxContextBytes   = 64 * 1024
+	defaultHistoryKeepLatest = 256
+	defaultHistoryMaxAge     = 30 * 24 * time.Hour
+	defaultLLMConcurrency    = 4
+	defaultMaxOutputTokens   = 1024
+	defaultMaxResponseBytes  = 16 * 1024
+	defaultProviderID        = "openai-compatible"
+	defaultPolicyID          = "part1-chat-gate.v1"
+	defaultWhatsAppEnabled   = true
+	defaultPairingOutput     = "terminal"
+	maxShutdownTimeout       = 5 * time.Minute
+	maxResponseBytes         = 16 * 1024
 )
 
 type LookupEnv func(string) (string, bool)
@@ -89,9 +86,6 @@ type Snapshot struct {
 	maxContextBytes     uint32
 	historyKeepLatest   uint32
 	historyMaxAge       time.Duration
-	registryMaxLive     uint32
-	registryIdleTTL     time.Duration
-	constructionTimeout time.Duration
 	connectTimeout      time.Duration
 	sendTimeout         time.Duration
 	pairingOutput       string
@@ -215,14 +209,6 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	registryIdleTTL, err := parseDuration(lookup, "WAZZAP_AGENT_IDLE_TTL", defaultRegistryIdleTTL, 24*time.Hour)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	constructionTimeout, err := parseDuration(lookup, "WAZZAP_AGENT_CONSTRUCTION_TIMEOUT", defaultConstructionTimeout, time.Minute)
-	if err != nil {
-		return Snapshot{}, err
-	}
 	inboundQueue, err := parseUint(lookup, "WAZZAP_INBOUND_QUEUE", defaultInboundQueue, 1, 65_536)
 	if err != nil {
 		return Snapshot{}, err
@@ -275,10 +261,6 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	registryMaxLive, err := parseUint(lookup, "WAZZAP_AGENT_MAX_LIVE", defaultRegistryMaxLive, 1, 1_000_000)
-	if err != nil {
-		return Snapshot{}, err
-	}
 	maxOutputTokens, err := parseUint(lookup, "WAZZAP_MAX_OUTPUT_TOKENS", defaultMaxOutputTokens, 1, 65_536)
 	if err != nil {
 		return Snapshot{}, err
@@ -326,9 +308,6 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		maxContextBytes:     uint32(maxContextBytes),
 		historyKeepLatest:   uint32(historyKeepLatest),
 		historyMaxAge:       historyMaxAge,
-		registryMaxLive:     uint32(registryMaxLive),
-		registryIdleTTL:     registryIdleTTL,
-		constructionTimeout: constructionTimeout,
 		connectTimeout:      connectTimeout,
 		sendTimeout:         sendTimeout,
 		pairingOutput:       pairingOutput,
@@ -449,9 +428,6 @@ func (snapshot Snapshot) HistoryWindow() uint32              { return snapshot.h
 func (snapshot Snapshot) MaxContextBytes() uint32            { return snapshot.maxContextBytes }
 func (snapshot Snapshot) HistoryKeepLatest() uint32          { return snapshot.historyKeepLatest }
 func (snapshot Snapshot) HistoryMaxAge() time.Duration       { return snapshot.historyMaxAge }
-func (snapshot Snapshot) RegistryMaxLive() uint32            { return snapshot.registryMaxLive }
-func (snapshot Snapshot) RegistryIdleTTL() time.Duration     { return snapshot.registryIdleTTL }
-func (snapshot Snapshot) ConstructionTimeout() time.Duration { return snapshot.constructionTimeout }
 func (snapshot Snapshot) ConnectTimeout() time.Duration      { return snapshot.connectTimeout }
 func (snapshot Snapshot) SendTimeout() time.Duration         { return snapshot.sendTimeout }
 func (snapshot Snapshot) PairingOutput() string              { return snapshot.pairingOutput }

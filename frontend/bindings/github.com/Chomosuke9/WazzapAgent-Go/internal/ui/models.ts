@@ -170,9 +170,6 @@ export interface SettingsValuesDTO {
     "aiWorkers": number;
     "messageDebounce": string;
     "messageBurstCap": number;
-    "agentMaxLive": number;
-    "agentIdleTTL": string;
-    "agentConstructionTimeout": string;
     "connectTimeout": string;
     "sendTimeout": string;
     "shutdownTimeout": string;

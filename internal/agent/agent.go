@@ -21,7 +21,6 @@ type Dependencies struct {
 	Model         ModelInvoker
 	Responses     ResponseDispatcher
 	Effects       EffectDispatcher
-	Events        ConfigEventSink
 	InvokeEvents  InvokeObserver
 	Clock         Clock
 }
@@ -63,7 +62,7 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 	}
 	if dependencies.ConfigStore == nil || dependencies.HistoryStore == nil || dependencies.Turns == nil ||
 		dependencies.Context == nil || dependencies.ChatContext == nil || dependencies.Model == nil ||
-		dependencies.Responses == nil || dependencies.Events == nil || dependencies.Clock == nil {
+		dependencies.Responses == nil || dependencies.Clock == nil {
 		return nil, NewError(ErrorInvalidArgument, "create agent", fmt.Errorf("all Part 2 dependencies are required"))
 	}
 	if dependencies.HistoryWindow == 0 || dependencies.HistoryWindow > MaxHistoryPageSize {
@@ -75,14 +74,7 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 	if dependencies.InvokeEvents == nil {
 		dependencies.InvokeEvents = DiscardInvokeObserver{}
 	}
-	config, err := newConfig(
-		ctx,
-		key,
-		dependencies.Defaults,
-		dependencies.ConfigStore,
-		dependencies.Events,
-		dependencies.Clock,
-	)
+	config, err := newConfig(ctx, key, dependencies.Defaults, dependencies.ConfigStore)
 	if err != nil {
 		return nil, err
 	}
@@ -485,8 +477,6 @@ func (agent *Agent) failGeneration(invocationID identity.InvocationID, lease Tur
 	defer cancel()
 	_ = agent.turns.FailGeneration(cleanupCtx, request)
 }
-
-func (agent *Agent) isInFlight() bool { return agent.gate.isInFlight() }
 
 func validateModelResult(result ModelResult, capabilities CapabilitySet, contextMessages map[string]identity.MessageID) error {
 	if !utf8.ValidString(result.Text) {

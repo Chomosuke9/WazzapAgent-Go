@@ -350,9 +350,6 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 	if err := firstRuntime.handler.Handle(context.Background(), first); err != nil {
 		t.Fatalf("handle first message: %v", err)
 	}
-	if err := firstRuntime.registry.Close(context.Background()); err != nil {
-		t.Fatalf("close first registry: %v", err)
-	}
 	if err := firstRuntime.store.Close(); err != nil {
 		t.Fatalf("close first store: %v", err)
 	}
@@ -840,10 +837,10 @@ func newFixtureAtPath(
 		return agent.New(ctx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
 			Context: contextBuilder, ChatContext: staticChatContextReader{}, HistoryWindow: agent.DefaultHistoryWindow, Model: model,
-			Responses: dispatcher, Events: agent.DiscardConfigEvents{}, Clock: agent.SystemClock{},
+			Responses: dispatcher, Clock: agent.SystemClock{},
 		})
 	})
-	registry, err := agent.NewRegistry(context.Background(), factory, agent.RegistryLimits{MaxLive: 100, IdleTTL: time.Minute, ConstructionTimeout: time.Second})
+	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
@@ -869,10 +866,7 @@ func newFixtureAtPath(
 		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
 		model:   model, sender: sender, dispatcher: dispatcher,
 	}
-	t.Cleanup(func() {
-		_ = registry.Close(context.Background())
-		_ = store.Close()
-	})
+	t.Cleanup(func() { _ = store.Close() })
 	return fixture
 }
 

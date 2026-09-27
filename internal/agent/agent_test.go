@@ -19,9 +19,8 @@ func TestAgentInvokePersistsPlanAndSkipsModelOnReplay(t *testing.T) {
 	store := openStore(t)
 	model := &fakeModel{text: "model reply"}
 	dispatcher := &fakeDispatcher{}
-	events := &eventRecorder{}
 	key := newKey(t)
-	current := newAgent(t, key, store, model, dispatcher, events)
+	current := newAgent(t, key, store, model, dispatcher)
 	invocation := newInvocation(t, agent.InitialConfigVersion, "hello")
 
 	first, err := current.Invoke(context.Background(), invocation)
@@ -53,7 +52,7 @@ func TestInvokeWithChatContextReusesObservedMetadata(t *testing.T) {
 	store := openStore(t)
 	key := newKey(t)
 	reader := &countingChatContextReader{}
-	deps := dependencies(store, &fakeModel{text: "reply"}, &fakeDispatcher{}, &eventRecorder{})
+	deps := dependencies(store, &fakeModel{text: "reply"}, &fakeDispatcher{})
 	deps.ChatContext = reader
 	current, err := agent.New(context.Background(), key, deps)
 	if err != nil {
@@ -74,7 +73,7 @@ func TestAgentAtomicallyPlansAndDispatchesGrantedTypedEffect(t *testing.T) {
 	responses := &fakeDispatcher{}
 	effects := &fakeEffectDispatcher{}
 	key := newKey(t)
-	deps := dependencies(store, model, responses, &eventRecorder{})
+	deps := dependencies(store, model, responses)
 	deps.Effects = effects
 	current, err := agent.New(context.Background(), key, deps)
 	if err != nil {
@@ -100,7 +99,7 @@ func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
 	responses := &fakeDispatcher{}
 	effects := &fakeEffectDispatcher{}
 	key := newKey(t)
-	deps := dependencies(store, model, responses, &eventRecorder{})
+	deps := dependencies(store, model, responses)
 	deps.Effects = effects
 	current, err := agent.New(context.Background(), key, deps)
 	if err != nil {
@@ -147,7 +146,7 @@ func TestAgentRejectsModelEffectRedirectedToAnotherMessage(t *testing.T) {
 	redirected, _ := identity.NewMessageID()
 	model := &redirectedReactionModel{target: redirected}
 	key := newKey(t)
-	current, err := agent.New(context.Background(), key, dependencies(store, model, &fakeDispatcher{}, &eventRecorder{}))
+	current, err := agent.New(context.Background(), key, dependencies(store, model, &fakeDispatcher{}))
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -162,9 +161,8 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	store := openStore(t)
 	model := &blockingModel{started: make(chan agent.ModelRequest, 1), release: make(chan struct{})}
 	dispatcher := &fakeDispatcher{}
-	events := &eventRecorder{}
 	key := newKey(t)
-	current := newAgent(t, key, store, model, dispatcher, events)
+	current := newAgent(t, key, store, model, dispatcher)
 	invocation := newInvocation(t, agent.InitialConfigVersion, "first")
 	result := make(chan error, 1)
 	go func() {
@@ -177,8 +175,7 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 		request.Messages[len(request.Messages)-1].Provenance != agent.ProvenanceHistoryTranscript {
 		t.Fatalf("captured model request = %#v", request)
 	}
-	snapshot := current.Config().Snapshot()
-	updated, err := current.Config().SetPromptOverride(context.Background(), snapshot.Version, agent.PromptOverride{Mode: agent.PromptAppend, Text: "new override"})
+	updated, err := current.Config().SetPromptOverride(context.Background(), agent.InitialConfigVersion, agent.PromptOverride{Mode: agent.PromptAppend, Text: "new override"})
 	if err != nil {
 		t.Fatalf("update config during invoke: %v", err)
 	}
@@ -193,8 +190,8 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	if record.Plan.ConfigVersion != agent.InitialConfigVersion {
 		t.Fatalf("plan config version = %d, want original version", record.Plan.ConfigVersion)
 	}
-	if updated.Version != 2 || events.count() != 1 {
-		t.Fatalf("config update version/events = %d/%d", updated.Version, events.count())
+	if updated.Version != 2 {
+		t.Fatalf("config update version = %d", updated.Version)
 	}
 
 	stale := newInvocation(t, agent.InitialConfigVersion, "stale")
@@ -204,18 +201,12 @@ func TestAgentCapturesConfigVersionAndRejectsStalePolicy(t *testing.T) {
 	if model.callCount.Load() != 1 {
 		t.Fatalf("stale policy reached model; calls=%d", model.callCount.Load())
 	}
-
-	returned := current.Config().Snapshot()
-	returned.PromptOverride.Text = "mutated by caller"
-	if current.Config().Snapshot().PromptOverride.Text != "new override" {
-		t.Fatal("Config snapshot did not defensively copy prompt override")
-	}
 }
 
 func TestHistoryResetCancelsInFlightTurnWithoutWaitingForModel(t *testing.T) {
 	store := openStore(t)
 	model := &blockingModel{started: make(chan agent.ModelRequest, 1), release: make(chan struct{})}
-	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
+	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
 	invokeDone := make(chan error, 1)
 	go func() {
 		_, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "in flight"))
@@ -240,7 +231,7 @@ func TestHistoryResetCancelsInFlightTurnWithoutWaitingForModel(t *testing.T) {
 func TestAgentInvokeSerializesOneChat(t *testing.T) {
 	store := openStore(t)
 	model := &trackingModel{delay: 15 * time.Millisecond}
-	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
+	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
 	var wait sync.WaitGroup
 	for index := 0; index < 6; index++ {
 		wait.Add(1)
@@ -261,8 +252,8 @@ func TestAgentInvokeSerializesOneChat(t *testing.T) {
 func TestDifferentChatAgentsInvokeConcurrently(t *testing.T) {
 	store := openStore(t)
 	model := &trackingModel{delay: 50 * time.Millisecond}
-	first := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
-	second := newAgent(t, newKey(t), store, model, &fakeDispatcher{}, &eventRecorder{})
+	first := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
+	second := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
 	var wait sync.WaitGroup
 	for _, current := range []*agent.Agent{first, second} {
 		wait.Add(1)
@@ -279,19 +270,16 @@ func TestDifferentChatAgentsInvokeConcurrently(t *testing.T) {
 	}
 }
 
-func TestConfigRefreshRecoversDroppedNotification(t *testing.T) {
+func TestConfigReadsSeeOtherWriters(t *testing.T) {
 	store := openStore(t)
 	key := newKey(t)
-	first := newAgent(t, key, store, &fakeModel{text: "reply"}, &fakeDispatcher{}, agent.DiscardConfigEvents{})
-	second := newAgent(t, key, store, &fakeModel{text: "reply"}, &fakeDispatcher{}, agent.DiscardConfigEvents{})
+	first := newAgent(t, key, store, &fakeModel{text: "reply"}, &fakeDispatcher{})
+	second := newAgent(t, key, store, &fakeModel{text: "reply"}, &fakeDispatcher{})
 	updated, err := first.Config().SetPromptOverride(context.Background(), agent.InitialConfigVersion, agent.PromptOverride{
 		Mode: agent.PromptAppend, Text: "durable change",
 	})
 	if err != nil {
 		t.Fatalf("mutate first config: %v", err)
-	}
-	if second.Config().Snapshot().Version != agent.InitialConfigVersion {
-		t.Fatal("second config unexpectedly received a notification")
 	}
 	refreshed, err := second.Config().Refresh(context.Background())
 	if err != nil {
@@ -316,7 +304,7 @@ func TestAgentRejectsInvalidModelOutputBeforeDispatch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := openStore(t)
 			dispatcher := &fakeDispatcher{}
-			current := newAgent(t, newKey(t), store, &fakeModel{text: test.text}, dispatcher, &eventRecorder{})
+			current := newAgent(t, newKey(t), store, &fakeModel{text: test.text}, dispatcher)
 			_, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "message"))
 			if !agent.IsCode(err, agent.ErrorProviderFailure) {
 				t.Fatalf("invalid model result error = %v, want provider_failure", err)
@@ -331,7 +319,7 @@ func TestAgentRejectsInvalidModelOutputBeforeDispatch(t *testing.T) {
 func TestAgentPreservesDispatcherFailureBeforeActionObservation(t *testing.T) {
 	store := openStore(t)
 	dispatchErr := agent.NewError(agent.ErrorStorageFailure, "load action", context.DeadlineExceeded)
-	current := newAgent(t, newKey(t), store, &fakeModel{text: "reply"}, failingDispatcher{err: dispatchErr}, &eventRecorder{})
+	current := newAgent(t, newKey(t), store, &fakeModel{text: "reply"}, failingDispatcher{err: dispatchErr})
 	result, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "message"))
 	if !agent.IsCode(err, agent.ErrorStorageFailure) {
 		t.Fatalf("dispatcher error = %v, want storage_failure", err)
@@ -341,90 +329,42 @@ func TestAgentPreservesDispatcherFailureBeforeActionObservation(t *testing.T) {
 	}
 }
 
-func TestRegistryCoalescesConstructionAndWaiterCancellation(t *testing.T) {
-	store := openStore(t)
-	key := newKey(t)
-	constructionStarted := make(chan struct{})
-	releaseConstruction := make(chan struct{})
-	var constructions atomic.Int32
-	factory := agent.FactoryFunc(func(ctx context.Context, requested agent.Key) (*agent.Agent, error) {
-		if constructions.Add(1) == 1 {
-			close(constructionStarted)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-releaseConstruction:
-		}
-		return agent.New(ctx, requested, dependencies(store, &fakeModel{text: "ok"}, &fakeDispatcher{}, &eventRecorder{}))
-	})
-	registry, err := agent.NewRegistry(context.Background(), factory, agent.RegistryLimits{
-		MaxLive: 10, IdleTTL: time.Minute, ConstructionTimeout: time.Second,
-	})
-	if err != nil {
-		t.Fatalf("create registry: %v", err)
-	}
-	t.Cleanup(func() { _ = registry.Close(context.Background()) })
-
-	firstCtx, cancelFirst := context.WithCancel(context.Background())
-	firstResult := make(chan error, 1)
-	go func() {
-		_, err := registry.AgentFor(firstCtx, key)
-		firstResult <- err
-	}()
-	<-constructionStarted
-	secondResult := make(chan *agent.Agent, 1)
-	secondError := make(chan error, 1)
-	go func() {
-		value, err := registry.AgentFor(context.Background(), key)
-		secondResult <- value
-		secondError <- err
-	}()
-	cancelFirst()
-	if err := <-firstResult; !agent.IsCode(err, agent.ErrorCancelled) {
-		t.Fatalf("cancelled waiter error = %v", err)
-	}
-	close(releaseConstruction)
-	second := <-secondResult
-	if err := <-secondError; err != nil {
-		t.Fatalf("second waiter: %v", err)
-	}
-	third, err := registry.AgentFor(context.Background(), key)
-	if err != nil {
-		t.Fatalf("cached lookup: %v", err)
-	}
-	if second == nil || second != third || constructions.Load() != 1 {
-		t.Fatalf("registry uniqueness failed: second=%p third=%p constructions=%d", second, third, constructions.Load())
-	}
-}
-
-func TestRegistryEnforcesCapacityAndEvictsIdleAgent(t *testing.T) {
+func TestRegistryReturnsOneAgentPerChat(t *testing.T) {
 	store := openStore(t)
 	var constructions atomic.Int32
 	factory := agent.FactoryFunc(func(ctx context.Context, key agent.Key) (*agent.Agent, error) {
 		constructions.Add(1)
-		return agent.New(ctx, key, dependencies(store, &fakeModel{text: "ok"}, &fakeDispatcher{}, &eventRecorder{}))
+		return agent.New(ctx, key, dependencies(store, &fakeModel{text: "ok"}, &fakeDispatcher{}))
 	})
-	registry, err := agent.NewRegistry(context.Background(), factory, agent.RegistryLimits{
-		MaxLive: 1, IdleTTL: 30 * time.Millisecond, ConstructionTimeout: time.Second,
-	})
+	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
-	t.Cleanup(func() { _ = registry.Close(context.Background()) })
-	if _, err := registry.AgentFor(context.Background(), newKey(t)); err != nil {
-		t.Fatalf("construct first agent: %v", err)
+	key := newKey(t)
+	agents := make(chan *agent.Agent, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			value, err := registry.AgentFor(context.Background(), key)
+			if err != nil {
+				t.Errorf("get agent: %v", err)
+			}
+			agents <- value
+		}()
 	}
-	secondKey := newKey(t)
-	if _, err := registry.AgentFor(context.Background(), secondKey); !agent.IsCode(err, agent.ErrorResourceExhausted) {
-		t.Fatalf("capacity error = %v, want resource_exhausted", err)
+	wait.Wait()
+	close(agents)
+	first := <-agents
+	for value := range agents {
+		if value != first {
+			t.Fatal("registry returned two agents for one chat")
+		}
 	}
-	time.Sleep(50 * time.Millisecond)
-	if _, err := registry.AgentFor(context.Background(), secondKey); err != nil {
-		t.Fatalf("construct after idle eviction: %v", err)
-	}
-	if constructions.Load() != 2 {
-		t.Fatalf("agent constructions = %d, want 2", constructions.Load())
+	other, err := registry.AgentFor(context.Background(), newKey(t))
+	if err != nil || other == first || constructions.Load() != 2 {
+		t.Fatalf("other chat agent = %p, %v; constructions = %d", other, err, constructions.Load())
 	}
 }
 
@@ -444,17 +384,16 @@ func newAgent(
 	store *appsqlite.Store,
 	model agent.ModelInvoker,
 	dispatcher agent.ResponseDispatcher,
-	events agent.ConfigEventSink,
 ) *agent.Agent {
 	t.Helper()
-	value, err := agent.New(context.Background(), key, dependencies(store, model, dispatcher, events))
+	value, err := agent.New(context.Background(), key, dependencies(store, model, dispatcher))
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	return value
 }
 
-func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher agent.ResponseDispatcher, events agent.ConfigEventSink) agent.Dependencies {
+func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher agent.ResponseDispatcher) agent.Dependencies {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	policyID, _ := identity.ParsePolicyID("part1-chat-gate.v1")
 	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes, "Vivy")
@@ -472,7 +411,6 @@ func dependencies(store *appsqlite.Store, model agent.ModelInvoker, dispatcher a
 		HistoryWindow: agent.DefaultHistoryWindow,
 		Model:         model,
 		Responses:     dispatcher,
-		Events:        events,
 		Clock:         agent.SystemClock{},
 	}
 }
@@ -612,22 +550,4 @@ type failingDispatcher struct{ err error }
 
 func (dispatcher failingDispatcher) Dispatch(context.Context, agent.DispatchRef) (agent.DeliveryResult, error) {
 	return agent.DeliveryResult{}, dispatcher.err
-}
-
-type eventRecorder struct {
-	mu     sync.Mutex
-	events []agent.ConfigChanged
-}
-
-func (recorder *eventRecorder) TryPublish(event agent.ConfigChanged) bool {
-	recorder.mu.Lock()
-	recorder.events = append(recorder.events, event)
-	recorder.mu.Unlock()
-	return true
-}
-
-func (recorder *eventRecorder) count() int {
-	recorder.mu.Lock()
-	defer recorder.mu.Unlock()
-	return len(recorder.events)
 }

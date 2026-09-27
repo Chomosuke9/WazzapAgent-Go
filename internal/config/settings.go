@@ -95,12 +95,9 @@ type Settings struct {
 	MessageDebounce time.Duration
 	MessageBurstCap uint32
 
-	AgentMaxLive             uint32
-	AgentIdleTTL             time.Duration
-	AgentConstructionTimeout time.Duration
-	ConnectTimeout           time.Duration
-	SendTimeout              time.Duration
-	ShutdownTimeout          time.Duration
+	ConnectTimeout  time.Duration
+	SendTimeout     time.Duration
+	ShutdownTimeout time.Duration
 
 	PolicyID        string
 	PolicyRevision  uint64
@@ -163,9 +160,7 @@ func DefaultSettings() Settings {
 		MessageDebounce: defaultMessageDebounce, MessageBurstCap: defaultMessageBurstCap,
 		HistoryWindow: defaultHistoryWindow, MaxContextBytes: defaultMaxContextBytes,
 		HistoryKeepLatest: defaultHistoryKeepLatest, HistoryMaxAge: defaultHistoryMaxAge,
-		AgentMaxLive: defaultRegistryMaxLive, AgentIdleTTL: defaultRegistryIdleTTL,
-		AgentConstructionTimeout: defaultConstructionTimeout,
-		ConnectTimeout:           defaultConnectTimeout, SendTimeout: defaultSendTimeout,
+		ConnectTimeout: defaultConnectTimeout, SendTimeout: defaultSendTimeout,
 		PairingOutput: defaultPairingOutput,
 		StartOnLaunch: false,
 		ChatDefaults:  DefaultChatDefaults(),
@@ -330,9 +325,8 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		messageDebounce: settings.MessageDebounce, messageBurstCap: settings.MessageBurstCap,
 		historyWindow: settings.HistoryWindow, maxContextBytes: settings.MaxContextBytes,
 		historyKeepLatest: settings.HistoryKeepLatest, historyMaxAge: settings.HistoryMaxAge,
-		registryMaxLive: settings.AgentMaxLive, registryIdleTTL: settings.AgentIdleTTL,
-		constructionTimeout: settings.AgentConstructionTimeout, connectTimeout: settings.ConnectTimeout,
-		sendTimeout: settings.SendTimeout, pairingOutput: nonempty(strings.ToLower(settings.PairingOutput), defaultPairingOutput),
+		connectTimeout: settings.ConnectTimeout,
+		sendTimeout:    settings.SendTimeout, pairingOutput: nonempty(strings.ToLower(settings.PairingOutput), defaultPairingOutput),
 		assistantName: strings.TrimSpace(settings.AssistantName),
 	}, nil
 }
@@ -405,7 +399,6 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "WAZZAP_HISTORY_WINDOW", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryWindow)}, {Key: "WAZZAP_MAX_CONTEXT_BYTES", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultMaxContextBytes)}, {Key: "WAZZAP_HISTORY_KEEP_LATEST", Group: "retention", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryKeepLatest)}, {Key: "WAZZAP_HISTORY_MAX_AGE", Group: "retention", Kind: FieldDuration, Default: defaultHistoryMaxAge.String()},
 		{Key: "WAZZAP_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "WAZZAP_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)}, {Key: "WAZZAP_COMMAND_QUEUE", Group: "command", Kind: FieldUint, Default: fmt.Sprint(defaultCommandQueue)}, {Key: "WAZZAP_COMMAND_WORKERS", Group: "command", Kind: FieldUint, Default: fmt.Sprint(defaultCommandWorkers)}, {Key: "WAZZAP_AI_QUEUE", Group: "ai", Kind: FieldUint, Default: fmt.Sprint(defaultAIQueue)}, {Key: "WAZZAP_AI_WORKERS", Group: "ai", Kind: FieldUint, Default: fmt.Sprint(defaultAIWorkers)},
 		{Key: "WAZZAP_MESSAGE_DEBOUNCE", Group: "batching", Kind: FieldDuration, Default: defaultMessageDebounce.String()}, {Key: "WAZZAP_MESSAGE_BURST_CAP", Group: "batching", Kind: FieldUint, Default: fmt.Sprint(defaultMessageBurstCap)},
-		{Key: "WAZZAP_AGENT_MAX_LIVE", Group: "registry", Kind: FieldUint, Default: fmt.Sprint(defaultRegistryMaxLive)}, {Key: "WAZZAP_AGENT_IDLE_TTL", Group: "registry", Kind: FieldDuration, Default: defaultRegistryIdleTTL.String()}, {Key: "WAZZAP_AGENT_CONSTRUCTION_TIMEOUT", Group: "registry", Kind: FieldDuration, Default: defaultConstructionTimeout.String()},
 		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
 		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
 		{Key: "WAZZAP_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "WAZZAP_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
@@ -496,15 +489,6 @@ func (settings Settings) withDefaults() Settings {
 	if settings.HistoryMaxAge == 0 {
 		settings.HistoryMaxAge = defaults.HistoryMaxAge
 	}
-	if settings.AgentMaxLive == 0 {
-		settings.AgentMaxLive = defaults.AgentMaxLive
-	}
-	if settings.AgentIdleTTL == 0 {
-		settings.AgentIdleTTL = defaults.AgentIdleTTL
-	}
-	if settings.AgentConstructionTimeout == 0 {
-		settings.AgentConstructionTimeout = defaults.AgentConstructionTimeout
-	}
 	if settings.ConnectTimeout == 0 {
 		settings.ConnectTimeout = defaults.ConnectTimeout
 	}
@@ -588,12 +572,6 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	if settings.SendTimeout != 0 {
 		checkDuration("WAZZAP_SEND_TIMEOUT", settings.SendTimeout, 5*time.Minute)
 	}
-	if settings.AgentIdleTTL != 0 {
-		checkDuration("WAZZAP_AGENT_IDLE_TTL", settings.AgentIdleTTL, 24*time.Hour)
-	}
-	if settings.AgentConstructionTimeout != 0 {
-		checkDuration("WAZZAP_AGENT_CONSTRUCTION_TIMEOUT", settings.AgentConstructionTimeout, time.Minute)
-	}
 	if settings.MessageDebounce != 0 {
 		checkDuration("WAZZAP_MESSAGE_DEBOUNCE", settings.MessageDebounce, time.Minute)
 	}
@@ -618,7 +596,6 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	checkUint("WAZZAP_AI_QUEUE", settings.AIQueue, 1, 65536)
 	checkUint("WAZZAP_AI_WORKERS", settings.AIWorkers, 1, 256)
 	checkUint("WAZZAP_MESSAGE_BURST_CAP", settings.MessageBurstCap, 1, 256)
-	checkUint("WAZZAP_AGENT_MAX_LIVE", settings.AgentMaxLive, 1, 1000000)
 	if settings.FallbackEndpoint != "" || settings.FallbackAPIKey != "" {
 		if (strings.TrimSpace(settings.FallbackEndpoint) == "") != (strings.TrimSpace(settings.FallbackAPIKey) == "") {
 			add("WAZZAP_LLM_FALLBACK_ENDPOINT", "incomplete", "fallback endpoint and key must be configured together")

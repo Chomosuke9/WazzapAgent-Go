@@ -242,9 +242,6 @@ export function SettingsPage() {
       <section className="settings-category-panel" hidden={category !== "advanced"} aria-label="Runtime & policy">
         <div className="settings-panel-heading"><h2>Runtime & policy</h2><p className="muted">{settingsCategories.find((item) => item.id === "advanced")?.description}</p></div>
       <div className="settings-form-grid">
-        <label><span>Agent max live</span><input type="number" min="0" value={draft.agentMaxLive} onChange={(event) => update("agentMaxLive", Number(event.target.value))} /></label>
-        <label><span>Agent idle TTL</span><input value={draft.agentIdleTTL} onChange={(event) => update("agentIdleTTL", event.target.value)} /></label>
-        <label><span>Agent construction timeout</span><input value={draft.agentConstructionTimeout} onChange={(event) => update("agentConstructionTimeout", event.target.value)} /></label>
         <label><span>Connect timeout</span><input value={draft.connectTimeout} onChange={(event) => update("connectTimeout", event.target.value)} /></label>
         <label><span>Send timeout</span><input value={draft.sendTimeout} onChange={(event) => update("sendTimeout", event.target.value)} /></label>
         <label><span>Shutdown timeout</span><input value={draft.shutdownTimeout} onChange={(event) => update("shutdownTimeout", event.target.value)} /></label>
