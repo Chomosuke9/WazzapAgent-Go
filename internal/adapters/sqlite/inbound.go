@@ -1195,6 +1195,25 @@ func resolveQuotedMessage(
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, storageError("resolve quoted assistant", err)
 	}
+	var stickerName string
+	err = query.QueryRowContext(ctx, `SELECT message_id, name FROM sent_stickers
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND provider_receipt = ?`,
+		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
+	).Scan(&responseValue, &stickerName)
+	if err == nil {
+		messageID, parseErr := identity.ParseMessageID(responseValue)
+		if parseErr != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve quoted sticker", parseErr)
+		}
+		text = "[sticker]"
+		if stickerName != "" {
+			text = "[sticker: " + stickerName + "]"
+		}
+		return &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, storageError("resolve quoted sticker", err)
+	}
 	var messageValue, senderRefValue string
 	var messageSequence sql.NullInt64
 	var senderIsAdmin, senderIsSuperAdmin int64

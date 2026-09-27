@@ -1037,7 +1037,7 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	ingress := &directIngress{}
-	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report}
+	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report, Stickers: store.Stickers()}
 	ingress.dispatcher, err = inbound.NewDispatcher(
 		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender}, dispatcherOptions,
 	)

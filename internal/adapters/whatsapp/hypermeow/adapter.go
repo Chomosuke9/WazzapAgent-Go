@@ -43,6 +43,13 @@ type TargetStore interface {
 	SetChatMute(context.Context, agent.Key, identity.SenderRef, uint32, time.Time) error
 }
 
+// StickerStore is the sticker catalog plus a record of sent stickers, so a
+// reply to one counts as a reply to the bot.
+type StickerStore interface {
+	sticker.Catalog
+	RecordSentSticker(ctx context.Context, key agent.Key, providerReceipt, name string) error
+}
+
 type GroupNameStore interface {
 	SaveGroupName(context.Context, identity.TenantID, identity.AccountID, string, string) error
 }
@@ -75,7 +82,7 @@ type Config struct {
 	GroupMetadata   GroupMetadataStore
 	Broadcasts      broadcastmodel.Store
 	// Stickers is the catalog the model's send_sticker effect reads from.
-	Stickers sticker.Catalog
+	Stickers StickerStore
 	Logger   *slog.Logger
 }
 
@@ -90,7 +97,7 @@ type Adapter struct {
 	groupNames      GroupNameStore
 	groupMetadata   GroupMetadataStore
 	broadcasts      broadcastmodel.Store
-	stickers        sticker.Catalog
+	stickers        StickerStore
 	handler         CandidateHandler
 	logger          *slog.Logger
 	container       *sqlstore.Container

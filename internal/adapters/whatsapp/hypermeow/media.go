@@ -242,5 +242,13 @@ func (adapter *Adapter) sendSticker(ctx context.Context, key agent.Key, value st
 			ContextInfo:   contextInfo,
 		}}, nil
 	})
+	if err == nil && adapter.stickers != nil {
+		// The sticker is already sent: failing now would send it again, so a
+		// failed record only means replies to it do not count as replies to
+		// the bot.
+		if recordErr := adapter.stickers.RecordSentSticker(ctx, key, result.ProviderReceipt, value.Name); recordErr != nil {
+			adapter.logger.Warn("record sent sticker failed", "error", recordErr)
+		}
+	}
 	return result.ProviderReceipt, err
 }

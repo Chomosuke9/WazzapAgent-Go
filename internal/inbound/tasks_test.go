@@ -10,6 +10,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
 // startTaskChat sends one ordinary message so the chat exists, and returns
@@ -59,6 +60,25 @@ func TestScheduledTaskRunsOnceAsASystemTurn(t *testing.T) {
 	tasks, err := fixture.store.Inbound().ListScheduledTasks(context.Background(), key.TenantID)
 	if err != nil || len(tasks) != 0 {
 		t.Fatalf("tasks after firing = %v, %v", tasks, err)
+	}
+}
+
+func TestScheduledTaskOffersTheChatStickers(t *testing.T) {
+	fixture := newFixture(t)
+	key, source := startTaskChat(t, fixture, "15550000034@s.whatsapp.net")
+	if _, err := fixture.store.Stickers().SaveSticker(context.Background(), key, sticker.Sticker{Name: "wave", WebP: []byte("webp")}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := fixture.handler.dispatcher
+	if err := dispatcher.ScheduleTask(context.Background(), key, source, time.Now().Add(20*time.Millisecond), "send the wave sticker"); err != nil {
+		t.Fatalf("schedule task: %v", err)
+	}
+	dispatcher.WaitTasks()
+	if err := fixture.handler.settle(nil); err != nil {
+		t.Fatalf("task turn: %v", err)
+	}
+	if got := fixture.model.lastRequest().Stickers; len(got) != 1 || got[0] != "wave" {
+		t.Fatalf("task turn stickers = %v, want [wave]", got)
 	}
 }
 

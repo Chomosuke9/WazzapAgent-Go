@@ -184,6 +184,7 @@ func (dispatcher *Dispatcher) runTask(ctx context.Context, task ScheduledTask) e
 		Input:         []agent.ContentPart{agent.TextPart{Text: scheduledTaskText(task.Prompt)}},
 		Capabilities:  capabilities,
 		Commands:      commandNames,
+		Stickers:      dispatcher.stickerNames(ctx, task.Key),
 		PolicyVersion: snapshot.Version,
 		RequestedAt:   task.FireAt,
 	}

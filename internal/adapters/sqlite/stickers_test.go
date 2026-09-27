@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
@@ -80,5 +81,29 @@ func TestCommandMediaIsStoredWithTheCommandMessage(t *testing.T) {
 	}
 	if _, err := store.Inbound().ReadCommandMedia(ctx, plain.Message); !agent.IsCode(err, agent.ErrorNotFound) {
 		t.Fatalf("message without media err = %v", err)
+	}
+}
+
+func TestReplyToASentStickerIsAReplyToTheBot(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sent-sticker-1", "15550000103@s.whatsapp.net"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	if err := store.Stickers().RecordSentSticker(ctx, key, "BOT-STICKER-1", "wave"); err != nil {
+		t.Fatal(err)
+	}
+	reply := testCandidate(t, "sent-sticker-2", "15550000103@s.whatsapp.net")
+	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
+	reply.ProviderQuotedMessageID = "BOT-STICKER-1"
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := claimed.Message.Quote
+	if !claimed.Message.RepliedToBot || quote == nil || quote.Role != conversation.QuoteAssistant || quote.Text != "[sticker: wave]" {
+		t.Fatalf("repliedToBot=%v quote=%#v", claimed.Message.RepliedToBot, quote)
 	}
 }

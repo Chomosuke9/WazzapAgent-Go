@@ -7,6 +7,7 @@ import (
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
@@ -110,6 +111,26 @@ func (store *StickerStore) LoadSticker(ctx context.Context, key agent.Key, name 
 	}
 	value.Animated = animated == 1
 	return value, nil
+}
+
+// RecordSentSticker binds a sent sticker's provider receipt to a new
+// assistant message ID. name is empty for a sticker that is not in the catalog.
+func (store *StickerStore) RecordSentSticker(ctx context.Context, key agent.Key, providerReceipt, name string) error {
+	if err := key.Validate(); err != nil || providerReceipt == "" {
+		return agent.NewError(agent.ErrorInvalidArgument, "record sent sticker", errors.New("chat and provider receipt are required"))
+	}
+	messageID, err := identity.NewMessageID()
+	if err != nil {
+		return agent.NewError(agent.ErrorInternal, "record sent sticker", err)
+	}
+	_, err = store.db.ExecContext(ctx, `INSERT INTO sent_stickers(tenant_id, account_id, chat_id, provider_receipt, message_id, name, sent_at_ms)
+	  VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), providerReceipt, messageID.String(), name,
+		store.clock.Now().UTC().UnixMilli())
+	if err != nil {
+		return storageError("record sent sticker", err)
+	}
+	return nil
 }
 
 // ReadCommandMedia returns the media payload captured with a slash command,
