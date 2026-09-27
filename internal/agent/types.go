@@ -81,12 +81,13 @@ const (
 	CapabilityCommandExecute Capability = "command.execute"
 	CapabilityMessageReact   Capability = "message.react"
 	CapabilityMessageDelete  Capability = "message.delete"
+	CapabilityMessageSticker Capability = "message.sticker"
 )
 
 // Valid reports whether capability is one the application knows.
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete:
+	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageSticker:
 		return true
 	default:
 		return false
@@ -125,15 +126,17 @@ type TextPart struct{ Text string }
 func (TextPart) isContentPart() {}
 
 type Invocation struct {
-	ID            identity.InvocationID
-	Causation     CausationRef
-	Cause         InvocationCause
-	Sender        *SenderContext
-	Quote         *QuoteContext
-	Input         []ContentPart
-	Mentions      []MentionContext
-	Capabilities  CapabilitySet
-	Commands      []string
+	ID           identity.InvocationID
+	Causation    CausationRef
+	Cause        InvocationCause
+	Sender       *SenderContext
+	Quote        *QuoteContext
+	Input        []ContentPart
+	Mentions     []MentionContext
+	Capabilities CapabilitySet
+	Commands     []string
+	// Stickers are the chat's sticker catalog names, sorted.
+	Stickers      []string
 	PolicyVersion ConfigVersion
 	RequestedAt   time.Time
 }
@@ -193,19 +196,22 @@ type ModelRequest struct {
 	Messages         []ModelMessage
 	Capabilities     CapabilitySet
 	Commands         []string
+	Stickers         []string
 	ContextMessages  map[string]identity.MessageID
 }
 
 const MaxModelEffects = 8
 
 // EffectIntent is a closed, provider-neutral model output: a reaction from
-// react_to_message or a command from reply_message. Each is chat-bound by the
+// react_to_message, a sticker from send_sticker, or a command from
+// reply_message. Each is chat-bound by the
 // invocation and validated before a durable effect row can be planned.
 type EffectKind uint8
 
 const (
 	EffectReact      EffectKind = 1
 	EffectRunCommand EffectKind = 5
+	EffectSticker    EffectKind = 6
 )
 
 type EffectIntent struct {
@@ -213,14 +219,19 @@ type EffectIntent struct {
 	TargetMessageID identity.MessageID
 	Emoji           string
 	Command         string
+	// Sticker is a catalog name. TargetMessageID is the optional quote.
+	Sticker string
 }
 
 // Capability is the tool capability the intent needs. RunCommand has none:
 // the command registry's permission expression is the only check, evaluated
 // when the command runs.
 func (intent EffectIntent) Capability() Capability {
-	if intent.Kind == EffectReact {
-		return "message.react"
+	switch intent.Kind {
+	case EffectReact:
+		return CapabilityMessageReact
+	case EffectSticker:
+		return CapabilityMessageSticker
 	}
 	return ""
 }
@@ -228,14 +239,18 @@ func (intent EffectIntent) Capability() Capability {
 func (intent EffectIntent) Validate() error {
 	switch intent.Kind {
 	case EffectReact:
-		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Command != "" {
+		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Command != "" || intent.Sticker != "" {
 			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))
 		}
 	case EffectRunCommand:
 		if strings.TrimSpace(intent.Command) != intent.Command || !strings.HasPrefix(intent.Command, "/") ||
 			len(intent.Command) == 0 || len(intent.Command) > MaxInputBytes || !utf8.ValidString(intent.Command) ||
-			intent.Emoji != "" {
+			intent.Emoji != "" || intent.Sticker != "" {
 			return NewError(ErrorInvalidArgument, "validate command intent", fmt.Errorf("registered command is malformed"))
+		}
+	case EffectSticker:
+		if !validStickerName(intent.Sticker) || intent.Emoji != "" || intent.Command != "" {
+			return NewError(ErrorInvalidArgument, "validate sticker intent", fmt.Errorf("sticker name is malformed"))
 		}
 	default:
 		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("effect kind is invalid"))
@@ -333,6 +348,11 @@ func validateInvocation(key Key, invocation Invocation) error {
 			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("model command names must be sorted and unique"))
 		}
 	}
+	for index, name := range invocation.Stickers {
+		if !validStickerName(name) || (index > 0 && invocation.Stickers[index-1] >= name) {
+			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("sticker names must be valid, sorted and unique"))
+		}
+	}
 	if invocation.PolicyVersion == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("policy version is required"))
 	}
@@ -402,4 +422,18 @@ func quoteMentions(quote *QuoteContext) []MentionContext {
 func writeField(buffer *bytes.Buffer, value string) {
 	_ = binary.Write(buffer, binary.BigEndian, uint32(len(value)))
 	buffer.WriteString(value)
+}
+
+// validStickerName matches the sticker catalog's names: 1 to 64 of a-z, 0-9,
+// "_" and "-".
+func validStickerName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, char := range name {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
 }

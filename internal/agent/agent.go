@@ -266,6 +266,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, config *C
 		Messages:         messages,
 		Capabilities:     CapabilitySet{values: invocation.Capabilities.Values()},
 		Commands:         append([]string(nil), invocation.Commands...),
+		Stickers:         append([]string(nil), invocation.Stickers...),
 		ContextMessages:  contextMessageMap(page.Entries),
 	}
 	invokeStarted := time.Now()
@@ -537,6 +538,7 @@ func cloneInvocation(invocation Invocation) Invocation {
 	invocation.Mentions = cloneMentions(invocation.Mentions)
 	invocation.Capabilities = CapabilitySet{values: invocation.Capabilities.Values()}
 	invocation.Commands = append([]string(nil), invocation.Commands...)
+	invocation.Stickers = append([]string(nil), invocation.Stickers...)
 	return invocation
 }
 

@@ -131,3 +131,27 @@ func seedEffectTarget(t *testing.T, store *Store, key agent.Key) identity.Messag
 	}
 	return messageID
 }
+
+func TestStickerEffectRoundTripsWithAndWithoutQuote(t *testing.T) {
+	store := openTestStore(t)
+	key := testKey(t)
+	target := seedEffectTarget(t, store, key)
+	principal, err := policy.SystemPrincipal(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, planned := range []effect.Sticker{{Name: "wave"}, {Name: "cat_2", QuotedMessageID: target}} {
+		invocationID, _ := identity.NewInvocationID()
+		effectID, _ := identity.NewEffectID()
+		ref := effect.Ref{Key: key, EffectID: effectID}
+		if _, err := store.Effects().Plan(context.Background(), effect.PlanRequest{
+			Ref: ref, InvocationID: invocationID, Principal: principal, Effect: planned,
+		}, time.Now().UTC()); err != nil {
+			t.Fatalf("plan %#v: %v", planned, err)
+		}
+		loaded, err := store.Effects().Load(context.Background(), ref)
+		if err != nil || loaded.Request.Effect != planned {
+			t.Fatalf("loaded %#v, err=%v, want %#v", loaded.Request.Effect, err, planned)
+		}
+	}
+}

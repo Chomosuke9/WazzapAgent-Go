@@ -11,6 +11,7 @@ WazzapAgent Go is a complete rewrite of WazzapAgent: a self-hosted WhatsApp assi
 - Send broadcasts to multiple groups immediately or schedule them for later.
 - View conversation activity and Agent usage in the dashboard and analytics pages.
 - Use group moderation commands when the requester and the bot account have the required permissions.
+- Make stickers with `/sticker`, and save named stickers with `/add-sticker` that the Agent can send in that chat.
 - Keep conversation history and Agent actions durable across restarts.
 
 ## App modes
@@ -26,7 +27,7 @@ WazzapAgent needs a WhatsApp account and an OpenAI-compatible chat-completions e
 
 ## Data and supported content
 
-The app starts building its conversation history when it receives messages; it does not import older WhatsApp history or automatically migrate data from the previous WazzapAgent application. Text conversations are supported. Stickers appear as text markers, and media processing is not available.
+The app starts building its conversation history when it receives messages; it does not import older WhatsApp history or automatically migrate data from the previous WazzapAgent application. Text conversations are supported; the Agent sees images, videos and stickers only as text markers. `/sticker` turns images and stickers into stickers on every platform; turning videos and GIFs into stickers needs [ffmpeg](https://ffmpeg.org) on the `PATH` of the computer running the app.
 
 ## Downloads and builds
 

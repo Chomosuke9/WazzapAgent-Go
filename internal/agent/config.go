@@ -108,10 +108,10 @@ const (
 func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMuteKick }
 
 // ModelToolCapabilities is the complete model-output capability set: the
-// react_to_message tool. Commands the model requests in reply_message are not
+// react_to_message and send_sticker tools. Commands the model requests in reply_message are not
 // capabilities; the command registry's permission expression decides them.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	result, _ := NewCapabilitySet(CapabilityMessageReact)
+	result, _ := NewCapabilitySet(CapabilityMessageReact, CapabilityMessageSticker)
 	return result
 }
 

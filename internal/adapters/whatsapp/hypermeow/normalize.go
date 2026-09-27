@@ -114,6 +114,7 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 		ProviderQuotedMessageID:   quotedMessageID,
 		ProviderQuotedMessageJSON: quotedMessageJSON,
 		ProviderQuotedFromMe:      quotedMessageFromMe,
+		ProviderMediaJSON:         commandMedia(text, event.Message, contextInfo),
 		ProviderChatAddress:       chatAddress,
 		SenderLID:                 mustLID(senderLID),
 		ProviderSenderPhone:       jidString(senderPhone),

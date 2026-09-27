@@ -14,6 +14,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
 // Command is one slash command.
@@ -49,6 +50,10 @@ type Platform struct {
 	Text    TextSender
 	Buttons ButtonSender
 	Group   GroupModerator
+	Media   MediaDownloader
+	// Stickers sends stickers; Catalog is each chat's named sticker store.
+	Stickers StickerSender
+	Catalog  sticker.Catalog
 }
 
 type TextSender interface {
@@ -73,11 +78,46 @@ type GroupModerator interface {
 	MuteGroupMember(ctx context.Context, key agent.Key, ref identity.SenderRef, minutes uint32, now time.Time) error
 }
 
+// MediaKind is what kind of media a command received.
+type MediaKind uint8
+
+const (
+	MediaImage MediaKind = iota + 1
+	MediaVideo
+	MediaSticker
+)
+
+// Media is the image, video or sticker a command message carried or replied to.
+type Media struct {
+	Kind MediaKind
+	// Data is the downloaded file. It is empty for a Lottie sticker.
+	Data []byte
+	// Animated is set for animated stickers and GIF-style videos.
+	Animated bool
+	// Lottie is set for WhatsApp's Lottie (premium) stickers: the provider
+	// payload that resends the sticker unchanged. It is opaque to commands.
+	Lottie []byte
+}
+
+// MediaDownloader fetches media from a payload the adapter captured with the
+// command message.
+type MediaDownloader interface {
+	DownloadMedia(ctx context.Context, payload []byte) (Media, error)
+}
+
+// StickerSender sends a sticker to a chat, quoting quoted when it is set.
+type StickerSender interface {
+	SendSticker(ctx context.Context, key agent.Key, sticker sticker.Sticker, quoted identity.MessageID) error
+}
+
 // Store is the durable inbox a command message came from. The registry uses
 // it to mark the message handled. Commands never call it.
 type Store interface {
 	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
 	RawQuotedMessageReader
+	// ReadCommandMedia returns the media payload captured with the command,
+	// or an agent.ErrorNotFound error when it carried none.
+	ReadCommandMedia(context.Context, conversation.IncomingMessage) ([]byte, error)
 }
 
 type Observer interface {

@@ -338,6 +338,12 @@ func (handler *Dispatcher) processBatch(
 	if err != nil {
 		return err
 	}
+	if handler.options.Stickers != nil {
+		// A catalog that cannot be read only hides send_sticker for this turn.
+		if names, listErr := handler.options.Stickers.StickerNames(ctx, key); listErr == nil {
+			anchor.Stickers = names
+		}
+	}
 	started := time.Now()
 	var result agent.InvokeResult
 	result, err = currentAgent.InvokeWith(ctx, anchor, snapshot, observedChat)

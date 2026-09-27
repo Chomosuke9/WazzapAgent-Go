@@ -26,6 +26,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
 const sendStripeCount = 64
@@ -73,7 +74,9 @@ type Config struct {
 	GroupNames      GroupNameStore
 	GroupMetadata   GroupMetadataStore
 	Broadcasts      broadcastmodel.Store
-	Logger          *slog.Logger
+	// Stickers is the catalog the model's send_sticker effect reads from.
+	Stickers sticker.Catalog
+	Logger   *slog.Logger
 }
 
 type Adapter struct {
@@ -87,6 +90,7 @@ type Adapter struct {
 	groupNames      GroupNameStore
 	groupMetadata   GroupMetadataStore
 	broadcasts      broadcastmodel.Store
+	stickers        sticker.Catalog
 	handler         CandidateHandler
 	logger          *slog.Logger
 	container       *sqlstore.Container
@@ -167,6 +171,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		groupNames:     config.GroupNames,
 		groupMetadata:  config.GroupMetadata,
 		broadcasts:     config.Broadcasts,
+		stickers:       config.Stickers,
 		logger:         logger,
 		container:      container,
 		client:         client,

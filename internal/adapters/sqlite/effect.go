@@ -305,6 +305,10 @@ func effectTarget(value effect.Effect) (identity.MessageID, bool) {
 		if !typed.TargetMessageID.IsZero() {
 			return typed.TargetMessageID, true
 		}
+	case effect.Sticker:
+		if !typed.QuotedMessageID.IsZero() {
+			return typed.QuotedMessageID, true
+		}
 	default:
 		return identity.MessageID{}, false
 	}
@@ -331,6 +335,7 @@ type effectPayload struct {
 	Invocation  string               `json:"invocation,omitempty"`
 	Emoji       string               `json:"emoji,omitempty"`
 	Command     string               `json:"command,omitempty"`
+	Sticker     string               `json:"sticker,omitempty"`
 }
 
 // encodeEffect returns the kind, the queryable target column and the JSON
@@ -351,6 +356,8 @@ func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
 		target = typed.TargetMessageID
 	case effect.RunCommand:
 		target, payload.Command = typed.TargetMessageID, typed.Command
+	case effect.Sticker:
+		target, payload.Sticker = typed.QuotedMessageID, typed.Name
 	default:
 		return 0, nil, "", agent.NewError(agent.ErrorInvalidArgument, "encode typed effect", errors.New("effect type is not supported"))
 	}
@@ -394,6 +401,8 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 		value = effect.DeleteMessage{TargetMessageID: targetID}
 	case effect.KindRunCommand:
 		value = effect.RunCommand{Command: payload.Command, TargetMessageID: targetID}
+	case effect.KindSticker:
+		value = effect.Sticker{Name: payload.Sticker, QuotedMessageID: targetID}
 	default:
 		return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect kind is invalid"))
 	}

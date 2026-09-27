@@ -119,6 +119,15 @@ func (store *InboundStore) ClaimAndResolveSender(
 			return inbound.ClaimedMessage{}, storageError("persist /catch quoted message", err)
 		}
 	}
+	if len(candidate.ProviderMediaJSON) > 0 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO command_media(tenant_id, account_id, chat_id, invocation_id, message_json)
+		  VALUES (?, ?, ?, ?, ?)`,
+			candidate.TenantID.String(), candidate.AccountID.String(), chatID.String(), invocationID.String(), candidate.ProviderMediaJSON,
+		)
+		if err != nil {
+			return inbound.ClaimedMessage{}, storageError("persist command media", err)
+		}
+	}
 	if err := persistInboundMentions(ctx, tx, candidate.TenantID, candidate.AccountID, chatID, messageID, resolvedMentions); err != nil {
 		return inbound.ClaimedMessage{}, err
 	}

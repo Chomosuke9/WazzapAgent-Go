@@ -3,11 +3,13 @@ module github.com/Chomosuke9/WazzapAgent-Go
 go 1.26.8
 
 require (
+	github.com/gen2brain/webp v0.6.4
 	github.com/google/uuid v1.6.0
 	github.com/langchain-ai/langsmith-go v0.25.4
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/polymorfa/hypermeow v0.0.0-20260811011529-930d77bfc312
 	github.com/wailsapp/wails/v3 v3.0.0-beta.23
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.41.0
 	google.golang.org/protobuf v1.36.12
@@ -22,6 +24,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

@@ -11,6 +11,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
 // Context is everything a running command may use.
@@ -115,6 +116,39 @@ func (c *Context) QuotedRaw(ctx context.Context) (RawQuotedMessage, error) {
 		return RawQuotedMessage{}, agent.NewError(agent.ErrorNotFound, "read quoted message", errors.New("command has no durable inbox record"))
 	}
 	return c.invocation.Store.ReadRawQuotedMessage(ctx, c.Message)
+}
+
+// Media downloads the image, video or sticker this command was sent with,
+// or else the one it replied to. It returns an agent.ErrorNotFound error when
+// there is none.
+func (c *Context) Media(ctx context.Context) (Media, error) {
+	if c.invocation.Store == nil {
+		return Media{}, agent.NewError(agent.ErrorNotFound, "read command media", errors.New("command has no durable inbox record"))
+	}
+	if c.invocation.Platform.Media == nil {
+		return Media{}, c.unavailable("media download")
+	}
+	payload, err := c.invocation.Store.ReadCommandMedia(ctx, c.Message)
+	if err != nil {
+		return Media{}, err
+	}
+	return c.invocation.Platform.Media.DownloadMedia(ctx, payload)
+}
+
+// SendSticker sends a sticker to the chat as a reply to the command message.
+func (c *Context) SendSticker(ctx context.Context, value sticker.Sticker) error {
+	if c.invocation.Platform.Stickers == nil {
+		return c.unavailable("stickers")
+	}
+	return c.invocation.Platform.Stickers.SendSticker(ctx, c.Key(), value, c.Message.ID)
+}
+
+// Stickers returns the chat sticker catalog.
+func (c *Context) Stickers() (sticker.Catalog, error) {
+	if c.invocation.Platform.Catalog == nil {
+		return nil, c.unavailable("sticker catalog")
+	}
+	return c.invocation.Platform.Catalog, nil
 }
 
 // ResetHistory clears the chat's conversation history.

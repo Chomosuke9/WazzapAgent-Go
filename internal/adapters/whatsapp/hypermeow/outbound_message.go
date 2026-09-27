@@ -30,30 +30,42 @@ func (adapter *Adapter) textMessage(ctx context.Context, request action.SendText
 		contextInfo.NonJIDMentions = proto.Uint32(nonJIDMentions)
 	}
 
-	// Resolve the model-selected target before sending. An unresolved target must
-	// not silently turn an explicit reply into an ordinary message.
-	if !request.QuotedMessageID.IsZero() {
-		quotedChat, quotedProviderID, quotedSender, _, resolveErr := adapter.targets.ResolveMessageTarget(ctx, request.Key, request.QuotedMessageID)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-		if quotedChat != address || quotedProviderID == "" {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp reply target", errors.New("quoted target does not belong to destination chat"))
-		}
-		contextInfo.StanzaID = proto.String(quotedProviderID)
-		contextInfo.RemoteJID = proto.String(target.ToNonAD().String())
-		if quotedSender != "" {
-			contextInfo.Participant = proto.String(quotedSender)
-		} else if own := adapter.ownJID(); !own.IsEmpty() {
-			// Outbound actions have no human sender row. Group replies to the
-			// bot's own messages still need the original sender JID.
-			contextInfo.Participant = proto.String(own.String())
-		}
+	quote, err := adapter.quoteContext(ctx, request.Key, address, target, request.QuotedMessageID)
+	if err != nil {
+		return nil, err
 	}
-	if !request.QuotedMessageID.IsZero() || len(mentionedJIDs) > 0 || nonJIDMentions > 0 {
+	if quote != nil {
+		contextInfo.StanzaID, contextInfo.RemoteJID, contextInfo.Participant = quote.StanzaID, quote.RemoteJID, quote.Participant
+	}
+	if quote != nil || len(mentionedJIDs) > 0 || nonJIDMentions > 0 {
 		message.ExtendedTextMessage.ContextInfo = contextInfo
 	}
 	return message, nil
+}
+
+// quoteContext is the context info that makes a message reply to quoted, or
+// nil when quoted is zero. An unresolved target fails the send rather than
+// silently turning an explicit reply into an ordinary message.
+func (adapter *Adapter) quoteContext(ctx context.Context, key agent.Key, address string, target types.JID, quoted identity.MessageID) (*waE2E.ContextInfo, error) {
+	if quoted.IsZero() {
+		return nil, nil
+	}
+	quotedChat, quotedProviderID, quotedSender, _, err := adapter.targets.ResolveMessageTarget(ctx, key, quoted)
+	if err != nil {
+		return nil, err
+	}
+	if quotedChat != address || quotedProviderID == "" {
+		return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp reply target", errors.New("quoted target does not belong to destination chat"))
+	}
+	contextInfo := &waE2E.ContextInfo{StanzaID: proto.String(quotedProviderID), RemoteJID: proto.String(target.ToNonAD().String())}
+	if quotedSender != "" {
+		contextInfo.Participant = proto.String(quotedSender)
+	} else if own := adapter.ownJID(); !own.IsEmpty() {
+		// Outbound actions have no human sender row. Group replies to the
+		// bot's own messages still need the original sender JID.
+		contextInfo.Participant = proto.String(own.String())
+	}
+	return contextInfo, nil
 }
 
 // buttonsMessage builds a native-flow message with one quick_reply button per

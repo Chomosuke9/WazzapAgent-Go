@@ -462,6 +462,8 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 		return effect.React{TargetMessageID: intent.TargetMessageID, Emoji: intent.Emoji}, nil
 	case agent.EffectRunCommand:
 		return effect.RunCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
+	case agent.EffectSticker:
+		return effect.Sticker{Name: intent.Sticker, QuotedMessageID: intent.TargetMessageID}, nil
 	default:
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", errors.New("effect kind is invalid"))
 	}

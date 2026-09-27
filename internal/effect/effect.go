@@ -23,6 +23,7 @@ const (
 	KindDeleteMessage
 	// Kinds 3 and 4 were mark-read and presence hints that nothing planned.
 	KindRunCommand Kind = 5
+	KindSticker    Kind = 6
 )
 
 type Effect interface {
@@ -55,6 +56,24 @@ func (DeleteMessage) Capability() agent.Capability { return agent.CapabilityMess
 func (effect DeleteMessage) Validate() error {
 	if effect.TargetMessageID.IsZero() {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate delete effect", errors.New("target message is required"))
+	}
+	return nil
+}
+
+// Sticker sends the chat's catalog sticker Name, quoting QuotedMessageID
+// when it is set.
+type Sticker struct {
+	Name            string
+	QuotedMessageID identity.MessageID
+}
+
+func (Sticker) isEffect()                    {}
+func (Sticker) Kind() Kind                   { return KindSticker }
+func (Sticker) Capability() agent.Capability { return agent.CapabilityMessageSticker }
+func (effect Sticker) Validate() error {
+	intent := agent.EffectIntent{Kind: agent.EffectSticker, Sticker: effect.Name}
+	if err := intent.Validate(); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate sticker effect", err)
 	}
 	return nil
 }
