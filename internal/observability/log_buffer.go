@@ -283,9 +283,10 @@ func logLevelName(level slog.Level) string {
 var sensitiveLogValue = regexp.MustCompile(`(?i)(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|password|secret|authorization)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)`)
 var bearerLogValue = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]+`)
 
-// whatsAppAddress matches phone, LID and group addresses; the server part is
-// kept so the kind of chat stays readable.
-var whatsAppAddress = regexp.MustCompile(`\b[0-9]+(?:[-.:][0-9]+)*@(s\.whatsapp\.net|c\.us|lid|g\.us)\b`)
+// whatsAppAddress matches every numeric WhatsApp address (phone, LID, hosted,
+// group, newsletter and so on); the server part is kept so the kind of chat
+// stays readable.
+var whatsAppAddress = regexp.MustCompile(`\b[0-9]+(?:[-.:][0-9]+)*@(s\.whatsapp\.net|c\.us|hosted\.lid|lid|hosted|g\.us|broadcast|newsletter|msgr|interop|bot)\b`)
 
 // whatsAppMessageID matches WhatsApp message IDs (long upper-case hex).
 var whatsAppMessageID = regexp.MustCompile(`\b[0-9A-F]{16,}\b`)
