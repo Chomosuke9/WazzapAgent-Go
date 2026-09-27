@@ -145,6 +145,14 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	// The environment-driven runtime always composes the agent, so its
+	// settings are required whenever WhatsApp is on, even with the agent
+	// switched off.
+	if settings.WhatsAppEnabled {
+		if err := ValidateAgent(settings); err != nil {
+			return Snapshot{}, err
+		}
+	}
 	snapshot, err := SnapshotFromSettings(settings)
 	if err != nil {
 		return Snapshot{}, err
