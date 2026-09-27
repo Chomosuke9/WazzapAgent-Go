@@ -120,21 +120,16 @@ func TestWrapNativeFlowWrapsBareBroadcastPayload(t *testing.T) {
 	}
 }
 
-func TestNativeFlowSendReplacesHypermeowBizNode(t *testing.T) {
+func TestNativeFlowSendAddsPersonalBizNodes(t *testing.T) {
 	message, err := buttonsMessage(action.SendButtonsRequest{Text: "Pick", Buttons: []action.Button{{ID: "/test-button a", Label: "A"}}})
 	if err != nil {
 		t.Fatalf("build buttons: %v", err)
 	}
 	user := types.NewJID("15550000001", types.DefaultUserServer)
 	outgoing, extra := nativeFlowSend(message, user)
-	// hypermeow only adds its own biz node for buttons it finds directly or
-	// inside viewOnce/ephemeral wrappers, so the top level must be neither.
-	if outgoing.GetViewOnceMessage() != nil || outgoing.GetEphemeralMessage() != nil || outgoing.GetInteractiveMessage() != nil {
-		t.Fatalf("buttons are still visible to hypermeow's detection: %v", outgoing)
-	}
-	buttons := outgoing.GetDocumentWithCaptionMessage().GetMessage().GetViewOnceMessage().GetMessage().GetInteractiveMessage().GetNativeFlowMessage().GetButtons()
+	buttons := outgoing.GetViewOnceMessage().GetMessage().GetInteractiveMessage().GetNativeFlowMessage().GetButtons()
 	if len(buttons) != 1 {
-		t.Fatalf("wrapped message lost its buttons: %v", outgoing)
+		t.Fatalf("buttons are not in the renderable viewOnce envelope: %v", outgoing)
 	}
 	if len(extra) != 1 || extra[0].AdditionalNodes == nil {
 		t.Fatalf("extra = %#v", extra)
