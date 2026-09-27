@@ -326,12 +326,16 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	}
 	var receipt string
 	var executeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
-		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, command)
+	if isCommand {
+		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, stored.Request.Effect.(RunCommand))
 	} else {
 		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
 	}
 	if executeErr != nil {
+		if isCommand && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
+			// The registry refused the command before it ran, so nothing happened.
+			return dispatcher.finalizePreExecution(stored, agent.ErrorPermissionDenied, executeErr)
+		}
 		if stored.Request.Effect.Durable() {
 			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
 			return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)
