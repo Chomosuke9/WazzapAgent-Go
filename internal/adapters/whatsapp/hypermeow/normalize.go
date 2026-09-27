@@ -3,6 +3,7 @@ package hypermeow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,14 +50,18 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 	if event == nil || event.Message == nil || event.IsEdit {
 		return conversation.IncomingCandidate{}, false
 	}
-	text := event.Message.GetConversation()
+	// A button tap routes by its ID before anything else, so a
+	// "/command args" button re-enters its command like typed text.
+	text, contextInfo := buttonReply(event.Message)
 	extended := event.Message.GetExtendedTextMessage()
-	if text == "" && extended != nil {
-		text = extended.GetText()
-	}
-	contextInfo := (*waE2E.ContextInfo)(nil)
-	if extended != nil {
-		contextInfo = extended.GetContextInfo()
+	if text == "" {
+		text = event.Message.GetConversation()
+		if text == "" && extended != nil {
+			text = extended.GetText()
+		}
+		if extended != nil {
+			contextInfo = extended.GetContextInfo()
+		}
 	}
 	if text == "" {
 		if sticker := event.Message.GetStickerMessage(); sticker != nil {
@@ -65,11 +70,6 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 			text = "【sticker】"
 			contextInfo = sticker.GetContextInfo()
 		}
-	}
-	if text == "" {
-		// A button tap arrives as the tapped button's ID, so a
-		// "/command args" button re-enters its command like typed text.
-		text, contextInfo = buttonReply(event.Message)
 	}
 	if text == "" {
 		return conversation.IncomingCandidate{}, false
@@ -152,39 +152,35 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 	}, true
 }
 
-// buttonReply extracts a tap on a quick-reply, buttons, template, or list
+// buttonReply extracts a tap on a list, buttons, template, or native-flow
 // message. Slash-command IDs become the message text; any other ID yields the
 // label the user saw, so the conversation reads naturally.
 func buttonReply(message *waE2E.Message) (string, *waE2E.ContextInfo) {
 	pick := func(id, label string) string {
-		if strings.HasPrefix(id, "/") {
+		if strings.HasPrefix(id, "/") || strings.TrimSpace(label) == "" {
 			return id
 		}
-		if strings.TrimSpace(label) != "" {
-			return label
-		}
-		return id
+		return label
 	}
-	switch {
-	case message.GetInteractiveResponseMessage() != nil:
-		response := message.GetInteractiveResponseMessage()
-		var params struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal([]byte(response.GetNativeFlowResponseMessage().GetParamsJSON()), &params)
-		return pick(params.ID, response.GetBody().GetText()), response.GetContextInfo()
-	case message.GetButtonsResponseMessage() != nil:
-		response := message.GetButtonsResponseMessage()
-		return pick(response.GetSelectedButtonID(), response.GetSelectedDisplayText()), response.GetContextInfo()
-	case message.GetTemplateButtonReplyMessage() != nil:
-		response := message.GetTemplateButtonReplyMessage()
-		return pick(response.GetSelectedID(), response.GetSelectedDisplayText()), response.GetContextInfo()
-	case message.GetListResponseMessage() != nil:
-		response := message.GetListResponseMessage()
-		return pick(response.GetSingleSelectReply().GetSelectedRowID(), response.GetTitle()), response.GetContextInfo()
-	default:
-		return "", nil
+	// Protobuf getters are nil-safe, so each chain is empty when absent.
+	if list := message.GetListResponseMessage(); list.GetSingleSelectReply().GetSelectedRowID() != "" {
+		return pick(list.GetSingleSelectReply().GetSelectedRowID(), list.GetTitle()), list.GetContextInfo()
 	}
+	if buttons := message.GetButtonsResponseMessage(); buttons.GetSelectedButtonID() != "" {
+		return pick(buttons.GetSelectedButtonID(), buttons.GetSelectedDisplayText()), buttons.GetContextInfo()
+	}
+	if template := message.GetTemplateButtonReplyMessage(); template.GetSelectedID() != "" {
+		return pick(template.GetSelectedID(), template.GetSelectedDisplayText()), template.GetContextInfo()
+	}
+	interactive := message.GetInteractiveResponseMessage()
+	if raw := interactive.GetNativeFlowResponseMessage().GetParamsJSON(); raw != "" {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(raw), &params); err == nil && params["id"] != nil {
+			// The id is usually a string, but numeric ids are valid too.
+			return pick(fmt.Sprint(params["id"]), interactive.GetBody().GetText()), interactive.GetContextInfo()
+		}
+	}
+	return "", nil
 }
 
 func (normalizer *messageNormalizer) quotedMessageFromMe(participant string) *bool {

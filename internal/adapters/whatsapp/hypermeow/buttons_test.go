@@ -41,6 +41,11 @@ func TestButtonTapsBecomeMessageText(t *testing.T) {
 		{name: "list", message: &waE2E.Message{ListResponseMessage: &waE2E.ListResponseMessage{
 			Title: proto.String("Reset"), SingleSelectReply: &waE2E.ListResponseMessage_SingleSelectReply{SelectedRowID: proto.String("/reset")},
 		}}, want: "/reset"},
+		{name: "native flow numeric id", message: &waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{ParamsJSON: proto.String(`{"id":42}`)},
+			},
+		}}, want: "42"},
 		{name: "plain text is not a tap", message: &waE2E.Message{Conversation: proto.String("hi")}, want: ""},
 	}
 	for _, test := range tests {
