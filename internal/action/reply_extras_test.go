@@ -18,6 +18,9 @@ func TestFirstCodeBlock(t *testing.T) {
 		{name: "fence with a tag does not close", text: "```\n```javascript\nx()\n```\n", want: "```javascript\nx()"},
 		{name: "longer closing fence", text: "```\na\n````", want: "a"},
 		{name: "empty block", text: "```\n```", want: ""},
+		{name: "info string with symbols", text: "```c#\nvar x = 1;\n```\n```\nlater\n```", want: "var x = 1;"},
+		{name: "indented in a list", text: "1. Run:\n   ```sh\n   make\n   ```\n2. Done", want: "make"},
+		{name: "indented block keeps inner indentation", text: "  ```py\n  if x:\n      y()\n  ```", want: "if x:\n    y()"},
 		{name: "unclosed", text: "```\nnever closed", want: ""},
 		{name: "inline triple backticks", text: "use ``` to fence", want: ""},
 	}

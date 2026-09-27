@@ -62,63 +62,51 @@ func SplitChoices(stored string) (string, []string) {
 	return strings.TrimRight(stored[:index], "\n "), choices
 }
 
-// FirstCodeBlock returns the body of the first fenced code block in
-// text, or "" when there is none. A fence is 3 or more backticks or tildes,
-// an optional language tag and a newline; the block ends at the first line
-// that is only a fence at least as long, so a ```` block may contain ```
+// FirstCodeBlock returns the body of the first fenced code block in text, or
+// "" when there is none. Fences follow Markdown: a line of 3 or more backticks
+// or tildes (indentation allowed) opens a block, with any info string after
+// it ("c#", "js title"); the block ends at a line that is only the same
+// character repeated at least as many times. So a ```` block may contain ```
 // lines and a ``` block may contain a ```js line.
 func FirstCodeBlock(text string) string {
-	for start := 0; start < len(text); start++ {
-		mark := text[start]
-		if mark != '`' && mark != '~' {
+	lines := strings.Split(text, "\n")
+	for open := 0; open < len(lines); open++ {
+		fence, info := fenceRun(lines[open])
+		if len(fence) < 3 || fence[0] == '`' && strings.Contains(info, "`") {
 			continue
 		}
-		end := start
-		for end < len(text) && text[end] == mark {
-			end++
-		}
-		fence := text[start:end]
-		lineEnd := end
-		for lineEnd < len(text) && isFenceTagByte(text[lineEnd]) {
-			lineEnd++
-		}
-		if len(fence) >= 3 && lineEnd < len(text) && text[lineEnd] == '\n' {
-			if body, closed := fencedBody(text[lineEnd+1:], fence); closed {
-				// Drop only blank lines next to the fences: leading spaces
-				// on the first line are part of the code.
-				code := strings.TrimRight(strings.TrimLeft(body, "\r\n"), " \t\r\n")
-				if strings.TrimSpace(code) == "" {
-					return ""
-				}
-				return code
+		for end := open + 1; end < len(lines); end++ {
+			closing, rest := fenceRun(lines[end])
+			if len(closing) < len(fence) || closing[0] != fence[0] || strings.TrimSpace(rest) != "" {
+				continue
 			}
+			// Drop only blank lines next to the fences: leading spaces on
+			// the first line are part of the code.
+			// Body lines lose the opening fence's indentation, as in Markdown.
+			indent := len(lines[open]) - len(strings.TrimLeft(lines[open], " "))
+			body := make([]string, 0, end-open-1)
+			for _, line := range lines[open+1 : end] {
+				body = append(body, line[min(indent, len(line)-len(strings.TrimLeft(line, " "))):])
+			}
+			code := strings.TrimRight(strings.TrimLeft(strings.Join(body, "\n"), "\r\n"), " \t\r\n")
+			if strings.TrimSpace(code) == "" {
+				return ""
+			}
+			return code
 		}
-		start = end - 1
+		// An unclosed fence runs to the end of the text; there is no block.
+		return ""
 	}
 	return ""
 }
 
-// fencedBody returns the lines of rest before its closing fence line.
-func fencedBody(rest, fence string) (string, bool) {
-	for offset := 0; offset <= len(rest); {
-		line := rest[offset:]
-		next := len(rest) + 1
-		if newline := strings.IndexByte(line, '\n'); newline >= 0 {
-			line, next = line[:newline], offset+newline+1
-		}
-		if isClosingFence(line, fence) {
-			return strings.TrimSuffix(rest[:offset], "\n"), true
-		}
-		offset = next
+// fenceRun splits an indented line into its leading run of backticks or
+// tildes and the rest of the line.
+func fenceRun(line string) (string, string) {
+	line = strings.TrimLeft(line, " \t")
+	if line == "" || line[0] != '`' && line[0] != '~' {
+		return "", line
 	}
-	return "", false
-}
-
-func isClosingFence(line, fence string) bool {
-	run := len(line) - len(strings.TrimLeft(line, fence[:1]))
-	return run >= len(fence) && strings.TrimSpace(line[run:]) == ""
-}
-
-func isFenceTagByte(b byte) bool {
-	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || strings.IndexByte("+._ -", b) >= 0
+	run := len(line) - len(strings.TrimLeft(line, line[:1]))
+	return line[:run], line[run:]
 }
