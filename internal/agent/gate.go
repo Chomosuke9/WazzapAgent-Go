@@ -1,13 +1,9 @@
 package agent
 
-import (
-	"context"
-	"sync/atomic"
-)
+import "context"
 
 type operationGate struct {
-	token    chan struct{}
-	inFlight atomic.Int64
+	token chan struct{}
 }
 
 func newOperationGate() *operationGate {
@@ -21,14 +17,10 @@ func (gate *operationGate) acquire(ctx context.Context) error {
 	case <-ctx.Done():
 		return contextError("wait for agent operation gate", ctx.Err())
 	case <-gate.token:
-		gate.inFlight.Add(1)
 		return nil
 	}
 }
 
 func (gate *operationGate) release() {
-	gate.inFlight.Add(-1)
 	gate.token <- struct{}{}
 }
-
-func (gate *operationGate) isInFlight() bool { return gate.inFlight.Load() > 0 }

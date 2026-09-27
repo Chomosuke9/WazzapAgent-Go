@@ -20,7 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 18
+const wantMigrationCount = 19
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
@@ -190,10 +190,7 @@ func TestConfigPersistsModerationLevelAndAlwaysDerivesReactionTool(t *testing.T)
 	}
 	reloaded, err := store.Configs().Load(context.Background(), key)
 	if err != nil || reloaded.Permission.ModerationLevel != agent.ModerationDeleteMute ||
-		!reloaded.Permission.ModelToolCapabilities().Has("message.react") ||
-		!reloaded.Permission.ModelToolCapabilities().Has("group.delete") ||
-		!reloaded.Permission.ModelToolCapabilities().Has("group.mute") ||
-		reloaded.Permission.ModelToolCapabilities().Has("group.kick") || reloaded.Version != updated.Version {
+		!reloaded.Permission.ModelToolCapabilities().Has("message.react") || reloaded.Version != updated.Version {
 		t.Fatalf("reloaded permission = %#v, %v", reloaded.Permission, err)
 	}
 	values = updated.Values()
@@ -289,40 +286,6 @@ func TestSenderRefAndAgentConfigSurviveStoreReopen(t *testing.T) {
 	}
 	if reloaded.Version != updated.Version || reloaded.PromptOverride == nil || reloaded.PromptOverride.Text != "durable override" {
 		t.Fatalf("reopened config = %#v", reloaded)
-	}
-}
-
-func TestPromptMutationsAreJournaledInChatOrder(t *testing.T) {
-	store := openTestStore(t)
-	firstCandidate := testCandidate(t, "provider-prompt-1", "15550000031@s.whatsapp.net")
-	first, err := store.Inbound().ClaimAndResolveSender(context.Background(), firstCandidate)
-	if err != nil {
-		t.Fatalf("claim first prompt command: %v", err)
-	}
-	secondCandidate := firstCandidate
-	secondCandidate.ProviderMessageID = "provider-prompt-2"
-	secondCandidate.Text = "/prompt clear"
-	secondCandidate.OccurredAt = secondCandidate.OccurredAt.Add(time.Second)
-	secondCandidate.ReceivedAt = secondCandidate.ReceivedAt.Add(time.Second)
-	second, err := store.Inbound().ClaimAndResolveSender(context.Background(), secondCandidate)
-	if err != nil {
-		t.Fatalf("claim second prompt command: %v", err)
-	}
-	if _, err := store.Inbound().BeginConfigMutation(context.Background(), first.Message, 1); err != nil {
-		t.Fatalf("journal first prompt mutation: %v", err)
-	}
-	if _, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2); !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("second mutation error = %v, want conflict while first is unapplied", err)
-	}
-	if err := store.Inbound().MarkConfigMutationApplied(context.Background(), first.Message, 1, 2); err != nil {
-		t.Fatalf("mark first prompt mutation applied: %v", err)
-	}
-	journal, err := store.Inbound().BeginConfigMutation(context.Background(), second.Message, 2)
-	if err != nil {
-		t.Fatalf("journal second prompt mutation: %v", err)
-	}
-	if journal.ExpectedVersion != 2 || journal.AppliedVersion != 0 {
-		t.Fatalf("second prompt journal = %#v", journal)
 	}
 }
 
@@ -553,7 +516,7 @@ func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
 	}
 	now := time.Now().UTC().Add(72 * time.Hour)
 	maintained, err := store.Maintain(ctx, maintenance.Request{
-		TenantID: key.TenantID, Now: now, ScrubBefore: now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: now,
 		DeleteBefore: now.Add(-48 * time.Hour), BatchSize: 100,
 	})
 	if err != nil || maintained.TurnsDeleted != 2 {
@@ -1002,22 +965,15 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}
 	clock.now = clock.now.Add(25 * time.Hour)
 	maintained, err := store.Maintain(context.Background(), maintenance.Request{
-		TenantID: key.TenantID, Now: clock.now, ScrubBefore: clock.now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: clock.now,
 		DeleteBefore: clock.now.Add(-30 * 24 * time.Hour), BatchSize: 10,
 	})
-	if err != nil {
-		t.Fatalf("scrub terminal content: %v", err)
-	}
-	if maintained.InboundScrubbed != 1 || maintained.ActionsScrubbed != 1 || maintained.TurnsDeleted != 0 {
-		t.Fatalf("scrub result = %#v", maintained)
-	}
-	observed, err = actions.Claim(context.Background(), plan.Dispatch, clock.now)
-	if err != nil || observed.State != action.StateSucceeded || observed.Text != "" {
-		t.Fatalf("observe scrubbed terminal action = %#v, err=%v", observed, err)
+	if err != nil || maintained.TurnsDeleted != 0 {
+		t.Fatalf("young terminal turn was deleted = %#v, err=%v", maintained, err)
 	}
 	clock.now = clock.now.Add(30 * 24 * time.Hour)
 	maintained, err = store.Maintain(context.Background(), maintenance.Request{
-		TenantID: key.TenantID, Now: clock.now, ScrubBefore: clock.now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: clock.now,
 		DeleteBefore: clock.now.Add(-30 * 24 * time.Hour), BatchSize: 10,
 	})
 	if err != nil || maintained.TurnsDeleted != 1 {

@@ -221,9 +221,9 @@ func (intent EffectIntent) Capability() Capability {
 		return "message.mark-read"
 	case EffectSetChatPresence:
 		return "chat.presence"
-	case EffectRunCommand:
-		return "command.execute"
 	default:
+		// RunCommand has no capability: the command registry's permission
+		// expression is the only check, evaluated when the command runs.
 		return ""
 	}
 }
@@ -270,7 +270,7 @@ func (effect ModelEffect) Validate(capabilities CapabilitySet) error {
 	if err := effect.Intent.Validate(); err != nil {
 		return NewError(ErrorInvalidArgument, "validate model effect", err)
 	}
-	if !capabilities.Has(effect.Intent.Capability()) {
+	if capability := effect.Intent.Capability(); capability != "" && !capabilities.Has(capability) {
 		return Errorf(ErrorPermissionDenied, "validate model effect", "effect capability was not granted")
 	}
 	return nil
@@ -400,9 +400,6 @@ func validateInvocation(key Key, invocation Invocation) error {
 		if index > 0 && invocation.Commands[index-1] >= name {
 			return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("model command names must be sorted and unique"))
 		}
-	}
-	if invocation.Capabilities.Has("command.execute") != (len(invocation.Commands) > 0) {
-		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("command capability and names must be present together"))
 	}
 	if invocation.PolicyVersion == 0 {
 		return NewError(ErrorInvalidArgument, "validate invocation", fmt.Errorf("policy version is required"))

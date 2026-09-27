@@ -22,7 +22,7 @@ func TestDeletedMessageIDsOnlyReadsVisiblePage(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.ExecContext(ctx, `CREATE TABLE typed_effects (
-		tenant_id TEXT, account_id TEXT, chat_id TEXT, effect_kind INTEGER,
+		tenant_id TEXT, account_id TEXT, chat_id TEXT, kind INTEGER,
 		state INTEGER, target_message_id TEXT)`); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,7 @@ func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	scope := control.SessionScope{TenantID: tenantID, AccountID: accountID}
 	conversations, err := reader.ListBotConversations(ctx, scope, transcriptPageSize)
 	if err != nil || len(conversations) != 1 {
@@ -113,7 +114,6 @@ func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *
 	if err != nil || !exists {
 		t.Fatalf("open read-only transcript store: exists=%v err=%v", exists, err)
 	}
-	defer readOnlyDB.Close()
 	if _, err := readOnlyDB.ExecContext(ctx, `DELETE FROM history_entries`); err == nil {
 		t.Fatal("transcript reader unexpectedly allowed a database write")
 	}
@@ -157,6 +157,7 @@ func TestConversationReaderLoadsPassiveGroupHistoryWithoutAgentConfig(t *testing
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	messages, err := reader.ListBotMessages(ctx, control.SessionScope{TenantID: tenantID, AccountID: accountID}, key.ChatID, transcriptPageSize)
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("read passive group transcript = %#v, err=%v", messages, err)
@@ -191,6 +192,7 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	scope := control.SessionScope{TenantID: tenantID, AccountID: accountID}
 	assertName := func(want string) {
 		t.Helper()
@@ -217,19 +219,4 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 		t.Fatalf("close app database: %v", err)
 	}
 	assertName("Keluarga Besar")
-
-	// The read-only Chat page can still show existing history before an older
-	// app database receives the new migration at the next Agent start.
-	legacyDB, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS))
-	if err != nil {
-		t.Fatalf("open old-schema fixture: %v", err)
-	}
-	if _, err := legacyDB.ExecContext(ctx, `ALTER TABLE chats DROP COLUMN group_name`); err != nil {
-		_ = legacyDB.Close()
-		t.Fatalf("remove new column from fixture: %v", err)
-	}
-	if err := legacyDB.Close(); err != nil {
-		t.Fatalf("close old-schema fixture: %v", err)
-	}
-	assertName("Group")
 }

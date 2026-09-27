@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -25,12 +24,6 @@ type AppInfo struct {
 	Name     string `json:"name"`
 	Version  string `json:"version"`
 	Platform string `json:"platform"`
-}
-
-// PingEvent is emitted on app:ping when Ping is called by the frontend.
-type PingEvent struct {
-	Message  string `json:"message"`
-	Sequence uint64 `json:"sequence"`
 }
 
 type LogEntryDTO struct {
@@ -217,7 +210,6 @@ type AppService struct {
 	conversations *control.ConversationController
 	dataRoot      string
 	logs          *observability.LogBuffer
-	sequence      atomic.Uint64
 }
 
 // Options wires the controllers a transport exposes. Nil controllers are
@@ -808,15 +800,6 @@ func (s *AppService) recordLog(level, message string, err error) {
 		details = "code=" + string(agent.CodeOf(err)) + " · " + err.Error()
 	}
 	s.logs.Record(level, message, details)
-}
-
-// Ping returns the next app:ping payload. Each transport decides how to deliver
-// it: the browser bridge returns it to the caller, Wails emits it as an event.
-func (s *AppService) Ping() (PingEvent, error) {
-	return PingEvent{
-		Message:  "pong",
-		Sequence: s.sequence.Add(1),
-	}, nil
 }
 
 // GetSettings returns the current public settings snapshot. Secret values are

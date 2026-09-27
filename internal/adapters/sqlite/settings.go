@@ -2,18 +2,14 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,18 +66,13 @@ func OpenSettings(ctx context.Context, path string) (*SettingsStore, error) {
 	// editors from both reading the same revision and one later failing with a
 	// low-level "database is locked" error instead of the documented CAS
 	// conflict.
-	db, err := sql.Open("sqlite", databaseDSN(absolute, defaultBusyTimeoutMS)+"&_txlock=immediate")
+	db, err := openDatabase(ctx, absolute, "&_txlock=immediate")
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "open settings store", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	closeOnError := func(err error) (*SettingsStore, error) {
 		_ = db.Close()
 		return nil, err
-	}
-	if err := db.PingContext(ctx); err != nil {
-		return closeOnError(agent.NewError(agent.ErrorStorageFailure, "ping settings store", err))
 	}
 	if err := migrateSettings(ctx, db); err != nil {
 		return closeOnError(err)
@@ -245,62 +236,5 @@ func initializeSettings(ctx context.Context, db *sql.DB) error {
 }
 
 func migrateSettings(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        checksum TEXT NOT NULL,
-        applied_at_ms INTEGER NOT NULL
-    ) STRICT`); err != nil {
-		return agent.NewError(agent.ErrorStorageFailure, "initialize settings migration ledger", err)
-	}
-	entries, err := settingsMigrationFiles.ReadDir("settings_migrations")
-	if err != nil {
-		return agent.NewError(agent.ErrorInternal, "read settings migrations", err)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		versionText, _, ok := strings.Cut(entry.Name(), "_")
-		if !ok {
-			return agent.NewError(agent.ErrorIntegrityFailure, "validate settings migration", errors.New("invalid migration name"))
-		}
-		version, err := strconv.Atoi(versionText)
-		if err != nil || version <= 0 {
-			return agent.NewError(agent.ErrorIntegrityFailure, "validate settings migration", errors.New("invalid migration version"))
-		}
-		contents, err := settingsMigrationFiles.ReadFile("settings_migrations/" + entry.Name())
-		if err != nil {
-			return agent.NewError(agent.ErrorInternal, "read settings migration", err)
-		}
-		digest := sha256.Sum256(contents)
-		checksum := hex.EncodeToString(digest[:])
-		var existingName, existingChecksum string
-		err = db.QueryRowContext(ctx, "SELECT name, checksum FROM schema_migrations WHERE version = ?", version).Scan(&existingName, &existingChecksum)
-		switch {
-		case err == nil:
-			if existingName != entry.Name() || existingChecksum != checksum {
-				return agent.NewError(agent.ErrorIntegrityFailure, "verify settings migration", errors.New("applied migration checksum mismatch"))
-			}
-			continue
-		case !errors.Is(err, sql.ErrNoRows):
-			return agent.NewError(agent.ErrorStorageFailure, "read settings migration ledger", err)
-		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return agent.NewError(agent.ErrorStorageFailure, "begin settings migration", err)
-		}
-		if _, err = tx.ExecContext(ctx, string(contents)); err == nil {
-			_, err = tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, name, checksum, applied_at_ms) VALUES (?, ?, ?, ?)", version, entry.Name(), checksum, time.Now().UTC().UnixMilli())
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return agent.NewError(agent.ErrorStorageFailure, "apply settings migration", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return agent.NewError(agent.ErrorStorageFailure, "commit settings migration", err)
-		}
-	}
-	return nil
+	return applyMigrations(ctx, db, settingsMigrationFiles, "settings_migrations")
 }

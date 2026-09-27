@@ -281,34 +281,6 @@ func (gate *FixedGate) ModelCapabilities(permission agent.PermissionConfig) (age
 	return permission.ModelToolCapabilities(), nil
 }
 
-// ModelCapabilitiesForMessage scopes moderation tools to a freshly verified
-// admin request. A group member's text must never be able to induce a model
-// moderation action merely because the bot has moderation permission.
-func (gate *FixedGate) ModelCapabilitiesForMessage(ctx context.Context, message conversation.IncomingMessage, permission agent.PermissionConfig) (agent.CapabilitySet, error) {
-	base, err := gate.ModelCapabilities(permission)
-	if err != nil {
-		return agent.CapabilitySet{}, err
-	}
-	if message.ChatKind != conversation.ChatGroup || message.FromMe {
-		return agent.NewCapabilitySet("message.react")
-	}
-	principal, err := HumanPrincipal(message)
-	if err != nil {
-		return agent.CapabilitySet{}, err
-	}
-	facts, err := gate.CommandPermissionFacts(ctx, principal, permission, false)
-	if err != nil {
-		return agent.CapabilitySet{}, err
-	}
-	if !facts.IsAdmin || !facts.IsGroup {
-		return agent.NewCapabilitySet("message.react")
-	}
-	if !facts.BotIsAdmin {
-		return agent.NewCapabilitySet("message.react")
-	}
-	return base, nil
-}
-
 func (gate *FixedGate) requirePolicy(permission agent.PermissionConfig) error {
 	if err := permission.Validate(); err != nil {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize policy reference", err)

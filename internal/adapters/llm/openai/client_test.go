@@ -322,7 +322,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	target := request.ContextMessages["000001"]
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "group.mute", "group.kick", "command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"group"}
 
 	tools, err := completionTools(request, inbound.CommandRegistry())
@@ -343,7 +343,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 		t.Fatalf("decode reply command: %v", err)
 	}
 	if text != "done" || replyTo != target || len(effects) != 3 || effects[0].Intent.TargetMessageID != target ||
-		effects[0].Intent.Capability() != "command.execute" || effects[1].Intent.Capability() != "command.execute" || effects[2].Intent.Capability() != "command.execute" {
+		effects[0].Intent.Kind != agent.EffectRunCommand || effects[1].Intent.Kind != agent.EffectRunCommand || effects[2].Intent.Kind != agent.EffectRunCommand {
 		t.Fatalf("decoded reply command = %q, %#v", text, effects)
 	}
 }
@@ -351,7 +351,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("group.description", "command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"group"}
 	tests := []struct {
 		name    string
@@ -364,7 +364,7 @@ func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			text, replyTo, effects, err := decodeModelOutput("", test.raw, request, inbound.CommandRegistry())
-			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != "/group description Aturan baru" || effects[0].Intent.Capability() != "command.execute" {
+			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != "/group description Aturan baru" || effects[0].Intent.Kind != agent.EffectRunCommand {
 				t.Fatalf("decoded description command %q = %q, %v, %#v", test.command, text, err, effects)
 			}
 		})
@@ -374,7 +374,7 @@ func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
 func TestReplyMessageUsesAnyRegisteredCommandWithoutPerCommandSchema(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"help"}
 	raw := json.RawMessage(`[{"id":"reply_help","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Baik.\",\"command\":[\"help\"],\"command_context_msg_id\":[\"none\"]}"}}]`)
 
@@ -387,7 +387,7 @@ func TestReplyMessageUsesAnyRegisteredCommandWithoutPerCommandSchema(t *testing.
 func TestReplyMessageSkipsMalformedGroupCommandAndKeepsReply(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("group.description", "command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"group"}
 	raw := json.RawMessage(`[{"id":"reply_invalid_command","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"none\",\"/group description\",\"/group description Aturan baru\"],\"command_context_msg_id\":[\"none\",\"none\",\"none\"]}"}}]`)
 	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
@@ -402,7 +402,7 @@ func TestReplyMessageSkipsMalformedGroupCommandAndKeepsReply(t *testing.T) {
 func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"group"}
 	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
 	_, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
@@ -425,7 +425,7 @@ func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *t
 func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	request.Capabilities, _ = agent.NewCapabilitySet("message.react", "group.delete", "command.execute")
+	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
 	request.Commands = []string{"group"}
 
 	empty := json.RawMessage(`[{"id":"reply_empty","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"plain reply\",\"command\":[],\"command_context_msg_id\":[]}"}}]`)

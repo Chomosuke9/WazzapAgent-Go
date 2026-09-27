@@ -71,18 +71,9 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 	if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "create application store directory", err)
 	}
-	db, err := sql.Open("sqlite", databaseDSN(absolute, defaultBusyTimeoutMS))
+	db, err := openDatabase(ctx, absolute, "")
 	if err != nil {
 		return nil, agent.NewError(agent.ErrorStorageFailure, "open application store", err)
-	}
-	// A single writer connection makes transaction ordering deterministic for
-	// the embedded conversation deployment. WAL still permits the separate Hypermeow
-	// database and external backup/checkpoint operations to progress safely.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, agent.NewError(agent.ErrorStorageFailure, "ping application store", err)
 	}
 	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
@@ -133,6 +124,21 @@ func safeDatabasePath(path string) (string, error) {
 	return filepath.Clean(absolute), nil
 }
 
+// openDatabase opens one single-connection WAL handle on path.
+func openDatabase(ctx context.Context, path, extraDSN string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS)+extraDSN)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 func databaseDSN(path string, busyTimeoutMS int) string {
 	query := make(url.Values)
 	query.Set("_foreign_keys", "on")
@@ -143,6 +149,16 @@ func databaseDSN(path string, busyTimeoutMS int) string {
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
+	return applyMigrations(ctx, db, migrationFiles, "migrations")
+}
+
+// applyMigrations applies every embedded NNN_name.sql file in dir that the
+// ledger has not recorded yet. Each file runs in its own BEGIN IMMEDIATE
+// transaction and the ledger is re-read inside it, so two handles on the same
+// file (the agent store and the UI reader) cannot apply a migration twice.
+// Foreign keys are off while a migration runs, as SQLite requires for table
+// rebuilds, and foreign_key_check must pass before it commits.
+func applyMigrations(ctx context.Context, db *sql.DB, files embed.FS, dir string) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
@@ -151,7 +167,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
     ) STRICT`); err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "initialize migration ledger", err)
 	}
-	entries, err := migrationFiles.ReadDir("migrations")
+	entries, err := files.ReadDir(dir)
 	if err != nil {
 		return agent.NewError(agent.ErrorInternal, "read embedded migrations", err)
 	}
@@ -168,40 +184,66 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if err != nil || version <= 0 {
 			return agent.NewError(agent.ErrorIntegrityFailure, "validate migration", fmt.Errorf("invalid migration version"))
 		}
-		contents, err := migrationFiles.ReadFile("migrations/" + entry.Name())
+		contents, err := files.ReadFile(dir + "/" + entry.Name())
 		if err != nil {
 			return agent.NewError(agent.ErrorInternal, "read embedded migration", err)
 		}
-		digest := sha256.Sum256(contents)
-		checksum := hex.EncodeToString(digest[:])
-		var existingName, existingChecksum string
-		err = db.QueryRowContext(ctx, "SELECT name, checksum FROM schema_migrations WHERE version = ?", version).Scan(&existingName, &existingChecksum)
-		switch {
-		case err == nil:
-			if existingName != entry.Name() || existingChecksum != checksum {
-				return agent.NewError(agent.ErrorIntegrityFailure, "verify migration", fmt.Errorf("applied migration checksum mismatch"))
-			}
-			continue
-		case !errors.Is(err, sql.ErrNoRows):
-			return agent.NewError(agent.ErrorStorageFailure, "read migration ledger", err)
+		if err := applyMigration(ctx, db, version, entry.Name(), contents); err != nil {
+			return err
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
+	}
+	return nil
+}
+
+func applyMigration(ctx context.Context, db *sql.DB, version int, name string, contents []byte) error {
+	digest := sha256.Sum256(contents)
+	checksum := hex.EncodeToString(digest[:])
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
+	}
+	defer conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
+	}
+	fail := func(operation string, err error) error {
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		return agent.NewError(agent.ErrorStorageFailure, operation, err)
+	}
+	var existingName, existingChecksum string
+	err = conn.QueryRowContext(ctx, "SELECT name, checksum FROM schema_migrations WHERE version = ?", version).Scan(&existingName, &existingChecksum)
+	switch {
+	case err == nil:
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		if existingName != name || existingChecksum != checksum {
+			return agent.NewError(agent.ErrorIntegrityFailure, "verify migration", fmt.Errorf("applied migration checksum mismatch"))
 		}
-		if _, err = tx.ExecContext(ctx, string(contents)); err == nil {
-			_, err = tx.ExecContext(ctx,
-				"INSERT INTO schema_migrations(version, name, checksum, applied_at_ms) VALUES (?, ?, ?, ?)",
-				version, entry.Name(), checksum, time.Now().UTC().UnixMilli(),
-			)
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return agent.NewError(agent.ErrorStorageFailure, "apply migration", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return agent.NewError(agent.ErrorStorageFailure, "commit migration", err)
-		}
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fail("read migration ledger", err)
+	}
+	if _, err := conn.ExecContext(ctx, string(contents)); err != nil {
+		return fail("apply migration", err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"INSERT INTO schema_migrations(version, name, checksum, applied_at_ms) VALUES (?, ?, ?, ?)",
+		version, name, checksum, time.Now().UTC().UnixMilli(),
+	); err != nil {
+		return fail("record migration", err)
+	}
+	var violation string
+	switch err := conn.QueryRowContext(ctx, "SELECT \"table\" FROM pragma_foreign_key_check LIMIT 1").Scan(&violation); {
+	case err == nil:
+		return fail("check migration foreign keys", fmt.Errorf("foreign key violation in %s", violation))
+	case !errors.Is(err, sql.ErrNoRows):
+		return fail("check migration foreign keys", err)
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fail("commit migration", err)
 	}
 	return nil
 }

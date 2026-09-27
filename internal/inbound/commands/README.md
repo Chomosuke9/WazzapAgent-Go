@@ -166,15 +166,15 @@ updated, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) {
 ```
 
 - Set **absolute** values (`= level`), never relative ones (`++`, toggles
-  based on the current value). After a crash, the command is replayed. The
-  journal treats the write as already done when running your function again
-  would change nothing, and that check only works for absolute values.
+  based on the current value). After a crash, the command is replayed.
+  `UpdateConfig` skips the write when running your function again would
+  change nothing, and that check only works for absolute values.
   For a toggle, compute the target value when you parse the arguments, as
   `trigger.go` does with `on`/`off`.
 - Validate first and reply with usage on bad input. `UpdateConfig` returns an
   `ErrorInvalidArgument` if the result fails config validation.
 - Never call `c.Agent.Config().Set*` or `Update` directly. That bypasses
-  the crash-safe journal.
+  the replay check.
 
 ## Testing a command
 

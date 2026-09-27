@@ -34,51 +34,24 @@ func NewModelCommandExecutor(factory agent.Factory, gate ModelCommandPolicy, pla
 	return &ModelCommandExecutor{factory: factory, policy: gate, platform: platform, observer: observer, clock: clock}, nil
 }
 
-func (executor *ModelCommandExecutor) authorize(ctx context.Context, current *agent.Agent, stored effect.Stored, value effect.RunCommand) (command.Request, policy.PermissionFacts, error) {
-	if stored.Request.Principal.Kind != policy.PrincipalModel {
-		return command.Request{}, policy.PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "authorize model command", errors.New("model principal is required"))
-	}
-	snapshot, err := current.Config().Refresh(ctx)
-	if err != nil {
-		return command.Request{}, policy.PermissionFacts{}, err
-	}
-	facts, err := executor.policy.CommandPermissionFacts(ctx, stored.Request.Principal, snapshot.Permission, true)
-	if err != nil {
-		return command.Request{}, policy.PermissionFacts{}, err
-	}
+// ExecuteCommandEffect runs one model-requested command. The registry's
+// permission expression, evaluated with fromMe=true inside Dispatch, is the
+// only authorization. The command runs on a fresh Agent because the chat's
+// Agent is still inside the turn that requested it.
+func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, stored effect.Stored, value effect.RunCommand) (string, error) {
 	request, _, recognized := builtinCommandRegistry.Parse(value.Command)
 	if !recognized {
-		return command.Request{}, policy.PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "authorize model command", errors.New("command is not registered"))
+		return "", agent.NewError(agent.ErrorInvalidArgument, "run model command", errors.New("command is not registered"))
 	}
-	allowed, err := builtinCommandRegistry.Allows(request, facts)
-	if err != nil {
-		return command.Request{}, policy.PermissionFacts{}, err
-	}
-	if !allowed {
-		return command.Request{}, policy.PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "authorize model command", errors.New("command permission denied bot origin"))
-	}
-	return request, facts, nil
-}
-
-func (executor *ModelCommandExecutor) AuthorizeCommandEffect(ctx context.Context, stored effect.Stored, value effect.RunCommand) error {
 	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
-	if err != nil {
-		return err
-	}
-	_, _, err = executor.authorize(ctx, current, stored, value)
-	return err
-}
-
-func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, stored effect.Stored, value effect.RunCommand) (string, error) {
-	current, err := executor.factory.NewAgent(ctx, stored.Request.Ref.Key)
-	if err != nil {
-		return "", err
-	}
-	request, facts, err := executor.authorize(ctx, current, stored, value)
 	if err != nil {
 		return "", err
 	}
 	snapshot, err := current.Config().Refresh(ctx)
+	if err != nil {
+		return "", err
+	}
+	facts, err := executor.policy.CommandPermissionFacts(ctx, stored.Request.Principal, snapshot.Permission, true)
 	if err != nil {
 		return "", err
 	}
@@ -104,7 +77,7 @@ func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, 
 		message.Quote = &conversation.QuotedMessage{ID: value.TargetMessageID, Role: conversation.QuoteUser, Text: "command target"}
 	}
 	// A model-issued command has no inbox record, so it runs without a Store:
-	// nothing to mark handled and no inbox journal for config writes.
+	// there is no inbox record to mark handled.
 	err = builtinCommandRegistry.Dispatch(ctx, request, command.Invocation{
 		Agent: current, Config: snapshot, Message: message, Facts: facts,
 		Platform: executor.platform, Observer: executor.observer,

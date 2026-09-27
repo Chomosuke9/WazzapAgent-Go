@@ -396,9 +396,6 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
 		return content, identity.MessageID{}, nil, nil
 	}
-	if len(request.Capabilities.Values()) == 0 {
-		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorUnsupported, "decode model response", fmt.Errorf("model returned tools without granted capabilities"))
-	}
 	if request.CurrentMessageID.IsZero() {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode model response", fmt.Errorf("tool response has no current message target"))
 	}
@@ -408,10 +405,6 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 	}
 	if len(calls) == 0 || len(calls) > agent.MaxModelEffects {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool calls are invalid or exceed the limit"))
-	}
-	allowed := make(map[agent.Capability]struct{}, len(request.Capabilities.Values()))
-	for _, capability := range request.Capabilities.Values() {
-		allowed[capability] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(calls))
 	effects := make([]agent.ModelEffect, 0, len(calls))
@@ -445,7 +438,7 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 		if err != nil {
 			return "", identity.MessageID{}, nil, err
 		}
-		if _, exists := allowed[capability]; !exists {
+		if !request.Capabilities.Has(capability) {
 			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode model response", fmt.Errorf("tool capability was not granted"))
 		}
 		effects = append(effects, agent.ModelEffect{CallID: call.ID, Intent: intent})
@@ -454,31 +447,13 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 }
 
 func decodeToolIntent(function completionFunction, request agent.ModelRequest) (agent.EffectIntent, agent.Capability, error) {
-	if len(function.Arguments) > 4*1024 {
-		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the limit"))
-	}
-	decode := func(value any) error {
-		var arguments string
-		if err := json.Unmarshal(function.Arguments, &arguments); err != nil || len(arguments) > 4*1024 {
-			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
-		}
-		decoder := json.NewDecoder(strings.NewReader(arguments))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(value); err != nil {
-			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments are invalid"))
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments contain extra values"))
-		}
-		return nil
-	}
 	switch function.Name {
 	case "react_to_message":
 		var args struct {
 			ContextMessageID string `json:"context_msg_id"`
 			Emoji            string `json:"emoji"`
 		}
-		if err := decode(&args); err != nil {
+		if err := decodeArguments(function.Arguments, &args); err != nil {
 			return agent.EffectIntent{}, "", err
 		}
 		target, ok := request.ContextMessages[args.ContextMessageID]
@@ -492,59 +467,33 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 }
 
 func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, identity.MessageID, []agent.ModelEffect, error) {
-	var raw struct {
+	var args struct {
 		ContextMessageID        string          `json:"context_msg_id"`
 		Text                    string          `json:"text"`
-		Commands                *[]string       `json:"command"`
+		Commands                []string        `json:"command"`
 		CommandContextMessageID json.RawMessage `json:"command_context_msg_id"`
 	}
-	if err := decodeArguments(call.Function.Arguments, &raw); err != nil {
+	if err := decodeArguments(call.Function.Arguments, &args); err != nil {
 		return "", identity.MessageID{}, nil, err
-	}
-	var commandContextMessageID *[]string
-	if len(raw.CommandContextMessageID) > 0 {
-		var arr []string
-		if err := json.Unmarshal(raw.CommandContextMessageID, &arr); err == nil {
-			commandContextMessageID = &arr
-		} else {
-			var str string
-			if err := json.Unmarshal(raw.CommandContextMessageID, &str); err == nil {
-				commandContextMessageID = &[]string{str}
-			}
-		}
-	}
-	args := struct {
-		ContextMessageID        string
-		Text                    string
-		Commands                *[]string
-		CommandContextMessageID *[]string
-	}{
-		ContextMessageID:        raw.ContextMessageID,
-		Text:                    raw.Text,
-		Commands:                raw.Commands,
-		CommandContextMessageID: commandContextMessageID,
 	}
 	if strings.TrimSpace(args.Text) == "" || len(args.Text) > agent.MaxResponseBytes {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply text is invalid"))
 	}
-	var replyTo identity.MessageID
-	if args.ContextMessageID != "none" {
-		replyTo = request.ContextMessages[args.ContextMessageID]
-	}
-	if args.Commands == nil || len(*args.Commands) == 0 {
-		// Unknown anchors do not suppress a visible reply; they simply omit the quote.
-		return args.Text, replyTo, nil, nil
-	}
-	commands := *args.Commands
-	if len(commands) > agent.MaxModelEffects {
+	// Unknown anchors do not suppress a visible reply; they simply omit the quote.
+	replyTo := request.ContextMessages[args.ContextMessageID]
+	if len(args.Commands) > agent.MaxModelEffects {
 		return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("commands exceed the allowed limit"))
 	}
-	allowed := make(map[string]struct{}, len(request.Commands))
-	for _, name := range request.Commands {
-		allowed[name] = struct{}{}
+	// Models send command_context_msg_id as an array, a single string, or null.
+	var anchors []string
+	if json.Unmarshal(args.CommandContextMessageID, &anchors) != nil {
+		var single string
+		if json.Unmarshal(args.CommandContextMessageID, &single) == nil {
+			anchors = []string{single}
+		}
 	}
-	effects := make([]agent.ModelEffect, 0, len(commands))
-	for index, commandText := range commands {
+	effects := make([]agent.ModelEffect, 0, len(args.Commands))
+	for index, commandText := range args.Commands {
 		commandText = strings.TrimSpace(commandText)
 		if commandText != "" && !strings.HasPrefix(commandText, "/") {
 			commandText = "/" + commandText
@@ -554,30 +503,19 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, reg
 			// A malformed optional command must not suppress the visible reply.
 			continue
 		}
-		if _, ok := allowed[string(parsed.Name)]; !ok {
-			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode reply_message", fmt.Errorf("registered command is not allowed for bot origin"))
-		}
-		canonical := "/" + string(parsed.Name)
+		canonical := "/" + parsed.Name
 		if parsed.ArgumentsPresent {
 			canonical += " " + parsed.Arguments
 		}
+		anchor := args.ContextMessageID
+		if index < len(anchors) {
+			anchor = anchors[index]
+		}
 		var commandTarget identity.MessageID
-		if args.CommandContextMessageID != nil && index < len(*args.CommandContextMessageID) {
-			contextRef := (*args.CommandContextMessageID)[index]
-			if contextRef == "none" {
-				commandTarget = identity.MessageID{}
-			} else {
-				var ok bool
-				commandTarget, ok = request.ContextMessages[contextRef]
-				if !ok {
-					return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
-				}
-			}
-		} else if args.ContextMessageID != "none" {
+		if anchor != "none" {
 			var ok bool
-			commandTarget, ok = request.ContextMessages[args.ContextMessageID]
-			if !ok {
-				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("reply context is not in the supplied history"))
+			if commandTarget, ok = request.ContextMessages[anchor]; !ok {
+				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode reply_message", fmt.Errorf("command context is not in the supplied history"))
 			}
 		}
 		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunCommand, TargetMessageID: commandTarget, Command: canonical}})

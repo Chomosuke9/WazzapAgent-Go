@@ -3,10 +3,7 @@
 package effect
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"strings"
 	"time"
@@ -135,49 +132,6 @@ type PlanRequest struct {
 	Effect       Effect
 }
 
-// DigestPlan makes an idempotency collision detectable without persisting an
-// untyped payload blob. It includes provenance and scope as well as the typed
-// effect fields.
-func DigestPlan(request PlanRequest) ([32]byte, error) {
-	if err := request.Validate(); err != nil {
-		return [32]byte{}, err
-	}
-	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.typed-effect.v1")
-	writeDigestField(&canonical, request.Ref.Key.TenantID.String())
-	writeDigestField(&canonical, request.Ref.Key.AccountID.String())
-	writeDigestField(&canonical, request.Ref.Key.ChatID.String())
-	writeDigestField(&canonical, request.Ref.EffectID.String())
-	writeDigestField(&canonical, request.InvocationID.String())
-	canonical.WriteByte(byte(request.Principal.Kind))
-	writeDigestField(&canonical, request.Principal.ParticipantID.String())
-	writeDigestField(&canonical, request.Principal.LID.String())
-	writeDigestField(&canonical, request.Principal.InvocationID.String())
-	canonical.WriteByte(byte(request.Effect.Kind()))
-	switch typed := request.Effect.(type) {
-	case React:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-		writeDigestField(&canonical, typed.Emoji)
-	case DeleteMessage:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	case MarkRead:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	case SetChatPresence:
-		writeDigestField(&canonical, string(typed.State))
-	case RunCommand:
-		writeDigestField(&canonical, typed.Command)
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	default:
-		return [32]byte{}, agent.NewError(agent.ErrorInvalidArgument, "digest effect plan", errors.New("effect type is not supported"))
-	}
-	return sha256.Sum256(canonical.Bytes()), nil
-}
-
-func writeDigestField(buffer *bytes.Buffer, value string) {
-	_ = binary.Write(buffer, binary.BigEndian, uint32(len(value)))
-	buffer.WriteString(value)
-}
-
 func (request PlanRequest) Validate() error {
 	if err := request.Ref.Validate(); err != nil || request.InvocationID.IsZero() || request.Effect == nil {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate effect plan", errors.New("reference, invocation, and effect are required"))
@@ -236,8 +190,9 @@ type Sender interface {
 	ExecuteEffect(context.Context, Stored) (providerReceipt string, err error)
 }
 
+// CommandExecutor runs a model-requested command. It authorizes nothing
+// itself beyond what the command registry's permission expression decides.
 type CommandExecutor interface {
-	AuthorizeCommandEffect(context.Context, Stored, RunCommand) error
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
@@ -298,12 +253,13 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if !dispatcher.sender.Ready() {
 		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
+	// A command is checked only by its registry permission expression when it
+	// runs; every other effect is checked against the model's capabilities.
+	_, isCommand := stored.Request.Effect.(RunCommand)
 	var authorizeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
+	if isCommand {
 		if dispatcher.commands == nil {
-			authorizeErr = agent.NewError(agent.ErrorNotReady, "authorize command effect", errors.New("command executor is not bound"))
-		} else {
-			authorizeErr = dispatcher.commands.AuthorizeCommandEffect(ctx, stored, command)
+			authorizeErr = agent.NewError(agent.ErrorNotReady, "dispatch command effect", errors.New("command executor is not bound"))
 		}
 	} else {
 		authorizeErr = dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
@@ -324,12 +280,16 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	}
 	var receipt string
 	var executeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
-		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, command)
+	if isCommand {
+		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, stored.Request.Effect.(RunCommand))
 	} else {
 		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
 	}
 	if executeErr != nil {
+		if isCommand && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
+			// The registry refused the command before it ran, so nothing happened.
+			return dispatcher.finalizePreExecution(stored, agent.ErrorPermissionDenied, executeErr)
+		}
 		if stored.Request.Effect.Durable() {
 			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
 			return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)

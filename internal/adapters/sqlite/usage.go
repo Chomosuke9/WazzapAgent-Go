@@ -33,16 +33,6 @@ func (reader *ConversationReader) ConversationUsage(ctx context.Context, scope c
 	if !exists {
 		return usage, nil
 	}
-	defer db.Close()
-
-	groupNameColumn, err := hasGroupNameColumn(ctx, db)
-	if err != nil {
-		return control.BotConversationUsage{}, err
-	}
-	groupName := "''"
-	if groupNameColumn {
-		groupName = "COALESCE(NULLIF(TRIM(c.group_name), ''), '')"
-	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return control.BotConversationUsage{}, transcriptStorageError("begin conversation usage snapshot", err)
@@ -63,13 +53,13 @@ func (reader *ConversationReader) ConversationUsage(ctx context.Context, scope c
 		  AND h.sequence > COALESCE(r.cutoff_sequence, 0)
 	)`
 	conversationRows, err := tx.QueryContext(ctx, visibleHistory+`
-		SELECT c.kind, CASE WHEN c.kind = ? THEN `+groupName+` ELSE '' END,
+		SELECT c.kind, CASE WHEN c.kind = ? THEN TRIM(c.group_name) ELSE '' END,
 		       COUNT(*), COUNT(CASE WHEN h.created_at_ms >= ? THEN 1 END),
 		       COUNT(DISTINCT CASE WHEN h.role = ? AND h.was_invoked THEN h.invocation_id END),
 	       COUNT(DISTINCT CASE WHEN h.role = ? AND h.was_invoked AND h.created_at_ms >= ? THEN h.invocation_id END)
 		FROM visible_history h
 		JOIN chats c ON c.tenant_id = ? AND c.account_id = ? AND c.id = h.chat_id
-		GROUP BY c.id, c.kind, `+groupName,
+		GROUP BY c.id, c.kind, TRIM(c.group_name)`,
 		scope.TenantID.String(), scope.AccountID.String(), uint8(agent.HistoryUser), uint8(agent.HistoryAssistant),
 		uint8(conversation.ChatGroup), since.UnixMilli(), uint8(agent.HistoryUser), uint8(agent.HistoryUser), since.UnixMilli(),
 		scope.TenantID.String(), scope.AccountID.String(),

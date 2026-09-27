@@ -27,14 +27,12 @@ const (
 	generationLeaseMargin = 30 * time.Second
 	actionLeaseMargin     = 10 * time.Second
 	maintenanceInterval   = time.Hour
-	terminalContentAge    = 24 * time.Hour
 	terminalRetentionAge  = 30 * 24 * time.Hour
 )
 
 type conversationRuntime struct {
 	store            *appsqlite.Store
 	configDefaults   agent.ConfigValues
-	registry         *agent.Registry
 	langSmith        *observability.LangSmith
 	account          *account.Runtime
 	adapter          *whatsapp.Adapter
@@ -97,12 +95,6 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	var registry *agent.Registry
-	defer func() {
-		if resultErr != nil && registry != nil {
-			_ = registry.Close(context.Background())
-		}
-	}()
 	langSmith, err := observability.NewLangSmith(application.config.LangSmithAPIKey())
 	if err != nil {
 		return nil, err
@@ -180,13 +172,12 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	events := &configEventRelay{}
 	agentLogs := observability.NewAgentLogger(application.logger)
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
 			Context: contextBuilder, ChatContext: waAdapter, HistoryWindow: application.config.HistoryWindow(),
-			Model: model, Responses: dispatcher, Effects: effectDispatcher, Events: events,
+			Model: model, Responses: dispatcher, Effects: effectDispatcher,
 			InvokeEvents: agentLogs, Clock: agent.SystemClock{},
 		})
 	})
@@ -198,11 +189,10 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
 		return nil, err
 	}
-	registry, err = agent.NewRegistry(ctx, factory, agent.RegistryLimits{MaxLive: application.config.RegistryMaxLive(), IdleTTL: application.config.RegistryIdleTTL(), ConstructionTimeout: application.config.ConstructionTimeout()})
+	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		return nil, err
 	}
-	events.bind(registry)
 	commandResponses, err := action.NewCommandResponder(store.Actions(), dispatcher)
 	if err != nil {
 		return nil, err
@@ -236,7 +226,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	maintenanceWorker, err := maintenance.NewWorkerWithHistory(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalContentAge, terminalRetentionAge, 500,
+	maintenanceWorker, err := maintenance.NewWorker(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalRetentionAge, 500,
 		agent.RetentionPolicy{KeepLatest: application.config.HistoryKeepLatest(), MaxAge: application.config.HistoryMaxAge()})
 	if err != nil {
 		return nil, err
@@ -246,7 +236,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	adapterOwned = false
-	return &conversationRuntime{store: store, configDefaults: defaults, registry: registry, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
+	return &conversationRuntime{store: store, configDefaults: defaults, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
 		gate: gate, effectDispatcher: effectDispatcher,
 		recovery: recovery, effectRecovery: effectRecovery, inboundRecovery: inboundRecovery, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
 		shutdownTimeout: application.config.ShutdownTimeout()}, nil
@@ -264,25 +254,4 @@ func prepareDataDir(path string) error {
 		return errors.New("configured data path is not a directory")
 	}
 	return nil
-}
-
-type configEventRelay struct {
-	mu       sync.RWMutex
-	registry *agent.Registry
-}
-
-func (relay *configEventRelay) bind(registry *agent.Registry) {
-	relay.mu.Lock()
-	relay.registry = registry
-	relay.mu.Unlock()
-}
-
-func (relay *configEventRelay) TryPublish(event agent.ConfigChanged) bool {
-	relay.mu.RLock()
-	registry := relay.registry
-	relay.mu.RUnlock()
-	if registry != nil {
-		registry.NotifyConfigChanged(event)
-	}
-	return true
 }

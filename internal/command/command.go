@@ -74,19 +74,10 @@ type GroupModerator interface {
 }
 
 // Store is the durable inbox a command message came from. The registry uses
-// it to mark the message handled and to journal config writes so a replay
-// after a crash never applies a change twice. Commands never call it.
+// it to mark the message handled. Commands never call it.
 type Store interface {
 	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
-	BeginConfigMutation(context.Context, conversation.IncomingMessage, agent.ConfigVersion) (ConfigMutation, error)
-	MarkConfigMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
 	RawQuotedMessageReader
-}
-
-// ConfigMutation is the journal state of one command's config write.
-type ConfigMutation struct {
-	ExpectedVersion agent.ConfigVersion
-	AppliedVersion  agent.ConfigVersion
 }
 
 type Observer interface {

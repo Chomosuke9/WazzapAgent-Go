@@ -241,7 +241,6 @@ aktif harus ditandai demikian di UI. Field secret menggunakan aksi khusus.
 | Command | `WAZZAP_COMMAND_QUEUE`, `WAZZAP_COMMAND_WORKERS` | R |
 | AI workers | `WAZZAP_AI_QUEUE`, `WAZZAP_AI_WORKERS` | R |
 | Batching | `WAZZAP_MESSAGE_DEBOUNCE`, `WAZZAP_MESSAGE_BURST_CAP` | R |
-| Registry | `WAZZAP_AGENT_MAX_LIVE`, `WAZZAP_AGENT_IDLE_TTL`, `WAZZAP_AGENT_CONSTRUCTION_TIMEOUT` | R |
 | Koneksi | `WAZZAP_CONNECT_TIMEOUT`, `WAZZAP_SEND_TIMEOUT`, `WAZZAP_SHUTDOWN_TIMEOUT` | R |
 | Policy | `WAZZAP_POLICY_ID`, `WAZZAP_POLICY_REVISION` | R; bukan moderation level per-chat |
 | Observability | `WAZZAP_LOG_LEVEL`, `WAZZAP_LOG_FORMAT`, `LANGSMITH_API_KEY` | R; LangSmith key kosong berarti tracing nonaktif |

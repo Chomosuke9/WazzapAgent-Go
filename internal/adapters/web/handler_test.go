@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -25,7 +24,7 @@ func TestBrowserHandlerServesUIAndTypedCalls(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "WazzapAgent") {
 		t.Fatalf("unexpected page: %d %q", page.Code, page.Body.String())
 	}
-	for _, method := range []string{"GetAppInfo", "Ping"} {
+	for _, method := range []string{"GetAppInfo"} {
 		response := callForTest(handler, method, "http://127.0.0.1:8080", "127.0.0.1:8080")
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s: %d %q", method, response.Code, response.Body.String())
@@ -42,10 +41,10 @@ func TestBrowserHandlerRejectsCrossSiteAndUnknownOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response := callForTest(handler, "Ping", "https://other.example", "127.0.0.1:8080"); response.Code != http.StatusForbidden {
+	if response := callForTest(handler, "GetAppInfo", "https://other.example", "127.0.0.1:8080"); response.Code != http.StatusForbidden {
 		t.Fatalf("cross-site status = %d", response.Code)
 	}
-	if response := callForTest(handler, "Ping", "http://other.example", "other.example"); response.Code != http.StatusForbidden {
+	if response := callForTest(handler, "GetAppInfo", "http://other.example", "other.example"); response.Code != http.StatusForbidden {
 		t.Fatalf("non-loopback host status = %d", response.Code)
 	}
 	if response := callForTest(handler, "GetSettingsSchemaHidden", "http://127.0.0.1:8080", "127.0.0.1:8080"); response.Code != http.StatusBadRequest {
@@ -74,13 +73,4 @@ func callForTest(handler http.Handler, method, origin, host string) *httptest.Re
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
-}
-
-func TestAllowedMethodsExistOnSharedService(t *testing.T) {
-	service := reflect.ValueOf(ui.NewAppService(ui.Options{Version: "test"}))
-	for method := range allowedMethods {
-		if !service.MethodByName(method).IsValid() {
-			t.Errorf("allowed method %s is missing from ui.AppService", method)
-		}
-	}
 }

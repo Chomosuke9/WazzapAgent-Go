@@ -350,9 +350,6 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 	if err := firstRuntime.handler.Handle(context.Background(), first); err != nil {
 		t.Fatalf("handle first message: %v", err)
 	}
-	if err := firstRuntime.registry.Close(context.Background()); err != nil {
-		t.Fatalf("close first registry: %v", err)
-	}
 	if err := firstRuntime.store.Close(); err != nil {
 		t.Fatalf("close first store: %v", err)
 	}
@@ -560,15 +557,11 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
-	if err != nil {
-		t.Fatalf("begin command journal: %v", err)
-	}
-	if _, err := current.Config().SetPromptOverride(context.Background(), journal.ExpectedVersion, agent.PromptOverride{Mode: agent.PromptAppend, Text: "crash-safe"}); err != nil {
+	if _, err := current.Config().SetPromptOverride(context.Background(), snapshot.Version, agent.PromptOverride{Mode: agent.PromptAppend, Text: "crash-safe"}); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
-	// Simulate a crash before MarkPromptMutationApplied and response planning by
-	// invoking the duplicate durable inbox record through the normal handler.
+	// Simulate a crash after the config write but before the command was marked
+	// handled by invoking the duplicate durable inbox record through the handler.
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 		t.Fatalf("recover duplicate command: %v", err)
 	}
@@ -599,10 +592,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
 	snapshot, err := fixture.store.Configs().Load(context.Background(), key)
 	if err != nil || snapshot.Permission.ModerationLevel != agent.ModerationDeleteMuteKick ||
-		!snapshot.Permission.ModelToolCapabilities().Has("message.react") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.delete") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.mute") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.kick") {
+		!snapshot.Permission.ModelToolCapabilities().Has("message.react") {
 		t.Fatalf("stored permission = %#v, %v", snapshot.Permission, err)
 	}
 	if fixture.model.calls.Load() != 0 {
@@ -619,7 +609,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	if !request.Capabilities.Has("command.execute") || len(request.Commands) != 3 ||
+	if len(request.Commands) != 3 ||
 		request.Commands[0] != "catch" || request.Commands[1] != "help" || request.Commands[2] != "info" {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
@@ -654,13 +644,9 @@ func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh config: %v", err)
 	}
-	journal, err := fixture.store.Inbound().BeginConfigMutation(context.Background(), claimed.Message, snapshot.Version)
-	if err != nil {
-		t.Fatalf("begin command journal: %v", err)
-	}
 	permission := snapshot.Permission
 	permission.ModerationLevel = agent.ModerationDeleteMute
-	if _, err := current.Config().SetPermission(context.Background(), journal.ExpectedVersion, permission); err != nil {
+	if _, err := current.Config().SetPermission(context.Background(), snapshot.Version, permission); err != nil {
 		t.Fatalf("commit config before simulated crash: %v", err)
 	}
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
@@ -843,10 +829,10 @@ func newFixtureAtPath(
 		return agent.New(ctx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
 			Context: contextBuilder, ChatContext: staticChatContextReader{}, HistoryWindow: agent.DefaultHistoryWindow, Model: model,
-			Responses: dispatcher, Events: agent.DiscardConfigEvents{}, Clock: agent.SystemClock{},
+			Responses: dispatcher, Clock: agent.SystemClock{},
 		})
 	})
-	registry, err := agent.NewRegistry(context.Background(), factory, agent.RegistryLimits{MaxLive: 100, IdleTTL: time.Minute, ConstructionTimeout: time.Second})
+	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
@@ -872,10 +858,7 @@ func newFixtureAtPath(
 		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
 		model:   model, sender: sender, dispatcher: dispatcher,
 	}
-	t.Cleanup(func() {
-		_ = registry.Close(context.Background())
-		_ = store.Close()
-	})
+	t.Cleanup(func() { _ = store.Close() })
 	return fixture
 }
 

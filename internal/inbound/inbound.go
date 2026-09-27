@@ -279,14 +279,6 @@ func (handler *AIHandler) processBatch(
 	if err != nil {
 		return err
 	}
-	if scoped, ok := handler.policy.(interface {
-		ModelCapabilitiesForMessage(context.Context, conversation.IncomingMessage, agent.PermissionConfig) (agent.CapabilitySet, error)
-	}); ok {
-		capabilities, err = scoped.ModelCapabilitiesForMessage(ctx, messages[len(messages)-1], snapshot.Permission)
-		if err != nil {
-			return err
-		}
-	}
 	anchorMessage := messages[len(messages)-1]
 	key := agent.Key{TenantID: anchorMessage.TenantID, AccountID: anchorMessage.AccountID, ChatID: anchorMessage.ChatID}
 	modelPrincipal, err := policy.ModelPrincipal(key, anchorMessage.InvocationID)
@@ -305,13 +297,6 @@ func (handler *AIHandler) processBatch(
 		}
 		if allowed {
 			commandNames = append(commandNames, cmd.Name)
-		}
-	}
-	if len(commandNames) > 0 && !capabilities.Has("command.execute") {
-		values := append(capabilities.Values(), agent.Capability("command.execute"))
-		capabilities, err = agent.NewCapabilitySet(values...)
-		if err != nil {
-			return err
 		}
 	}
 	chatName := anchorMessage.SenderName

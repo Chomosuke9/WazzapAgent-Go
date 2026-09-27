@@ -133,7 +133,7 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
             turn_state = ?, generation_lease = NULL, generation_lease_until_ms = NULL,
             retry_after_ms = NULL, last_error_code = ?, updated_at_ms = ?
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-            AND turn_state = ? AND action_id IS NULL`,
+            AND turn_state = ?`,
 			uint8(agent.TurnFailedTerminal), string(agent.ErrorProviderFailure), nowMS,
 			request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.Invocation.ID.String(), row.state,
 		)
@@ -154,10 +154,11 @@ func (store *TurnStore) Claim(ctx context.Context, request agent.ClaimTurnReques
         turn_state = ?, generation_lease = ?, generation_lease_until_ms = ?, retry_after_ms = NULL,
         generation_attempts = generation_attempts + 1, config_version = ?, last_error_code = NULL, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND invocation_digest = ? AND action_id IS NULL`,
+        AND invocation_digest = ? AND turn_state = ?`,
 		uint8(agent.TurnGenerating), lease, request.Now.Add(store.generationTTL).UnixMilli(),
 		uint64(request.Invocation.PolicyVersion), nowMS,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.Invocation.ID.String(), request.Digest[:],
+		row.state,
 	)
 	if err != nil {
 		return agent.TurnClaim{}, storageError("renew turn claim", err)
@@ -239,11 +240,11 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 			return agent.StoredPlan{}, err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        config_version = ?, turn_state = ?, delivery_status = ?,
+        config_version = ?, turn_state = ?,
         generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ? AND action_id IS NULL`,
-			uint64(request.ConfigVersion), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded), nowMS,
+        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
+			uint64(request.ConfigVersion), uint8(agent.TurnSucceeded), nowMS,
 			request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
 			uint8(agent.TurnGenerating), string(request.Lease), nowMS,
 		)
@@ -266,7 +267,6 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	if err != nil {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorInternal, "create action ID", err)
 	}
-	payloadDigest := digestAction(request.Key, actionID, request.ResponseText)
 	causationID, err := identity.ParseCausationID(row.causationID)
 	if err != nil {
 		return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode response causation", err)
@@ -291,23 +291,14 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbound_actions(
         tenant_id, account_id, chat_id, action_id, invocation_id, response_id,
-		payload_digest, text, state, created_at_ms, updated_at_ms, reply_to_message_id
-	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		text, state, created_at_ms, updated_at_ms, reply_to_message_id
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
-		actionID.String(), request.InvocationID.String(), responseID.String(), payloadDigest[:], request.ResponseText,
+		actionID.String(), request.InvocationID.String(), responseID.String(), request.ResponseText,
 		uint8(action.StatePending), nowMS, nowMS, nullableMessageID(request.ReplyToMessageID),
 	)
 	if err != nil {
 		return agent.StoredPlan{}, storageError("insert outbound action", err)
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO action_receipts(
-        tenant_id, account_id, chat_id, action_id, status, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(),
-		actionID.String(), uint8(agent.DeliveryPending), nowMS,
-	)
-	if err != nil {
-		return agent.StoredPlan{}, storageError("insert action receipt", err)
 	}
 	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
 	var quotedSenderIsAdmin, quotedSenderIsSuperAdmin int
@@ -350,12 +341,11 @@ func (store *TurnStore) CommitPlan(ctx context.Context, request agent.CommitPlan
 		return agent.StoredPlan{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        config_version = ?, turn_state = ?, response_id = ?, action_id = ?, response_text = ?,
-        delivery_status = ?, generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
+        config_version = ?, turn_state = ?,
+        generation_lease = NULL, generation_lease_until_ms = NULL, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ? AND action_id IS NULL`,
-		uint64(request.ConfigVersion), uint8(agent.TurnResponsePlanned), responseID.String(), actionID.String(), request.ResponseText,
-		uint8(agent.DeliveryPending), nowMS,
+        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
+		uint64(request.ConfigVersion), uint8(agent.TurnResponsePlanned), nowMS,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
 		uint8(agent.TurnGenerating), string(request.Lease), nowMS,
 	)
@@ -477,8 +467,7 @@ func insertModelEffectsTx(
 			Principal:    principal,
 			Effect:       payload,
 		}
-		digest, err := effect.DigestPlan(request)
-		if err != nil {
+		if err := request.Validate(); err != nil {
 			return nil, err
 		}
 		if target, targeted := effectTarget(payload); targeted {
@@ -486,17 +475,16 @@ func insertModelEffectsTx(
 				return nil, err
 			}
 		}
-		participantID, lid, principalInvocation := storedPrincipal(principal)
-		target, emoji, presence, commandText := storedEffect(payload)
+		kind, target, encoded, err := encodeEffect(request)
+		if err != nil {
+			return nil, err
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO typed_effects(
             tenant_id, account_id, chat_id, effect_id, invocation_id, model_call_id,
-            principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
-			effect_kind, target_message_id, emoji, presence_state, command_text, payload_digest, state,
-            created_at_ms, updated_at_ms
-		  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			kind, target_message_id, payload, state, created_at_ms, updated_at_ms
+		  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), effectID.String(), invocationID.String(), modelEffect.CallID,
-			uint8(principal.Kind), participantID, lid, principalInvocation,
-			uint8(payload.Kind()), target, emoji, presence, commandText, digest[:], uint8(effect.StatePending), nowMS, nowMS,
+			kind, target, encoded, uint8(effect.StatePending), nowMS, nowMS,
 		)
 		if err != nil {
 			return nil, storageError("insert model typed effect", err)
@@ -573,7 +561,7 @@ func (store *TurnStore) FailGeneration(ctx context.Context, request agent.FailGe
         turn_state = ?, generation_lease = NULL, generation_lease_until_ms = NULL,
         retry_after_ms = ?, last_error_code = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
-        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ? AND action_id IS NULL`,
+        AND turn_state = ? AND generation_lease = ? AND generation_lease_until_ms > ?`,
 		uint8(state), nullableMillis(request.RetryAfter), string(request.Code), nowMS,
 		request.Key.TenantID.String(), request.Key.AccountID.String(), request.Key.ChatID.String(), request.InvocationID.String(),
 		uint8(agent.TurnGenerating), string(request.Lease), nowMS,
@@ -611,7 +599,7 @@ func (store *TurnStore) Load(ctx context.Context, key agent.Key, invocationID id
 		InvocationID: invocationID,
 		Digest:       digest,
 		State:        agent.TurnState(row.state),
-		Delivery:     agent.DeliveryStatus(row.deliveryStatus),
+		Delivery:     row.delivery(),
 		UpdatedAt:    time.UnixMilli(row.updatedAt).UTC(),
 	}
 	messageID, parseErr := identity.ParseMessageID(row.messageID)
@@ -654,7 +642,7 @@ type turnRow struct {
 	responseID           sql.NullString
 	actionID             sql.NullString
 	responseText         sql.NullString
-	deliveryStatus       int64
+	actionState          sql.NullInt64
 	updatedAt            int64
 	responseCreatedAt    sql.NullInt64
 	replyToMessageID     sql.NullString
@@ -690,17 +678,17 @@ func loadTurnRow(ctx context.Context, query turnQuerier, key agent.Key, invocati
 	var digest nullableBytes
 	err := query.QueryRowContext(ctx, `SELECT i.turn_state, i.invocation_digest, i.message_id, i.provider_message_id,
         i.invocation_cause, i.causation_kind, i.causation_id, i.participant_id, i.sender_ref, i.sender_name, i.input_text, i.occurred_at_ms, i.generation_lease,
-        i.generation_lease_until_ms, i.retry_after_ms, i.generation_attempts, i.config_version, i.response_id, i.action_id,
-	        i.response_text, i.delivery_status, i.updated_at_ms, a.created_at_ms, a.reply_to_message_id
+        i.generation_lease_until_ms, i.retry_after_ms, i.generation_attempts, i.config_version, a.response_id, a.action_id,
+	        a.text, a.state, i.updated_at_ms, a.created_at_ms, a.reply_to_message_id
       FROM inbound_events i
       LEFT JOIN outbound_actions a ON a.tenant_id = i.tenant_id AND a.account_id = i.account_id
-        AND a.chat_id = i.chat_id AND a.action_id = i.action_id
+        AND a.chat_id = i.chat_id AND a.invocation_id = i.invocation_id
       WHERE i.tenant_id = ? AND i.account_id = ? AND i.chat_id = ? AND i.invocation_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(),
 	).Scan(&row.state, &digest, &row.messageID, &row.providerMessageID, &row.invocationCause, &row.causationKind,
 		&row.causationID, &row.participantID, &row.senderRef,
 		&row.senderName, &row.inputText, &row.occurredAt, &row.generationLease, &row.generationLeaseUntil, &row.retryAfter, &row.generationAttempts,
-		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.deliveryStatus, &row.updatedAt, &row.responseCreatedAt, &row.replyToMessageID)
+		&row.configVersion, &row.responseID, &row.actionID, &row.responseText, &row.actionState, &row.updatedAt, &row.responseCreatedAt, &row.replyToMessageID)
 	row.digest = digest
 	return row, err
 }
@@ -761,10 +749,9 @@ func insertInvocation(ctx context.Context, tx *sql.Tx, request agent.ClaimTurnRe
 
 func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender agent.SenderContext, nowMS int64) error {
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO participants(
-        tenant_id, account_id, id, provider_address, created_at_ms
-      ) VALUES (?, ?, ?, ?, ?)`,
-		key.TenantID.String(), key.AccountID.String(), sender.ParticipantID.String(),
-		"internal:"+sender.ParticipantID.String(), nowMS,
+        tenant_id, account_id, id, created_at_ms
+      ) VALUES (?, ?, ?, ?)`,
+		key.TenantID.String(), key.AccountID.String(), sender.ParticipantID.String(), nowMS,
 	); err != nil {
 		return storageError("ensure invocation participant", err)
 	}
@@ -794,8 +781,8 @@ func ensureInternalSender(ctx context.Context, tx *sql.Tx, key agent.Key, sender
 }
 
 func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agent.StoredPlan, error) {
-	if agent.TurnState(row.state) == agent.TurnSucceeded && !row.actionID.Valid && !row.responseID.Valid && !row.responseText.Valid {
-		if !row.configVersion.Valid || row.deliveryStatus != int64(agent.DeliverySucceeded) {
+	if agent.TurnState(row.state) == agent.TurnSucceeded && !row.actionID.Valid {
+		if !row.configVersion.Valid {
 			return agent.StoredPlan{}, agent.NewError(agent.ErrorIntegrityFailure, "decode effect-only plan", errors.New("partial effect-only plan"))
 		}
 		return agent.StoredPlan{
@@ -833,6 +820,27 @@ func (row turnRow) plan(key agent.Key, invocationID identity.InvocationID) (agen
 	}, nil
 }
 
+// delivery derives the turn's delivery status from its reply, if any. A
+// succeeded turn without a reply is an effect-only turn and counts as sent.
+func (row turnRow) delivery() agent.DeliveryStatus {
+	if !row.actionState.Valid {
+		if agent.TurnState(row.state) == agent.TurnSucceeded {
+			return agent.DeliverySucceeded
+		}
+		return agent.DeliveryNotStarted
+	}
+	switch action.State(row.actionState.Int64) {
+	case action.StateSucceeded:
+		return agent.DeliverySucceeded
+	case action.StateFailedTerminal:
+		return agent.DeliveryFailedTerminal
+	case action.StateUnknownOutcome:
+		return agent.DeliveryUnknownOutcome
+	default:
+		return agent.DeliveryPending
+	}
+}
+
 func flattenText(parts []agent.ContentPart) string {
 	var builder strings.Builder
 	for index, part := range parts {
@@ -868,10 +876,6 @@ func equalDigest(stored []byte, wanted agent.InvocationDigest) bool {
 		}
 	}
 	return true
-}
-
-func digestAction(key agent.Key, actionID identity.ActionID, text string) [32]byte {
-	return sha256.Sum256([]byte(key.TenantID.String() + "\x00" + key.AccountID.String() + "\x00" + key.ChatID.String() + "\x00" + actionID.String() + "\x00" + text))
 }
 
 func nullableMillis(value time.Time) any {
