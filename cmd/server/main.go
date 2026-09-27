@@ -93,7 +93,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sessions, err := control.NewSessionController(repository, bindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), web.SessionEventSink{Logs: logs}, lease.Root())
+	sessions, err := control.NewSessionController(repository, bindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), ui.SessionLog{Logs: logs}, lease.Root())
 	if err != nil {
 		return err
 	}

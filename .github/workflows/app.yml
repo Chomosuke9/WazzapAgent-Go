@@ -1,9 +1,21 @@
 name: app
 
+# The desktop and Android builds are slow, so they run only for release tags,
+# on demand, and on pull requests that touch the GUI. ci.yml covers the rest.
 on:
   push:
-  pull_request:
+    tags: ['v*']
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'cmd/app/**'
+      - 'internal/ui/**'
+      - 'build/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/app.yml'
+      - '.github/actions/setup-app/**'
 
 permissions:
   contents: read
@@ -14,29 +26,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Verify embedded migration line endings
-        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.19.0'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Use pinned npm
-        run: npm install --global npm@11.6.2
-      - name: Install pinned Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Check frontend and tests
-        working-directory: frontend
-        run: |
-          npm run typecheck
-          npm test -- --run
+      - uses: ./.github/actions/setup-app
       - name: Generate Wails bindings
         run: wails3 generate bindings -f '-tags gui' -ts -i -clean=true ./cmd/app
       - name: Verify generated bindings
@@ -61,24 +51,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libayatana-appindicator3-dev
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Verify embedded migration line endings
-        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.19.0'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Use pinned npm
-        run: npm install --global npm@11.6.2
-      - name: Install pinned Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
+      - uses: ./.github/actions/setup-app
       - name: Generate Wails bindings
         run: wails3 generate bindings -f '-tags gui' -ts -i -clean=true ./cmd/app
       - name: Verify generated bindings
@@ -99,17 +72,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Verify embedded migration line endings
-        run: go test ./internal/adapters/sqlite -run '^TestEmbeddedMigrationsUseLF$' -count=1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.19.0'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -123,18 +85,7 @@ jobs:
           sudo apt-get install --yes build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libayatana-appindicator3-dev
       - name: Install Android SDK and NDK
         run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;26.3.11579264'
-      - name: Use pinned npm
-        run: npm install --global npm@11.6.2
-      - name: Install pinned Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Check frontend and tests
-        working-directory: frontend
-        run: |
-          npm run typecheck
-          npm test -- --run
+      - uses: ./.github/actions/setup-app
       - name: Build Android debug APK
         run: wails3 task android:build ARCH=arm64
       - name: Verify Android startup registration

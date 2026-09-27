@@ -20,9 +20,8 @@ Business logic, validasi otoritatif, sesi WhatsApp, serta pengaturan persistent
 dimiliki backend Go. Jangan menyimpan kredensial atau data penting di localStorage,
 source frontend, atau environment Vite.
 
-Status: scaffold UI P0 tersedia. React `19.1.1` + TypeScript `5.9.2` + Vite
-`8.2.0` memakai runtime Wails `v3.0.0-beta.23` dan binding Go yang dihasilkan
-generator resmi. Plugin React dipin ke `6.0.1`, Vitest ke `4.1.11`.
+React `19.1.1` + TypeScript `5.9.2` + Vite `8.2.0` memakai runtime Wails
+`v3.0.0-beta.23` dan binding Go yang dihasilkan generator resmi.
 
 Perintah frontend:
 
@@ -30,14 +29,11 @@ Perintah frontend:
 npm ci
 npm run dev
 npm run typecheck
-npm test -- --run
-npm run build
+npm run build        # bundle desktop/Android (dist)
+npm run build:web    # bundle browser (web-dist)
 ```
 
-Halaman P0 menyediakan navigasi Ringkasan, WhatsApp, Pengaturan, dan App & Data.
-Hanya `GetAppInfo` serta tombol ping yang memanggil backend; pairing, settings
-persistence, dan operasi data tetap ditandai belum tersedia sampai backend-nya
-siap. UI tidak menyimpan secret atau konfigurasi di browser.
-
-Preview browser biasa tidak memiliki bridge Wails; gunakan desktop shell untuk
-menguji `GetAppInfo` dan event ping secara langsung.
+Semua panggilan backend lewat `src/services/backend.ts`: satu fungsi `call`
+yang memakai binding Wails di desktop dan `POST /api/call` di browser, dengan
+nama method dan argumen yang sama. Tidak ada event push; halaman melakukan
+polling untuk status yang berubah.

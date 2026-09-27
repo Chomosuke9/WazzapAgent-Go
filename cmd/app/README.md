@@ -3,7 +3,7 @@
 Tempat bootstrap shell Wails v3 untuk Windows, Linux, macOS, dan Android.
 Nama `app` dipakai karena shell ini bukan khusus desktop.
 
-`main.go` mendaftarkan `AppService` dari `internal/adapters/wails`, memuat bundle
+`main.go` mendaftarkan `AppService` dari `internal/ui`, memuat bundle
 frontend, dan membuka window. Seluruh source GUI memakai build tag `gui` supaya
 pengujian core tidak memerlukan WebView atau bundle frontend.
 

@@ -15,22 +15,6 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
-// The browser bridge exposes exactly the operations used by the shared UI.
-// Reflection only decodes their typed arguments; it never selects an arbitrary method.
-var allowedMethods = map[string]bool{
-	"GetAppInfo": true, "Ping": true, "GetLogs": true,
-	"GetSettings": true, "GetSettingsSchema": true, "ValidateSettings": true, "SaveSettings": true,
-	"GetAgentRuntimeStatus": true, "StartAgent": true, "StopAgent": true, "ApplyAgentSettings": true,
-	"GetWhatsAppSessionStatus": true, "BeginWhatsAppPairing": true, "ResumeWhatsAppSession": true,
-	"StopWhatsAppSession": true, "CancelWhatsAppPairing": true, "ReconnectWhatsAppSession": true,
-	"LogoutWhatsAppSession": true, "GetWhatsAppConversations": true, "GetWhatsAppMessages": true,
-	"GetWhatsAppGroupMembers": true, "GetWhatsAppChatSettings": true, "SaveWhatsAppChatSettings": true, "GetWhatsAppUsage": true,
-	"ResetWhatsAppChatSettings":  true,
-	"GetWhatsAppBroadcastGroups": true, "NormalizeWhatsAppBroadcastPayload": true, "SendWhatsAppBroadcast": true,
-	"ScheduleWhatsAppBroadcast": true, "GetWhatsAppBroadcastSchedules": true, "CancelWhatsAppBroadcastSchedule": true,
-	"SendWhatsAppMessage": true, "DeleteWhatsAppMessage": true, "KickWhatsAppGroupMember": true,
-}
-
 type request struct {
 	Method string            `json:"method"`
 	Args   []json.RawMessage `json:"args"`
@@ -137,11 +121,13 @@ func allowedBrowserRequest(r *http.Request, trustedHost string) bool {
 }
 
 func invoke(service *ui.AppService, input request) (any, error) {
-	if !allowedMethods[input.Method] {
+	// Every exported ui.AppService method is a UI operation; Wails exposes the
+	// same set. Reflection only decodes the typed arguments.
+	method := reflect.ValueOf(service).MethodByName(input.Method)
+	if !method.IsValid() {
 		return nil, errors.New("unknown operation")
 	}
-	method := reflect.ValueOf(service).MethodByName(input.Method)
-	if !method.IsValid() || method.Type().NumIn() != len(input.Args) {
+	if method.Type().NumIn() != len(input.Args) {
 		return nil, errors.New("invalid operation arguments")
 	}
 	args := make([]reflect.Value, len(input.Args))

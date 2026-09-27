@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -46,6 +47,35 @@ jobs:
       - name: Vulnerability scan
         if: runner.os == 'Linux'
         run: govulncheck ./...
+
+  # The browser server and the frontend sit behind the web build tag and need
+  # the built bundle, so the quality job above never compiles them.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build browser bundle
+        working-directory: frontend
+        run: npm run build:web
+      - name: Vet web build
+        run: go vet -tags web ./...
+      - name: Build web server
+        run: go build -tags web ./cmd/server
 
   cross-build:
     runs-on: ubuntu-latest

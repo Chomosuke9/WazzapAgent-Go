@@ -193,11 +193,6 @@ type WhatsAppSessionOperationDTO struct {
 	Status      WhatsAppSessionStatusDTO `json:"status"`
 }
 
-type WhatsAppSessionEventDTO struct {
-	OperationID string                   `json:"operationID"`
-	Status      WhatsAppSessionStatusDTO `json:"status"`
-}
-
 type SettingsView = SettingsViewDTO
 type ValidationResult = ValidationResultDTO
 type SaveSettingsResult = SaveSettingsResultDTO

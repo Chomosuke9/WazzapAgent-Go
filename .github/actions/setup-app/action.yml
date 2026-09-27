@@ -1,0 +1,24 @@
+name: Set up app build
+description: Go, Node, the pinned npm and Wails CLI, and the locked frontend dependencies.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24.19.0'
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Use pinned npm
+      shell: bash
+      run: npm install --global npm@11.6.2
+    - name: Install pinned Wails CLI
+      shell: bash
+      run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+    - name: Install frontend dependencies
+      shell: bash
+      working-directory: frontend
+      run: npm ci

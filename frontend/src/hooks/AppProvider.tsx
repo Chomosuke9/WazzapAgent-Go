@@ -1,14 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { getAppInfo, ping, subscribeToBackendPing, type AppInfo, type PingEvent } from "../services/backend";
+import { getAppInfo, type AppInfo } from "../services/backend";
 
 type AppContextValue = {
   appInfo: AppInfo | null;
   infoError: string | null;
   loadingInfo: boolean;
-  lastPing: PingEvent | null;
-  pingPending: boolean;
-  pingError: string | null;
-  sendPing: () => Promise<void>;
+  lastCheck: Date | null;
+  checkPending: boolean;
+  checkError: string | null;
+  checkConnection: () => Promise<void>;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -21,9 +21,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(true);
-  const [lastPing, setLastPing] = useState<PingEvent | null>(null);
-  const [pingPending, setPingPending] = useState(false);
-  const [pingError, setPingError] = useState<string | null>(null);
+  const [lastCheck, setLastCheck] = useState<Date | null>(null);
+  const [checkPending, setCheckPending] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -31,19 +31,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then((info) => { if (mounted) setAppInfo(info); })
       .catch((error: unknown) => { if (mounted) setInfoError(errorMessage(error)); })
       .finally(() => { if (mounted) setLoadingInfo(false); });
-    const unsubscribe = subscribeToBackendPing((event) => { if (mounted) setLastPing(event); });
-    return () => { mounted = false; unsubscribe(); };
+    return () => { mounted = false; };
   }, []);
 
-  const sendPing = useCallback(async () => {
-    setPingPending(true);
-    setPingError(null);
-    try { await ping(); } catch (error) { setPingError(errorMessage(error)); }
-    finally { setPingPending(false); }
+  // A round trip to the service is the whole connection check.
+  const checkConnection = useCallback(async () => {
+    setCheckPending(true);
+    setCheckError(null);
+    try { setAppInfo(await getAppInfo()); setLastCheck(new Date()); } catch (error) { setCheckError(errorMessage(error)); }
+    finally { setCheckPending(false); }
   }, []);
 
-  const value = useMemo(() => ({ appInfo, infoError, loadingInfo, lastPing, pingPending, pingError, sendPing }),
-    [appInfo, infoError, loadingInfo, lastPing, pingPending, pingError, sendPing]);
+  const value = useMemo(() => ({ appInfo, infoError, loadingInfo, lastCheck, checkPending, checkError, checkConnection }),
+    [appInfo, infoError, loadingInfo, lastCheck, checkPending, checkError, checkConnection]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
