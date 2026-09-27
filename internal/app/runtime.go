@@ -39,9 +39,9 @@ const outboxSweep = time.Minute
 // account first connects (a recovered command must be able to reply), then
 // sends whatever the outbox holds each time the account connects, and once a
 // minute whatever has been pending for over a minute. A failed recovery is
-// tried again on each sweep until it succeeds.
+// tried again on each sweep, while connected, until it succeeds.
 func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
-	opened, recovered := false, false
+	recovered := false
 	sweep := time.NewTicker(outboxSweep)
 	defer sweep.Stop()
 	for {
@@ -49,13 +49,12 @@ func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-runtime.account.Opened():
-			opened = true
 			if !recovered {
 				recovered = runtime.recoverInbound(ctx)
 			}
 			runtime.flushOutbox(ctx, time.Time{})
 		case now := <-sweep.C:
-			if opened && !recovered {
+			if !recovered && runtime.account.Ready() {
 				recovered = runtime.recoverInbound(ctx)
 			}
 			runtime.flushOutbox(ctx, now.Add(-outboxSweep))
