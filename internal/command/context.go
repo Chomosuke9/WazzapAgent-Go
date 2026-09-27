@@ -72,10 +72,11 @@ func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Butt
 		request.Buttons = append(request.Buttons, action.Button{ID: c.buttonID(button), Label: button.Label})
 	}
 	_, err = sender.SendButtons(ctx, request)
-	if agent.IsCode(err, agent.ErrorProviderFailure) {
-		// WhatsApp can reject interactive messages for some accounts or
-		// chats. The rejected message was not delivered, so the text form
-		// is sent instead of failing the command.
+	if agent.IsCode(err, agent.ErrorUnsupported) {
+		// The provider definitively rejected the buttons (WhatsApp does
+		// for some accounts or chats), so nothing was delivered and the
+		// text form is safe to send. Ambiguous failures are not retried
+		// as text, which could deliver both.
 		return c.replyButtonsAsText(ctx, text, buttons)
 	}
 	return err
