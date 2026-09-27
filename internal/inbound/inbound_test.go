@@ -2,6 +2,7 @@ package inbound_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -741,6 +742,8 @@ type fixture struct {
 	model      *echoModel
 	sender     *recordingSender
 	dispatcher *action.Dispatcher
+	gate       *policy.FixedGate
+	responder  *action.CommandResponder
 }
 
 // directIngress is a synchronous test harness for the two concrete lanes.
@@ -777,6 +780,48 @@ func (handler *directIngress) Resume(ctx context.Context, message conversation.I
 		return handler.command.Resume(ctx, message)
 	}
 	return handler.ai.Resume(ctx, message)
+}
+
+type failingText struct{ calls atomic.Int32 }
+
+func (sender *failingText) SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error) {
+	sender.calls.Add(1)
+	return action.SendTextResult{}, agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", errors.New("server returned error 405"))
+}
+
+func TestFailedCommandRepliesOnceAndIsNotRetried(t *testing.T) {
+	fixture := newFixture(t)
+	failing := &failingText{}
+	commandHandler, err := inbound.NewCommandHandler(
+		fixture.store.Inbound(), fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{}, command.Platform{Text: failing},
+	)
+	if err != nil {
+		t.Fatalf("create command handler: %v", err)
+	}
+	fixture.handler.command = commandHandler
+	candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
+	candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
+	candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
+	if err := fixture.handler.Handle(context.Background(), candidate); !agent.IsCode(err, agent.ErrorProviderFailure) {
+		t.Fatalf("handle failing command error = %v, want the provider failure", err)
+	}
+	if failing.calls.Load() != 1 || fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "/help failed") {
+		t.Fatalf("command sends=%d failure replies=%d", failing.calls.Load(), fixture.sender.count())
+	}
+	now := time.Now().UTC()
+	messages, err := fixture.store.Inbound().ListRecoverableInbound(context.Background(), fixture.tenantID, now, now.Add(-5*time.Second), 10)
+	if err != nil {
+		t.Fatalf("list recoverable inbound: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("failed command is still recoverable: %#v", messages)
+	}
+	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+		t.Fatalf("redelivered failed command: %v", err)
+	}
+	if failing.calls.Load() != 1 || fixture.sender.count() != 1 {
+		t.Fatalf("redelivery re-ran the command: sends=%d replies=%d", failing.calls.Load(), fixture.sender.count())
+	}
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -855,7 +900,7 @@ func newFixtureAtPath(
 	fixture := &fixture{
 		tenantID: tenantID, accountID: accountID, store: store, registry: registry,
 		handler: &directIngress{store: store.Inbound(), command: commandHandler, ai: aiHandler, observer: inbound.DiscardObserver{}},
-		model:   model, sender: sender, dispatcher: dispatcher,
+		model:   model, sender: sender, dispatcher: dispatcher, gate: gate, responder: responder,
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return fixture

@@ -61,13 +61,7 @@ func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Butt
 	}
 	sender := c.invocation.Platform.Buttons
 	if sender == nil {
-		// Hosts without buttons still get something usable: the commands
-		// the buttons would have sent, as text the user can type.
-		lines := []string{text, ""}
-		for _, button := range buttons {
-			lines = append(lines, "• "+button.Label+": "+c.buttonID(button))
-		}
-		return c.Reply(ctx, strings.Join(lines, "\n"))
+		return c.replyButtonsAsText(ctx, text, buttons)
 	}
 	actionID, err := identity.NewActionID()
 	if err != nil {
@@ -78,7 +72,23 @@ func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Butt
 		request.Buttons = append(request.Buttons, action.Button{ID: c.buttonID(button), Label: button.Label})
 	}
 	_, err = sender.SendButtons(ctx, request)
+	if agent.IsCode(err, agent.ErrorProviderFailure) {
+		// WhatsApp can reject interactive messages for some accounts or
+		// chats. The rejected message was not delivered, so the text form
+		// is sent instead of failing the command.
+		return c.replyButtonsAsText(ctx, text, buttons)
+	}
 	return err
+}
+
+// replyButtonsAsText sends the commands the buttons would have sent, as text
+// the user can type.
+func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons []Button) error {
+	lines := []string{text, ""}
+	for _, button := range buttons {
+		lines = append(lines, "• "+button.Label+": "+c.buttonID(button))
+	}
+	return c.Reply(ctx, strings.Join(lines, "\n"))
 }
 
 // buttonID is what a tap sends back: this command with the button's args.

@@ -182,7 +182,7 @@ func (handler *CommandHandler) resumeCommand(
 		return deny()
 	}
 	if err != nil {
-		return err
+		return handler.failCommand(ctx, message, snapshot.Version, cmd, err)
 	}
 	err = builtinCommandRegistry.Dispatch(ctx, request, command.Invocation{
 		Agent: currentAgent, Config: snapshot, Message: message, Facts: facts,
@@ -191,7 +191,37 @@ func (handler *CommandHandler) resumeCommand(
 	if errors.Is(err, command.ErrDenied) {
 		return deny()
 	}
-	return err
+	if err != nil {
+		return handler.failCommand(ctx, message, snapshot.Version, cmd, err)
+	}
+	return nil
+}
+
+// failCommand makes a failed command final: the user gets one short reply and
+// the message is closed. Leaving it unhandled would make recovery re-run the
+// command every few seconds, repeating whatever it already sent. Only a
+// cancelled context (shutdown) leaves the message for recovery after restart.
+// The original error is still returned so the lane logs it.
+func (handler *CommandHandler) failCommand(
+	ctx context.Context,
+	message conversation.IncomingMessage,
+	version agent.ConfigVersion,
+	cmd command.Command,
+	cause error,
+) error {
+	if ctx.Err() != nil {
+		return cause
+	}
+	reply := "Sorry, /" + cmd.Name + " failed. Please try again later."
+	if agent.IsCode(cause, agent.ErrorNotReady) {
+		reply = "WhatsApp is still starting up. Please try /" + cmd.Name + " again in a moment."
+	}
+	if err := handler.responses.Reply(ctx, message, version, reply); err != nil {
+		if markErr := handler.store.MarkCommandHandled(ctx, message); markErr != nil {
+			return errors.Join(cause, err, markErr)
+		}
+	}
+	return cause
 }
 
 func commandPrincipal(message conversation.IncomingMessage) (policy.Principal, error) {
