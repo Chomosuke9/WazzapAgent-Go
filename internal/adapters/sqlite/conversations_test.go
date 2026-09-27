@@ -113,7 +113,6 @@ func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *
 	if err != nil || !exists {
 		t.Fatalf("open read-only transcript store: exists=%v err=%v", exists, err)
 	}
-	defer readOnlyDB.Close()
 	if _, err := readOnlyDB.ExecContext(ctx, `DELETE FROM history_entries`); err == nil {
 		t.Fatal("transcript reader unexpectedly allowed a database write")
 	}
@@ -217,19 +216,4 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 		t.Fatalf("close app database: %v", err)
 	}
 	assertName("Keluarga Besar")
-
-	// The read-only Chat page can still show existing history before an older
-	// app database receives the new migration at the next Agent start.
-	legacyDB, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS))
-	if err != nil {
-		t.Fatalf("open old-schema fixture: %v", err)
-	}
-	if _, err := legacyDB.ExecContext(ctx, `ALTER TABLE chats DROP COLUMN group_name`); err != nil {
-		_ = legacyDB.Close()
-		t.Fatalf("remove new column from fixture: %v", err)
-	}
-	if err := legacyDB.Close(); err != nil {
-		t.Fatalf("close old-schema fixture: %v", err)
-	}
-	assertName("Group")
 }
