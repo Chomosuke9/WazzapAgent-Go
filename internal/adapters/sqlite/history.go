@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -100,7 +99,7 @@ func (store *HistoryStore) list(
 	rows, err := tx.QueryContext(ctx, `SELECT sequence, message_id, invocation_id, causation_kind,
 	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin, quoted_message_id,
 	    quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
-	    content_digest, delivery_status, created_at_ms
+	    delivery_status, created_at_ms
       FROM history_entries
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sequence > ?`+bound+`
       ORDER BY sequence DESC LIMIT ?`, args...)
@@ -111,15 +110,14 @@ func (store *HistoryStore) list(
 	type sequencedEntry struct {
 		sequence int64
 		entry    agent.HistoryEntry
-		digest   []byte
 	}
 	loaded := make([]sequencedEntry, 0, int(query.Limit)+1)
 	for rows.Next() {
-		entry, sequence, digest, decodeErr := scanHistoryEntry(rows)
+		entry, sequence, decodeErr := scanHistoryEntry(rows)
 		if decodeErr != nil {
 			return agent.HistoryPage{}, decodeErr
 		}
-		loaded = append(loaded, sequencedEntry{sequence: sequence, entry: entry, digest: digest})
+		loaded = append(loaded, sequencedEntry{sequence: sequence, entry: entry})
 	}
 	if err := rows.Err(); err != nil {
 		return agent.HistoryPage{}, storageError("iterate history", err)
@@ -140,15 +138,8 @@ func (store *HistoryStore) list(
 	}
 	for index := range loaded {
 		hydrateHistoryMentions(&loaded[index].entry, bindings)
-		wantedDigest, digestErr := agent.DigestHistoryEntry(loaded[index].entry)
-		if digestErr != nil {
-			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", digestErr)
-		}
-		if !equalRawDigest(loaded[index].digest, wantedDigest[:]) {
-			entry := loaded[index].entry
-			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry",
-				fmt.Errorf("content digest mismatch (sequence=%d, message_id=%s, role=%d)",
-					loaded[index].sequence, entry.MessageID, entry.Role))
+		if err := agent.ValidateHistoryEntry(loaded[index].entry); err != nil {
+			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -173,7 +164,7 @@ func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agen
 	if err := key.Validate(); err != nil {
 		return err
 	}
-	if _, err := agent.DigestHistoryEntry(entry); err != nil {
+	if err := agent.ValidateHistoryEntry(entry); err != nil {
 		return err
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -232,10 +223,6 @@ func (store *Store) appendHistoryEntryTx(
 		entry.Quote = cloneAgentQuote(entry.Quote)
 		entry.Quote.Mentions = storedQuote
 	}
-	digest, err := agent.DigestHistoryEntry(entry)
-	if err != nil {
-		return err
-	}
 	var participantID, senderRef any
 	var quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText any
 	var quotedSenderIsAdmin, quotedSenderIsSuperAdmin int
@@ -276,13 +263,13 @@ func (store *Store) appendHistoryEntryTx(
 	    tenant_id, account_id, chat_id, message_id, invocation_id, causation_kind,
 	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin,
 		quoted_message_id, quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
-	    content_digest, delivery_status, created_at_ms, updated_at_ms
-	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	    delivery_status, created_at_ms, updated_at_ms
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 		entry.MessageID.String(), entry.InvocationID.String(), uint8(entry.Causation.Kind),
 		entry.Causation.ID.String(), uint8(entry.Role), participantID, senderRef, senderName, senderIsAdmin, senderIsSuperAdmin,
 		quotedMessageID, quotedSequence, quotedRole, quotedSenderRef, quotedText, quotedSenderIsAdmin, quotedSenderIsSuperAdmin,
-		flattenText(entry.Content), digest[:], uint8(entry.Delivery), entry.CreatedAt.UTC().UnixMilli(), nowMS,
+		flattenText(entry.Content), uint8(entry.Delivery), entry.CreatedAt.UTC().UnixMilli(), nowMS,
 	)
 	if err != nil {
 		return storageError("append history", err)
@@ -292,33 +279,18 @@ func (store *Store) appendHistoryEntryTx(
 		return storageError("inspect history append", err)
 	}
 	if changed == 0 {
-		rows, err := tx.QueryContext(ctx, `SELECT sequence, content_digest FROM history_entries
+		// A replay of the same message by the same invocation is a no-op; any
+		// other unique-key hit means two entries claim one identity.
+		var sameEntry int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_entries
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
-            AND (message_id = ? OR (invocation_id = ? AND role = ?))`,
+            AND message_id = ? AND invocation_id = ? AND role = ?`,
 			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 			entry.MessageID.String(), entry.InvocationID.String(), uint8(entry.Role),
-		)
-		if err != nil {
+		).Scan(&sameEntry); err != nil {
 			return storageError("inspect history replay", err)
 		}
-		matches := 0
-		for rows.Next() {
-			var sequence int64
-			var stored []byte
-			if err := rows.Scan(&sequence, &stored); err != nil {
-				rows.Close()
-				return storageError("decode history replay", err)
-			}
-			matches++
-			if !equalRawDigest(stored, digest[:]) {
-				rows.Close()
-				return agent.NewError(agent.ErrorConflict, "append history", errors.New("message or invocation identity is bound to different content"))
-			}
-		}
-		if err := rows.Close(); err != nil {
-			return storageError("close history replay", err)
-		}
-		if matches != 1 {
+		if sameEntry != 1 {
 			return agent.NewError(agent.ErrorConflict, "append history", errors.New("history identity collision"))
 		}
 	}
@@ -465,7 +437,7 @@ type historyScanner interface {
 	Scan(...any) error
 }
 
-func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte, error) {
+func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, error) {
 	var (
 		sequence                                      int64
 		messageValue                                  string
@@ -484,27 +456,26 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		quotedText                                    sql.NullString
 		quotedSenderIsAdmin, quotedSenderIsSuperAdmin int64
 		content                                       string
-		contentDigest                                 []byte
 		delivery                                      uint8
 		createdAtMS                                   int64
 	)
 	if err := scanner.Scan(&sequence, &messageValue, &invocationValue, &causationKind, &causationValue,
 		&role, &participant, &senderRefValue, &senderName, &senderIsAdmin, &senderIsSuperAdmin,
 		&quotedMessage, &quotedSequence, &quotedRole, &quotedSenderRef, &quotedText,
-		&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &content, &contentDigest, &delivery, &createdAtMS); err != nil {
-		return agent.HistoryEntry{}, 0, nil, storageError("scan history entry", err)
+		&quotedSenderIsAdmin, &quotedSenderIsSuperAdmin, &content, &delivery, &createdAtMS); err != nil {
+		return agent.HistoryEntry{}, 0, storageError("scan history entry", err)
 	}
 	messageID, err := identity.ParseMessageID(messageValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	invocationID, err := identity.ParseInvocationID(invocationValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	causationID, err := identity.ParseCausationID(causationValue)
 	if err != nil {
-		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
 	}
 	entry := agent.HistoryEntry{
 		Sequence: uint64(sequence), MessageID: messageID, InvocationID: invocationID,
@@ -513,16 +484,16 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		Delivery: agent.DeliveryStatus(delivery), CreatedAt: time.UnixMilli(createdAtMS).UTC(),
 	}
 	if participant.Valid != senderRefValue.Valid || (!participant.Valid && (senderIsAdmin != 0 || senderIsSuperAdmin != 0)) {
-		return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
+		return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial sender identity"))
 	}
 	if participant.Valid {
 		participantID, parseErr := identity.ParseParticipantID(participant.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		senderRef, parseErr := identity.ParseSenderRef(senderRefValue.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		entry.Sender = &agent.SenderContext{
 			ParticipantID: participantID, Ref: senderRef, DisplayName: senderName,
@@ -531,11 +502,11 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 	}
 	if quotedMessage.Valid || quotedRole.Valid || quotedSenderRef.Valid || quotedText.Valid || quotedSenderIsAdmin != 0 || quotedSenderIsSuperAdmin != 0 {
 		if !quotedMessage.Valid || !quotedRole.Valid || !quotedText.Valid {
-			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
+			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", errors.New("partial quote context"))
 		}
 		quotedMessageID, parseErr := identity.ParseMessageID(quotedMessage.String)
 		if parseErr != nil {
-			return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+			return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 		}
 		quoteSequence := uint64(0)
 		if quotedSequence.Valid && quotedSequence.Int64 > 0 {
@@ -548,12 +519,12 @@ func scanHistoryEntry(scanner historyScanner) (agent.HistoryEntry, int64, []byte
 		if quotedSenderRef.Valid {
 			ref, parseErr := identity.ParseSenderRef(quotedSenderRef.String)
 			if parseErr != nil {
-				return agent.HistoryEntry{}, 0, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
+				return agent.HistoryEntry{}, 0, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", parseErr)
 			}
 			entry.Quote.SenderRef = ref
 		}
 	}
-	return entry, sequence, append([]byte(nil), contentDigest...), nil
+	return entry, sequence, nil
 }
 
 func loadMessageMentionContexts(
@@ -720,16 +691,4 @@ func decodeHistoryCursor(cursor agent.HistoryCursor) (int64, error) {
 		return 0, agent.NewError(agent.ErrorInvalidArgument, "decode history cursor", errors.New("cursor is invalid"))
 	}
 	return sequence, nil
-}
-
-func equalRawDigest(left, right []byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }

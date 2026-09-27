@@ -118,7 +118,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	mentionNames := historyDisplayNames(request.History)
 	currentFound := false
 	for _, entry := range request.History {
-		if _, err := DigestHistoryEntry(entry); err != nil {
+		if err := ValidateHistoryEntry(entry); err != nil {
 			return nil, err
 		}
 		if entry.Role == HistoryAssistant && entry.Delivery != DeliverySucceeded {

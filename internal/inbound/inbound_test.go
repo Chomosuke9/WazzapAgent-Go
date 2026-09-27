@@ -708,8 +708,7 @@ func TestDispatcherRechecksCurrentAllowlistBeforeEverySend(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, _ := agent.DigestInvocation(key, invocation)
-	turnClaim, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: time.Now().UTC()})
+	turnClaim, err := fixture.store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()})
 	if err != nil {
 		t.Fatalf("claim planned turn: %v", err)
 	}

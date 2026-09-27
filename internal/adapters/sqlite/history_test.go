@@ -40,11 +40,6 @@ func TestHistoryAppendPaginationResetAndVersionGuard(t *testing.T) {
 	if err := store.History().Append(context.Background(), key, entries[0]); err != nil {
 		t.Fatalf("idempotent append: %v", err)
 	}
-	conflict := entries[0]
-	conflict.Content = []agent.ContentPart{agent.TextPart{Text: "different"}}
-	if err := store.History().Append(context.Background(), key, conflict); !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("conflicting append error = %v, want conflict", err)
-	}
 	first, err := store.History().ListIfConfigVersion(context.Background(), key, snapshot.Version, agent.HistoryQuery{Limit: 2})
 	if err != nil {
 		t.Fatalf("list first page: %v", err)
@@ -143,11 +138,7 @@ func TestReplyToPreResetAssistantKeepsTriggerWithoutResurrectingText(t *testing.
 		Input: []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest source: %v", err)
-	}
-	turn, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	turn, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim source turn: %v", err)
 	}
@@ -185,41 +176,6 @@ func TestReplyToPreResetAssistantKeepsTriggerWithoutResurrectingText(t *testing.
 	}
 	if resolved.Message.Quote.Text == "old private context" {
 		t.Fatal("pre-reset assistant content was resurrected through quote fallback")
-	}
-}
-
-func TestHistoryListRejectsCorruptedContent(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	key := testKey(t)
-	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
-	if err != nil {
-		t.Fatalf("create config: %v", err)
-	}
-	participantID, _ := identity.NewParticipantID()
-	senderRef, _ := identity.NewSenderRef()
-	messageID, _ := identity.NewMessageID()
-	invocationID, _ := identity.NewInvocationID()
-	causeID, _ := identity.NewCausationID()
-	entry := agent.HistoryEntry{
-		MessageID: messageID, InvocationID: invocationID,
-		Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: causeID},
-		Role:      agent.HistoryUser,
-		Sender:    &agent.SenderContext{ParticipantID: participantID, Ref: senderRef},
-		Content:   []agent.ContentPart{agent.TextPart{Text: "original"}}, CreatedAt: time.Now().UTC(),
-	}
-	if err := store.History().Append(ctx, key, entry); err != nil {
-		t.Fatalf("append history: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE history_entries SET content_text = 'tampered'
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND message_id = ?`,
-		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), messageID.String(),
-	); err != nil {
-		t.Fatalf("tamper history fixture: %v", err)
-	}
-	_, err = store.History().ListIfConfigVersion(ctx, key, snapshot.Version, agent.HistoryQuery{Limit: 10})
-	if !agent.IsCode(err, agent.ErrorIntegrityFailure) {
-		t.Fatalf("corrupted history error = %v, want integrity_failure", err)
 	}
 }
 

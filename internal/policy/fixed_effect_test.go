@@ -11,7 +11,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-func TestFixedGateAlwaysAllowsReactionCapabilityAndReadsLiveAuthority(t *testing.T) {
+func TestFixedGateAlwaysAllowsReactionCapability(t *testing.T) {
 	key := fixedEffectKey(t)
 	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
 	configs := &fixedConfigReader{snapshot: agent.ConfigSnapshot{Version: 1, Permission: agent.PermissionConfig{
@@ -32,36 +32,9 @@ func TestFixedGateAlwaysAllowsReactionCapabilityAndReadsLiveAuthority(t *testing
 	if err := gate.AuthorizeEffect(context.Background(), request); err != nil {
 		t.Fatalf("authorize opted-in effect: %v", err)
 	}
-	if authority.calls != 1 {
-		t.Fatalf("live authority calls = %d, want 1", authority.calls)
-	}
 	configs.snapshot.Permission.ModerationLevel = agent.ModerationDeleteMuteKick
 	if err := gate.AuthorizeEffect(context.Background(), request); err != nil {
 		t.Fatalf("moderation level changed reaction authorization: %v", err)
-	}
-	if authority.calls != 2 {
-		t.Fatalf("live authority calls = %d, want 2", authority.calls)
-	}
-}
-
-func TestGroupEffectRequiresInboundAdminRequester(t *testing.T) {
-	key := fixedEffectKey(t)
-	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
-	configs := &fixedConfigReader{snapshot: agent.ConfigSnapshot{Version: 1, Permission: agent.PermissionConfig{
-		PolicyID: policyID, Revision: 1, ModerationLevel: agent.ModerationDeleteMuteKick,
-	}}}
-	authority := &fixedAuthority{value: policy.ChatAuthority{ChatKind: conversation.ChatGroup, BotIsAdmin: true, ObservedAt: time.Now().UTC().UnixMilli()}}
-	gate, err := policy.NewFixedGate(policyID, 1, configs, fixedChatAccess{}, authority, "", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	invocationID, _ := identity.NewInvocationID()
-	principal, _ := policy.ModelPrincipal(key, invocationID)
-	for _, capability := range []policy.Capability{policy.CapabilityGroupDelete, policy.CapabilityGroupClose} {
-		err := gate.AuthorizeEffect(context.Background(), policy.EffectAuthorization{Key: key, Principal: principal, Capability: capability})
-		if err == nil {
-			t.Fatalf("%s permitted without a verified human requester", capability)
-		}
 	}
 }
 
@@ -128,9 +101,6 @@ func (fixedGroupChatAccess) ReadHumanAccess(context.Context, policy.Principal) (
 func (fixedChatAccess) IsChatAllowlisted(context.Context, agent.Key) (bool, error) { return true, nil }
 func (fixedChatAccess) ReadHumanAccess(context.Context, policy.Principal) (policy.HumanAccess, error) {
 	return policy.HumanAccess{ChatKind: conversation.ChatDirect, Allowlisted: true}, nil
-}
-func (fixedChatAccess) InvocationHumanPrincipal(context.Context, agent.Key, identity.InvocationID) (policy.Principal, error) {
-	return policy.Principal{}, agent.Errorf(agent.ErrorNotFound, "lookup requester", "not found")
 }
 
 type fixedAuthority struct {

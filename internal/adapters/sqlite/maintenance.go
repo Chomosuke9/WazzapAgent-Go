@@ -69,7 +69,7 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	if _, err := tx.ExecContext(ctx, `DELETE FROM typed_effects
       WHERE rowid IN (
         SELECT e.rowid FROM typed_effects e
-        WHERE e.tenant_id = ? AND e.updated_at_ms <= ? AND e.state IN (?, ?, ?, ?)
+        WHERE e.tenant_id = ? AND e.updated_at_ms <= ? AND e.state IN (?, ?, ?)
           AND NOT EXISTS (
             SELECT 1 FROM history_entries h
             WHERE h.tenant_id = e.tenant_id AND h.account_id = e.account_id
@@ -78,7 +78,7 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
         ORDER BY e.updated_at_ms LIMIT ?
       )`,
 		request.TenantID.String(), request.DeleteBefore.UnixMilli(),
-		uint8(effect.StateSucceeded), uint8(effect.StateFailedTerminal), uint8(effect.StateUnknownOutcome), uint8(effect.StateSkipped),
+		uint8(effect.StateSucceeded), uint8(effect.StateFailedTerminal), uint8(effect.StateUnknownOutcome),
 		request.BatchSize,
 	); err != nil {
 		return maintenance.Result{}, storageError("delete expired effects", err)

@@ -18,7 +18,7 @@ func (store *Store) RecordManualAssistantMessage(ctx context.Context, key agent.
 		strings.TrimSpace(providerReceipt) == "" {
 		return agent.NewError(agent.ErrorInvalidArgument, "record manual WhatsApp message", errors.New("valid sent assistant message and provider receipt are required"))
 	}
-	if _, err := agent.DigestHistoryEntry(entry); err != nil {
+	if err := agent.ValidateHistoryEntry(entry); err != nil {
 		return err
 	}
 	tx, err := store.db.BeginTx(ctx, nil)

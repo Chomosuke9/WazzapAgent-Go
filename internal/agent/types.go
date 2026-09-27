@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -183,73 +182,43 @@ type ModelRequest struct {
 
 const MaxModelEffects = 8
 
-// EffectIntent is a closed, provider-neutral model output. Unlike a command
-// string or JSON blob, every variant is typed, chat-bound by the invocation,
-// and validated before a durable effect row can be planned.
+// EffectIntent is a closed, provider-neutral model output: a reaction from
+// react_to_message or a command from reply_message. Each is chat-bound by the
+// invocation and validated before a durable effect row can be planned.
 type EffectKind uint8
 
 const (
-	EffectReact EffectKind = iota + 1
-	EffectDeleteMessage
-	EffectMarkRead
-	EffectSetChatPresence
-	EffectRunCommand
-)
-
-type PresenceState string
-
-const (
-	PresenceComposing PresenceState = "composing"
-	PresencePaused    PresenceState = "paused"
+	EffectReact      EffectKind = 1
+	EffectRunCommand EffectKind = 5
 )
 
 type EffectIntent struct {
 	Kind            EffectKind
 	TargetMessageID identity.MessageID
 	Emoji           string
-	Presence        PresenceState
 	Command         string
 }
 
+// Capability is the tool capability the intent needs. RunCommand has none:
+// the command registry's permission expression is the only check, evaluated
+// when the command runs.
 func (intent EffectIntent) Capability() Capability {
-	switch intent.Kind {
-	case EffectReact:
+	if intent.Kind == EffectReact {
 		return "message.react"
-	case EffectDeleteMessage:
-		return "message.delete"
-	case EffectMarkRead:
-		return "message.mark-read"
-	case EffectSetChatPresence:
-		return "chat.presence"
-	default:
-		// RunCommand has no capability: the command registry's permission
-		// expression is the only check, evaluated when the command runs.
-		return ""
 	}
-}
-
-func (intent EffectIntent) Durable() bool {
-	return intent.Kind == EffectReact || intent.Kind == EffectDeleteMessage || intent.Kind == EffectRunCommand
+	return ""
 }
 
 func (intent EffectIntent) Validate() error {
 	switch intent.Kind {
 	case EffectReact:
-		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Presence != "" || intent.Command != "" {
+		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Command != "" {
 			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))
-		}
-	case EffectDeleteMessage, EffectMarkRead:
-		if intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Presence != "" || intent.Command != "" {
-			return NewError(ErrorInvalidArgument, "validate message effect intent", fmt.Errorf("only a target message is allowed"))
-		}
-	case EffectSetChatPresence:
-		if !intent.TargetMessageID.IsZero() || intent.Emoji != "" || intent.Command != "" || (intent.Presence != PresenceComposing && intent.Presence != PresencePaused) {
-			return NewError(ErrorInvalidArgument, "validate presence intent", fmt.Errorf("valid presence state is required"))
 		}
 	case EffectRunCommand:
 		if strings.TrimSpace(intent.Command) != intent.Command || !strings.HasPrefix(intent.Command, "/") ||
 			len(intent.Command) == 0 || len(intent.Command) > MaxInputBytes || !utf8.ValidString(intent.Command) ||
-			intent.Emoji != "" || intent.Presence != "" {
+			intent.Emoji != "" {
 			return NewError(ErrorInvalidArgument, "validate command intent", fmt.Errorf("registered command is malformed"))
 		}
 	default:
@@ -284,59 +253,6 @@ type ModelResult struct {
 
 type ModelInvoker interface {
 	Generate(context.Context, ModelRequest) (ModelResult, error)
-}
-
-type InvocationDigest [32]byte
-
-func DigestInvocation(key Key, invocation Invocation) (InvocationDigest, error) {
-	if err := validateInvocation(key, invocation); err != nil {
-		return InvocationDigest{}, NewError(ErrorIntegrityFailure, "digest invocation", err)
-	}
-	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.invocation.v3")
-	writeField(&canonical, key.TenantID.String())
-	writeField(&canonical, key.AccountID.String())
-	writeField(&canonical, key.ChatID.String())
-	canonical.WriteByte(byte(invocation.Cause))
-	canonical.WriteByte(byte(invocation.Causation.Kind))
-	writeField(&canonical, invocation.Causation.ID.String())
-	if invocation.Sender == nil {
-		canonical.WriteByte(0)
-	} else {
-		canonical.WriteByte(1)
-		writeField(&canonical, invocation.Sender.ParticipantID.String())
-		writeField(&canonical, invocation.Sender.Ref.String())
-		writeField(&canonical, invocation.Sender.DisplayName)
-		writeGroupRoleDigest(&canonical, invocation.Sender.IsAdmin, invocation.Sender.IsSuperAdmin)
-	}
-	if invocation.Quote != nil {
-		writeField(&canonical, invocation.Quote.MessageID.String())
-		canonical.WriteByte(byte(invocation.Quote.Role))
-		writeField(&canonical, invocation.Quote.SenderRef.String())
-		writeField(&canonical, invocation.Quote.Text)
-		writeGroupRoleDigest(&canonical, invocation.Quote.SenderIsAdmin, invocation.Quote.SenderIsSuperAdmin)
-	}
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Input)))
-	for _, part := range invocation.Input {
-		switch typed := part.(type) {
-		case TextPart:
-			canonical.WriteByte(1)
-			writeField(&canonical, typed.Text)
-		default:
-			return InvocationDigest{}, NewError(ErrorUnsupported, "digest invocation", fmt.Errorf("unsupported content part"))
-		}
-	}
-	values := invocation.Capabilities.Values()
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(values)))
-	for _, capability := range values {
-		writeField(&canonical, string(capability))
-	}
-	_ = binary.Write(&canonical, binary.BigEndian, uint32(len(invocation.Commands)))
-	for _, name := range invocation.Commands {
-		writeField(&canonical, name)
-	}
-	writeMentionDigestExtension(&canonical, invocation.Mentions, quoteMentions(invocation.Quote))
-	return sha256.Sum256(canonical.Bytes()), nil
 }
 
 func validateInvocation(key Key, invocation Invocation) error {
@@ -465,53 +381,6 @@ func quoteMentions(quote *QuoteContext) []MentionContext {
 		return nil
 	}
 	return quote.Mentions
-}
-
-// writeGroupRoleDigest adds trusted role metadata without changing the digest
-// of existing messages that have neither admin flag set.
-func writeGroupRoleDigest(buffer *bytes.Buffer, isAdmin, isSuperAdmin bool) {
-	if !isAdmin && !isSuperAdmin {
-		return
-	}
-	writeField(buffer, "wazzapagent.group-role.v1")
-	if isAdmin {
-		buffer.WriteByte(1)
-	} else {
-		buffer.WriteByte(0)
-	}
-	if isSuperAdmin {
-		buffer.WriteByte(1)
-	} else {
-		buffer.WriteByte(0)
-	}
-}
-
-func writeMentionDigestExtension(buffer *bytes.Buffer, content, quoted []MentionContext) {
-	if len(content) == 0 && len(quoted) == 0 {
-		// Keep the established digest byte-for-byte stable for pre-migration
-		// entries, which necessarily have no trusted mention bindings.
-		return
-	}
-	buffer.WriteString("\x00wazzapagent.mentions.v1")
-	writeMentionIdentities(buffer, content)
-	writeMentionIdentities(buffer, quoted)
-}
-
-func writeMentionIdentities(buffer *bytes.Buffer, mentions []MentionContext) {
-	canonical := cloneMentions(mentions)
-	sort.Slice(canonical, func(left, right int) bool {
-		return canonical[left].Token < canonical[right].Token
-	})
-	_ = binary.Write(buffer, binary.BigEndian, uint32(len(canonical)))
-	for _, binding := range canonical {
-		writeField(buffer, binding.Token)
-		if binding.Bot {
-			buffer.WriteByte(1)
-		} else {
-			buffer.WriteByte(0)
-		}
-		writeField(buffer, binding.SenderRef.String())
-	}
 }
 
 func writeField(buffer *bytes.Buffer, value string) {

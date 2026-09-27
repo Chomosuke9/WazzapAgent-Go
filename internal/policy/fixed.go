@@ -17,7 +17,6 @@ type ConfigReader interface {
 type ChatAccess interface {
 	IsChatAllowlisted(context.Context, agent.Key) (bool, error)
 	HumanAccessReader
-	InvocationHumanPrincipal(context.Context, agent.Key, identity.InvocationID) (Principal, error)
 }
 
 // FixedGate is the deliberately narrow text-conversation policy. It never
@@ -186,43 +185,6 @@ func (gate *FixedGate) AuthorizeEffect(ctx context.Context, request EffectAuthor
 	}
 	if !snapshot.Permission.ModelToolCapabilities().Has(agent.Capability(request.Capability)) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("model capability is not currently granted"))
-	}
-	authority, err := gate.authority.ReadChatAuthority(ctx, request.Principal)
-	if err != nil {
-		return err
-	}
-	if err := authority.Validate(); err != nil {
-		return err
-	}
-	moderation := request.Capability == CapabilityGroupDelete || request.Capability == CapabilityGroupMute || request.Capability == CapabilityGroupKick || request.Capability == CapabilityGroupClose || request.Capability == CapabilityGroupOpen || request.Capability == CapabilityGroupDescription
-	if moderation && (authority.ChatKind != conversation.ChatGroup || !authority.BotIsAdmin) {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("bot group command requires current group-admin authority"))
-	}
-	if moderation {
-		actor, err := gate.chats.InvocationHumanPrincipal(ctx, request.Key, request.Principal.InvocationID)
-		if err != nil {
-			return err
-		}
-		access, err := gate.chats.ReadHumanAccess(ctx, actor)
-		if err != nil {
-			return err
-		}
-		if err := access.Validate(); err != nil {
-			return err
-		}
-		if !access.Allowlisted || access.ChatKind != conversation.ChatGroup {
-			return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("requester is not an allowed group member"))
-		}
-		actorAuthority, err := gate.authority.ReadChatAuthority(ctx, actor)
-		if err != nil {
-			return err
-		}
-		if err := actorAuthority.Validate(); err != nil {
-			return err
-		}
-		if !actorAuthority.ActorIsAdmin || !actorAuthority.BotIsAdmin {
-			return agent.NewError(agent.ErrorPermissionDenied, "authorize effect", errors.New("requester and bot must still be group admins"))
-		}
 	}
 	return nil
 }

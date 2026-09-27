@@ -20,7 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 19
+const wantMigrationCount = 20
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
@@ -658,11 +658,7 @@ func TestRetryableBatchAnchorCanBeRecoveredAndBlocksNewerMessages(t *testing.T) 
 		Input:  []agent.ContentPart{agent.TextPart{Text: first.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: first.Message.OccurredAt,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest first: %v", err)
-	}
-	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim first turn: %v", err)
 	}
@@ -724,11 +720,7 @@ func TestPreBatchRetryableTurnRecoversAsSingleton(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest invocation: %v", err)
-	}
-	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	turnClaim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
@@ -853,12 +845,8 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 		PolicyVersion: configSnapshot.Version,
 		RequestedAt:   claimed.Message.OccurredAt,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest invocation: %v", err)
-	}
 	turns := store.Turns()
-	claim, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	claim, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
@@ -872,7 +860,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append current history target: %v", err)
 	}
-	if _, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now}); !agent.IsCode(err, agent.ErrorInProgress) {
+	if _, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now}); !agent.IsCode(err, agent.ErrorInProgress) {
 		t.Fatalf("active lease error = %v, want in_progress", err)
 	}
 	plan, err := turns.CommitPlan(context.Background(), agent.CommitPlanRequest{
@@ -889,7 +877,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	if err != nil || plannedRecord.State != agent.TurnResponsePlanned || plannedRecord.Delivery != agent.DeliveryPending {
 		t.Fatalf("planned turn = %#v, err=%v", plannedRecord, err)
 	}
-	replay, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	replay, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("replay claim: %v", err)
 	}
@@ -902,12 +890,6 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	blockedEffect, err := store.Effects().Claim(context.Background(), effect.Ref{Key: key, EffectID: plan.Effects[0].EffectID}, clock.now)
 	if err != nil || blockedEffect.State != effect.StatePending {
 		t.Fatalf("model effect ran before response delivery = %#v, %v", blockedEffect, err)
-	}
-	changed := invocation
-	changed.Input = []agent.ContentPart{agent.TextPart{Text: "different"}}
-	changedDigest, _ := agent.DigestInvocation(key, changed)
-	if _, err := turns.Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: changed, Digest: changedDigest, Now: clock.now}); !agent.IsCode(err, agent.ErrorConflict) {
-		t.Fatalf("changed digest error = %v, want conflict", err)
 	}
 	actions := store.Actions()
 	clock.now = clock.now.Add(3 * time.Second)
@@ -1010,11 +992,7 @@ func TestPlanReplayUsesTheExactAssistantHistoryTimestamp(t *testing.T) {
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest invocation: %v", err)
-	}
-	claim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	claim, err := store.Turns().Claim(ctx, agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}
@@ -1059,8 +1037,7 @@ func TestPreclaimedInboundCannotBeReboundToDifferentInvocationContent(t *testing
 		Input:  []agent.ContentPart{agent.TextPart{Text: "tampered text"}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, _ := agent.DigestInvocation(key, invocation)
-	_, err = store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: time.Now().UTC()})
+	_, err = store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: time.Now().UTC()})
 	if !agent.IsCode(err, agent.ErrorConflict) {
 		t.Fatalf("tampered preclaim error = %v, want conflict", err)
 	}
@@ -1091,12 +1068,8 @@ func TestExpiredGenerationLeaseCannotPublishOrFailTurn(t *testing.T) {
 		PolicyVersion: agent.InitialConfigVersion,
 		RequestedAt:   clock.now,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest invocation: %v", err)
-	}
 	claim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-		Key: key, Invocation: invocation, Digest: digest, Now: clock.now,
+		Key: key, Invocation: invocation, Now: clock.now,
 	})
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
@@ -1118,7 +1091,7 @@ func TestExpiredGenerationLeaseCannotPublishOrFailTurn(t *testing.T) {
 	}
 
 	second, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-		Key: key, Invocation: invocation, Digest: digest, Now: clock.now,
+		Key: key, Invocation: invocation, Now: clock.now,
 	})
 	if err != nil {
 		t.Fatalf("reclaim expired turn: %v", err)
@@ -1140,13 +1113,9 @@ func TestGenerationRetriesAreBoundedAndBecomeTerminal(t *testing.T) {
 		Cause: agent.CauseDirectRequest, Input: []agent.ContentPart{agent.TextPart{Text: "retry test"}},
 		Capabilities: capabilities, PolicyVersion: agent.InitialConfigVersion, RequestedAt: clock.now,
 	}
-	digest, err := agent.DigestInvocation(key, invocation)
-	if err != nil {
-		t.Fatalf("digest invocation: %v", err)
-	}
 	for attempt := 1; attempt <= maxGenerationAttempts; attempt++ {
 		claim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-			Key: key, Invocation: invocation, Digest: digest, Now: clock.now,
+			Key: key, Invocation: invocation, Now: clock.now,
 		})
 		if err != nil {
 			t.Fatalf("claim attempt %d: %v", attempt, err)
@@ -1158,8 +1127,8 @@ func TestGenerationRetriesAreBoundedAndBecomeTerminal(t *testing.T) {
 			t.Fatalf("fail attempt %d: %v", attempt, err)
 		}
 	}
-	_, err = store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
-		Key: key, Invocation: invocation, Digest: digest, Now: clock.now,
+	_, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{
+		Key: key, Invocation: invocation, Now: clock.now,
 	})
 	if !agent.IsCode(err, agent.ErrorProviderFailure) {
 		t.Fatalf("exhausted claim error = %v, want provider_failure", err)
@@ -1202,8 +1171,7 @@ func TestExpiredExecutingActionBecomesUnknownAndCannotBeReclaimed(t *testing.T) 
 		Input:  []agent.ContentPart{agent.TextPart{Text: claimed.Message.Text}}, Capabilities: capabilities,
 		PolicyVersion: snapshot.Version, RequestedAt: claimed.Message.OccurredAt,
 	}
-	digest, _ := agent.DigestInvocation(key, invocation)
-	turnClaim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Digest: digest, Now: clock.now})
+	turnClaim, err := store.Turns().Claim(context.Background(), agent.ClaimTurnRequest{Key: key, Invocation: invocation, Now: clock.now})
 	if err != nil {
 		t.Fatalf("claim turn: %v", err)
 	}

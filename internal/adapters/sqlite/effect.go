@@ -101,7 +101,7 @@ func (store *EffectStore) Claim(ctx context.Context, ref effect.Ref, now time.Ti
 	}
 	nowMS := now.UTC().UnixMilli()
 	switch stored.State {
-	case effect.StateSucceeded, effect.StateFailedTerminal, effect.StateUnknownOutcome, effect.StateSkipped:
+	case effect.StateSucceeded, effect.StateFailedTerminal, effect.StateUnknownOutcome:
 		if err := tx.Commit(); err != nil {
 			return effect.Stored{}, storageError("commit typed effect observation", err)
 		}
@@ -114,9 +114,6 @@ func (store *EffectStore) Claim(ctx context.Context, ref effect.Ref, now time.Ti
 			return stored, nil
 		}
 		state := effect.StateUnknownOutcome
-		if !stored.Request.Effect.Durable() {
-			state = effect.StateSkipped
-		}
 		if err := finishEffectTx(ctx, tx, stored, state, agent.ErrorUnknownOutcome, "", nowMS); err != nil {
 			return effect.Stored{}, err
 		}
@@ -190,7 +187,7 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 				  AND inbound_events.chat_id = typed_effects.chat_id
 				  AND inbound_events.invocation_id = typed_effects.invocation_id
 				  AND inbound_events.turn_state = ?
-				  AND inbound_events.invocation_digest IS NOT NULL
+				  AND inbound_events.turn_claimed = 1
 				  AND `+noOutboundAction("inbound_events")+`
 			)
 		)
@@ -262,7 +259,7 @@ func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref 
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
         AND invocation_id = (SELECT invocation_id FROM typed_effects
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?)
-		AND turn_state = ? AND invocation_digest IS NOT NULL
+		AND turn_state = ? AND turn_claimed = 1
 		AND `+noOutboundAction("inbound_events")+``,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(agent.TurnSucceeded),
@@ -310,10 +307,6 @@ func (store *EffectStore) FailTerminal(ctx context.Context, ref effect.Ref, leas
 
 func (store *EffectStore) MarkUnknown(ctx context.Context, ref effect.Ref, lease effect.Lease, code agent.ErrorCode, now time.Time) error {
 	return store.finish(ctx, ref, lease, effect.StateUnknownOutcome, code, "", now)
-}
-
-func (store *EffectStore) Skip(ctx context.Context, ref effect.Ref, lease effect.Lease, code agent.ErrorCode, now time.Time) error {
-	return store.finish(ctx, ref, lease, effect.StateSkipped, code, "", now)
 }
 
 func (store *EffectStore) finish(ctx context.Context, ref effect.Ref, lease effect.Lease, state effect.State, code agent.ErrorCode, receipt string, now time.Time) error {
@@ -385,8 +378,6 @@ func effectTarget(value effect.Effect) (identity.MessageID, bool) {
 		return typed.TargetMessageID, true
 	case effect.DeleteMessage:
 		return typed.TargetMessageID, true
-	case effect.MarkRead:
-		return typed.TargetMessageID, true
 	case effect.RunCommand:
 		if !typed.TargetMessageID.IsZero() {
 			return typed.TargetMessageID, true
@@ -416,7 +407,6 @@ type effectPayload struct {
 	LID         string               `json:"lid,omitempty"`
 	Invocation  string               `json:"invocation,omitempty"`
 	Emoji       string               `json:"emoji,omitempty"`
-	Presence    string               `json:"presence,omitempty"`
 	Command     string               `json:"command,omitempty"`
 }
 
@@ -436,10 +426,6 @@ func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
 		target, payload.Emoji = typed.TargetMessageID, typed.Emoji
 	case effect.DeleteMessage:
 		target = typed.TargetMessageID
-	case effect.MarkRead:
-		target = typed.TargetMessageID
-	case effect.SetChatPresence:
-		payload.Presence = string(typed.State)
 	case effect.RunCommand:
 		target, payload.Command = typed.TargetMessageID, typed.Command
 	default:
@@ -483,10 +469,6 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 		value = effect.React{TargetMessageID: targetID, Emoji: payload.Emoji}
 	case effect.KindDeleteMessage:
 		value = effect.DeleteMessage{TargetMessageID: targetID}
-	case effect.KindMarkRead:
-		value = effect.MarkRead{TargetMessageID: targetID}
-	case effect.KindSetChatPresence:
-		value = effect.SetChatPresence{State: effect.PresenceState(payload.Presence)}
 	case effect.KindRunCommand:
 		value = effect.RunCommand{Command: payload.Command, TargetMessageID: targetID}
 	default:
@@ -522,7 +504,7 @@ func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effec
 	if err := stored.Request.Validate(); err != nil {
 		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
 	}
-	if stored.State < effect.StatePending || stored.State > effect.StateSkipped {
+	if stored.State < effect.StatePending || stored.State > effect.StateUnknownOutcome {
 		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect state is invalid"))
 	}
 	if lease.Valid {

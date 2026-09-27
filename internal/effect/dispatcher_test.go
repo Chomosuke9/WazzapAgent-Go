@@ -35,28 +35,6 @@ func TestDispatcherNeverReplaysAmbiguousDurableEffect(t *testing.T) {
 	}
 }
 
-func TestDispatcherSkipsFailedEphemeralEffect(t *testing.T) {
-	store := &memoryStore{}
-	sender := &recordingEffectSender{ready: true, err: agent.NewError(agent.ErrorUnavailable, "send fake", fmt.Errorf("offline"))}
-	dispatcher, err := effect.NewDispatcher(store, &recordingAuthorizer{}, sender, agent.SystemClock{})
-	if err != nil {
-		t.Fatalf("create dispatcher: %v", err)
-	}
-	request := presencePlan(t)
-	if _, err := dispatcher.Plan(context.Background(), request); err != nil {
-		t.Fatalf("plan ephemeral effect: %v", err)
-	}
-	if err := dispatcher.Dispatch(context.Background(), request.Ref); err == nil {
-		t.Fatal("failed ephemeral effect was reported as success")
-	}
-	if store.stored.State != effect.StateSkipped || sender.calls != 1 {
-		t.Fatalf("ephemeral effect state/calls = %#v/%d", store.stored, sender.calls)
-	}
-	if err := dispatcher.Dispatch(context.Background(), request.Ref); !agent.IsCode(err, agent.ErrorUnsupported) {
-		t.Fatalf("skipped effect replay = %v, want unsupported", err)
-	}
-}
-
 func TestNotReadyEffectReturnsToPendingBeforeNativeExecution(t *testing.T) {
 	store := &memoryStore{}
 	sender := &recordingEffectSender{ready: false}
@@ -129,10 +107,6 @@ func (store *memoryStore) MarkUnknown(_ context.Context, ref effect.Ref, lease e
 	return store.finish(ref, lease, effect.StateUnknownOutcome)
 }
 
-func (store *memoryStore) Skip(_ context.Context, ref effect.Ref, lease effect.Lease, _ agent.ErrorCode, _ time.Time) error {
-	return store.finish(ref, lease, effect.StateSkipped)
-}
-
 func (store *memoryStore) finish(ref effect.Ref, lease effect.Lease, state effect.State) error {
 	if store.stored.Request.Ref != ref || store.stored.State != effect.StateExecuting || store.stored.Lease != lease {
 		return fmt.Errorf("invalid completion claim")
@@ -171,18 +145,6 @@ func durablePlan(t *testing.T) effect.PlanRequest {
 	return effect.PlanRequest{
 		Ref: effect.Ref{Key: key, EffectID: effectID}, InvocationID: invocationID, Principal: principal,
 		Effect: effect.React{TargetMessageID: messageID, Emoji: "✅"},
-	}
-}
-
-func presencePlan(t *testing.T) effect.PlanRequest {
-	t.Helper()
-	key := testKey(t)
-	principal, _ := policy.SystemPrincipal(key)
-	effectID, _ := identity.NewEffectID()
-	invocationID, _ := identity.NewInvocationID()
-	return effect.PlanRequest{
-		Ref: effect.Ref{Key: key, EffectID: effectID}, InvocationID: invocationID, Principal: principal,
-		Effect: effect.SetChatPresence{State: effect.PresenceComposing},
 	}
 }
 

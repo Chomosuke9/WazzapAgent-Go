@@ -45,7 +45,7 @@ func (reader *ConversationReader) ConversationUsage(ctx context.Context, scope c
 		           SELECT 1 FROM inbound_events e
 		           WHERE e.tenant_id = h.tenant_id AND e.account_id = h.account_id
 		             AND e.chat_id = h.chat_id AND e.invocation_id = h.invocation_id
-		             AND e.invocation_digest IS NOT NULL
+		             AND e.turn_claimed = 1
 	       ) AS was_invoked
 		FROM history_entries h
 		LEFT JOIN history_resets r ON r.tenant_id = h.tenant_id AND r.account_id = h.account_id AND r.chat_id = h.chat_id

@@ -95,27 +95,10 @@ func (principal Principal) Validate() error {
 type Capability string
 
 const (
-	CapabilityCommandHelp     Capability = "chat.command.help"
-	CapabilityCommandInfo     Capability = "chat.command.info"
-	CapabilityCommandGroup    Capability = "chat.command.group"
-	CapabilityCommandCatch    Capability = "chat.command.catch"
-	CapabilityHistoryReset    Capability = "chat.history.reset"
-	CapabilityPromptWrite     Capability = "chat.prompt.write"
-	CapabilityPermissionWrite Capability = "chat.permission.write"
-	CapabilityTriggerWrite    Capability = "chat.trigger.write"
-	CapabilityCommandExecute  Capability = "command.execute"
+	CapabilityCommandExecute Capability = "command.execute"
 
-	CapabilityMessageReact     Capability = "message.react"
-	CapabilityMessageDelete    Capability = "message.delete"
-	CapabilityMessageMarkRead  Capability = "message.mark-read"
-	CapabilityChatPresence     Capability = "chat.presence"
-	CapabilityChatContextRead  Capability = "chat.context.read"
-	CapabilityGroupDelete      Capability = "group.delete"
-	CapabilityGroupMute        Capability = "group.mute"
-	CapabilityGroupKick        Capability = "group.kick"
-	CapabilityGroupClose       Capability = "group.close"
-	CapabilityGroupOpen        Capability = "group.open"
-	CapabilityGroupDescription Capability = "group.description"
+	CapabilityMessageReact  Capability = "message.react"
+	CapabilityMessageDelete Capability = "message.delete"
 )
 
 type CapabilitySet struct{ values []Capability }
@@ -143,10 +126,7 @@ func (set CapabilitySet) Values() []Capability { return append([]Capability(nil)
 
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandHelp, CapabilityCommandInfo, CapabilityCommandGroup, CapabilityCommandCatch, CapabilityHistoryReset, CapabilityPromptWrite, CapabilityPermissionWrite, CapabilityTriggerWrite, CapabilityCommandExecute,
-		CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageMarkRead, CapabilityChatPresence, CapabilityChatContextRead:
-		return true
-	case CapabilityGroupDelete, CapabilityGroupMute, CapabilityGroupKick, CapabilityGroupClose, CapabilityGroupOpen, CapabilityGroupDescription:
+	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete:
 		return true
 	default:
 		return false

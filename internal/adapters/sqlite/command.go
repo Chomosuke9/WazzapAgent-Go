@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"strings"
@@ -97,7 +96,6 @@ func (store *ActionStore) PlanCommandResponse(
 		return agent.DispatchRef{}, agent.NewError(agent.ErrorInternal, "create command action ID", err)
 	}
 	nowMS := store.clock.Now().UnixMilli()
-	invocationDigest := sha256.Sum256([]byte("wazzapagent.command.v1\x00" + message.InvocationID.String() + "\x00" + message.Text))
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbound_actions(
         tenant_id, account_id, chat_id, action_id, invocation_id, response_id,
         text, state, created_at_ms, updated_at_ms
@@ -118,9 +116,9 @@ func (store *ActionStore) PlanCommandResponse(
 		return agent.DispatchRef{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        invocation_digest = ?, config_version = ?, turn_state = ?, updated_at_ms = ?
+        turn_claimed = 1, config_version = ?, turn_state = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?`,
-		invocationDigest[:], uint64(version), uint8(agent.TurnResponsePlanned),
+		uint64(version), uint8(agent.TurnResponsePlanned),
 		nowMS, key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), message.InvocationID.String(),
 	)
 	if err := requireOne(result, err, "publish command response"); err != nil {
