@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
@@ -183,5 +184,42 @@ func TestButtonsRouteBackToTheCommandThatSentThem(t *testing.T) {
 	}
 	if len(text.sent) != 1 || text.sent[0] != "Pick one\n\n• Yes: /vote yes\n• Menu: /vote" {
 		t.Fatalf("text fallback = %q", text.sent)
+	}
+}
+
+type rejectingButtons struct {
+	code  agent.ErrorCode
+	calls int
+}
+
+func (sender *rejectingButtons) SendButtons(context.Context, action.SendButtonsRequest) (action.SendTextResult, error) {
+	sender.calls++
+	return action.SendTextResult{}, agent.NewError(sender.code, "send WhatsApp buttons", errors.New("server returned error 405"))
+}
+
+func TestRejectedButtonsFallBackToText(t *testing.T) {
+	registry, err := command.NewRegistry([]command.Command{{
+		Name: "vote", Permission: "public",
+		Run: func(ctx context.Context, c *command.Context) error {
+			return c.ReplyButtons(ctx, "Pick one", command.Button{Label: "Yes", Args: "yes"})
+		},
+	}})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	buttons, text := &rejectingButtons{code: agent.ErrorUnsupported}, &textRecorder{}
+	err = registry.Dispatch(context.Background(), command.Request{Name: "vote"}, command.Invocation{Platform: command.Platform{Text: text, Buttons: buttons}})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if buttons.calls != 1 || len(text.sent) != 1 || text.sent[0] != "Pick one\n\n• Yes: /vote yes" {
+		t.Fatalf("button calls=%d text=%q", buttons.calls, text.sent)
+	}
+
+	// An ambiguous failure may have delivered the buttons, so no text copy.
+	buttons, text = &rejectingButtons{code: agent.ErrorProviderFailure}, &textRecorder{}
+	err = registry.Dispatch(context.Background(), command.Request{Name: "vote"}, command.Invocation{Platform: command.Platform{Text: text, Buttons: buttons}})
+	if !agent.IsCode(err, agent.ErrorProviderFailure) || len(text.sent) != 0 {
+		t.Fatalf("ambiguous failure: err=%v text=%q", err, text.sent)
 	}
 }

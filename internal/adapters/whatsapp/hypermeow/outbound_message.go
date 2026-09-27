@@ -85,7 +85,7 @@ func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 		InteractiveMessage: &waE2E.InteractiveMessage{
 			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(request.Text)},
 			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
-				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons},
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons, MessageVersion: proto.Int32(1)},
 			},
 		},
 	}}}, nil
