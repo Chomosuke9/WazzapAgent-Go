@@ -374,14 +374,17 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 	dispatcher.turns.Add(1)
 	go func() {
 		defer dispatcher.turns.Done()
-		messages, err := dispatcher.store.ListUnfinished(dispatcher.ctx, key.TenantID)
+		messages, err := dispatcher.readInbox(key.TenantID)
 		if err != nil && dispatcher.ctx.Err() == nil {
+			// The next startup recovers what is left in the inbox.
 			dispatcher.options.Report(err)
 		}
 		dispatcher.mu.Lock()
 		defer dispatcher.mu.Unlock()
 		queue.running = false
 		queue.refilling = false
+		missed := queue.overflow // an arrival landed after the read
+		queue.overflow = false
 		for _, message := range messages {
 			// A command still in the inbox is running right now on its own path.
 			if message.AccountID != key.AccountID || message.ChatID != key.ChatID || IsCommand(message.Text) {
@@ -394,11 +397,32 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 			queue.pending = append(queue.pending, message)
 		}
 		if len(queue.pending) > 0 {
+			queue.overflow = queue.overflow || missed
 			dispatcher.schedule(key, queue, 0)
+			return
+		}
+		if missed && err == nil && dispatcher.ctx.Err() == nil {
+			dispatcher.refill(key, queue)
 			return
 		}
 		dispatcher.forgetIfIdle(key, queue)
 	}()
+}
+
+// readInbox lists the tenant's unfinished messages, trying a failed read
+// again like a failed generation.
+func (dispatcher *Dispatcher) readInbox(tenantID identity.TenantID) ([]conversation.IncomingMessage, error) {
+	for attempt := 0; ; attempt++ {
+		messages, err := dispatcher.store.ListUnfinished(dispatcher.ctx, tenantID)
+		if err == nil || attempt == maxGenerationRetries {
+			return messages, err
+		}
+		select {
+		case <-dispatcher.ctx.Done():
+			return nil, err
+		case <-time.After(generationRetryDelay):
+		}
+	}
 }
 
 // chat returns the chat's queue, creating it. Callers hold mu.

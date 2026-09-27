@@ -37,11 +37,10 @@ const outboxSweep = time.Minute
 
 // redeliver resumes the messages the last run left unanswered, then sends
 // whatever the outbox holds each time the account connects, and once a
-// minute whatever has been pending for over a minute.
+// minute whatever has been pending for over a minute. A failed recovery is
+// tried again on each sweep until it succeeds.
 func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
-	if err := runtime.inboundDispatch.Recover(ctx, runtime.tenantID); err != nil && ctx.Err() == nil {
-		runtime.logger.Error("inbound recovery failed", "code", agent.CodeOf(err), "error", err)
-	}
+	recovered := runtime.recoverInbound(ctx)
 	sweep := time.NewTicker(outboxSweep)
 	defer sweep.Stop()
 	for {
@@ -51,9 +50,20 @@ func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
 		case <-runtime.account.Opened():
 			runtime.flushOutbox(ctx, time.Time{})
 		case now := <-sweep.C:
+			if !recovered {
+				recovered = runtime.recoverInbound(ctx)
+			}
 			runtime.flushOutbox(ctx, now.Add(-outboxSweep))
 		}
 	}
+}
+
+func (runtime *conversationRuntime) recoverInbound(ctx context.Context) bool {
+	err := runtime.inboundDispatch.Recover(ctx, runtime.tenantID)
+	if err != nil && ctx.Err() == nil {
+		runtime.logger.Error("inbound recovery failed", "code", agent.CodeOf(err), "error", err)
+	}
+	return err == nil
 }
 
 // flushOutbox dispatches pending replies and effects planned before

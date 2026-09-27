@@ -357,6 +357,49 @@ func (store *flakyClaimStore) ClaimBatch(ctx context.Context, batch []conversati
 	return store.Store.ClaimBatch(ctx, batch)
 }
 
+type flakyInboxStore struct {
+	inbound.Store
+	failures atomic.Int32
+}
+
+func (store *flakyInboxStore) ListUnfinished(ctx context.Context, tenantID identity.TenantID) ([]conversation.IncomingMessage, error) {
+	if store.failures.Add(-1) >= 0 {
+		return nil, agent.NewError(agent.ErrorUnavailable, "list unfinished", errors.New("database is busy"))
+	}
+	return store.Store.ListUnfinished(ctx, tenantID)
+}
+
+func TestAFailedInboxReadBackIsTriedAgain(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixture(t)
+	store := &flakyInboxStore{Store: fixture.store.Inbound()}
+	store.failures.Store(1)
+	dispatcher, err := inbound.NewDispatcher(
+		store, fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+		command.Platform{Text: fixture.sender}, inbound.Options{Debounce: 200 * time.Millisecond, BurstCap: 256, Report: fixture.handler.report},
+	)
+	if err != nil {
+		t.Fatalf("create inbound dispatcher: %v", err)
+	}
+	fixture.handler.dispatcher = dispatcher
+	// Two messages fit in memory; the other two wait in the inbox, and the
+	// first read-back fails.
+	chat := "15550000017@s.whatsapp.net"
+	for index := 0; index < 4; index++ {
+		candidate := fixture.candidate(fmt.Sprintf("flaky-inbox-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
+		if err := dispatcher.Handle(context.Background(), candidate); err != nil {
+			t.Fatalf("handle: %v", err)
+		}
+	}
+	if err := fixture.handler.settle(nil); err != nil {
+		t.Fatalf("settle overflowing burst: %v", err)
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+	if err != nil || len(unfinished) != 0 {
+		t.Fatalf("messages left unanswered after a failed read-back: %d, err=%v", len(unfinished), err)
+	}
+}
+
 func TestAFailedClaimIsTriedAgain(t *testing.T) {
 	fixture := newFixture(t)
 	store := &flakyClaimStore{Store: fixture.store.Inbound()}
