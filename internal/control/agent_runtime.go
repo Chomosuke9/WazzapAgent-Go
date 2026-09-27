@@ -24,7 +24,6 @@ const (
 // AgentRuntimeSnapshot contains only safe process state. It never crosses the
 // UI boundary with a settings snapshot, prompt, or credential.
 type AgentRuntimeSnapshot struct {
-	Started           bool
 	WhatsAppState     string
 	WhatsAppErrorCode agent.ErrorCode
 }
@@ -42,6 +41,8 @@ type AgentRuntimeStatus struct {
 type agentRuntimeRun struct {
 	runtime         ManagedAgentRuntime
 	cancel          context.CancelFunc
+	actionsCtx      context.Context // cancelled first on stop, so UI actions return before the runtime closes
+	cancelActions   context.CancelFunc
 	done            chan struct{}
 	revision        uint64
 	operationID     string
@@ -59,9 +60,12 @@ type AgentController struct {
 	factory  AgentRuntimeFactory
 	dataRoot string
 
-	rootCtx     context.Context
-	rootCancel  context.CancelFunc
-	operations  sync.Mutex
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
+	operations sync.Mutex // serializes start, stop, apply, and session changes
+	// actions is held shared by in-flight UI chat actions and exclusively by
+	// stop, so the runtime is never closed underneath an action.
+	actions     sync.RWMutex
 	mu          sync.RWMutex
 	run         *agentRuntimeRun
 	state       AgentRuntimeState
@@ -315,7 +319,8 @@ func (controller *AgentController) launch(ctx context.Context, snapshot config.S
 	if shutdownTimeout <= 0 {
 		shutdownTimeout = 10 * time.Second
 	}
-	run := &agentRuntimeRun{runtime: runtime, cancel: cancel, done: make(chan struct{}), revision: revision, operationID: operationID, shutdownTimeout: shutdownTimeout}
+	actionsCtx, cancelActions := context.WithCancel(controller.rootCtx)
+	run := &agentRuntimeRun{runtime: runtime, cancel: cancel, actionsCtx: actionsCtx, cancelActions: cancelActions, done: make(chan struct{}), revision: revision, operationID: operationID, shutdownTimeout: shutdownTimeout}
 	controller.run = run
 	controller.state = BotStarting
 	controller.activeRev = 0
@@ -330,33 +335,27 @@ func (controller *AgentController) launch(ctx context.Context, snapshot config.S
 	}
 	timer := time.NewTimer(startupTimeout)
 	defer timer.Stop()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if runtime.Snapshot().Started {
-			controller.mu.Lock()
-			if controller.run == run && controller.state == BotStarting {
-				controller.state = BotRunning
-				controller.activeRev = revision
-			}
-			controller.mu.Unlock()
-			return controller.GetStatus(ctx)
+	select {
+	case <-runtime.Started():
+		controller.mu.Lock()
+		if controller.run == run && controller.state == BotStarting {
+			controller.state = BotRunning
+			controller.activeRev = revision
 		}
-		select {
-		case <-run.done:
-			runErr := run.err
-			if runErr == nil {
-				runErr = errors.New("runtime stopped before becoming ready")
-			}
-			return AgentRuntimeStatus{}, safeAgentRuntimeError("start Agent runtime", runErr)
-		case <-ctx.Done():
-			_ = controller.abortStarting(run, snapshot.ShutdownTimeout())
-			return AgentRuntimeStatus{}, agent.NewError(agent.ErrorCancelled, "start Agent runtime", errors.New("startup was cancelled"))
-		case <-timer.C:
-			_ = controller.abortStarting(run, snapshot.ShutdownTimeout())
-			return AgentRuntimeStatus{}, agent.NewError(agent.ErrorTimeout, "start Agent runtime", errors.New("runtime did not finish startup before the configured timeout"))
-		case <-ticker.C:
+		controller.mu.Unlock()
+		return controller.GetStatus(ctx)
+	case <-run.done:
+		runErr := run.err
+		if runErr == nil {
+			runErr = errors.New("runtime stopped before becoming ready")
 		}
+		return AgentRuntimeStatus{}, safeAgentRuntimeError("start Agent runtime", runErr)
+	case <-ctx.Done():
+		_ = controller.abortStarting(run, snapshot.ShutdownTimeout())
+		return AgentRuntimeStatus{}, agent.NewError(agent.ErrorCancelled, "start Agent runtime", errors.New("startup was cancelled"))
+	case <-timer.C:
+		_ = controller.abortStarting(run, snapshot.ShutdownTimeout())
+		return AgentRuntimeStatus{}, agent.NewError(agent.ErrorTimeout, "start Agent runtime", errors.New("runtime did not finish startup before the configured timeout"))
 	}
 }
 
@@ -384,6 +383,7 @@ func (controller *AgentController) runAgent(ctx context.Context, run *agentRunti
 }
 
 func (controller *AgentController) abortStarting(run *agentRuntimeRun, timeout time.Duration) error {
+	run.cancelActions()
 	run.cancel()
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -426,6 +426,12 @@ func (controller *AgentController) stopRun(ctx context.Context, run *agentRuntim
 	if run == nil {
 		return nil
 	}
+	// Cancel in-flight UI actions (a long broadcast included) and wait for them
+	// to return before the runtime and its store are torn down. The run is
+	// already marked stopping, so no new action can start.
+	run.cancelActions()
+	controller.actions.Lock()
+	controller.actions.Unlock()
 	run.cancel()
 	closeCtx := ctx
 	cancel := func() {}
@@ -445,10 +451,6 @@ func (controller *AgentController) stopRun(ctx context.Context, run *agentRuntim
 	case <-closeCtx.Done():
 		return agent.NewError(agent.ErrorTimeout, "stop Agent runtime", errors.New("runtime is still shutting down"))
 	}
-}
-
-func (controller *AgentController) statusFromSnapshot(ctx context.Context) (AgentRuntimeStatus, error) {
-	return controller.GetStatus(ctx)
 }
 
 func safeAgentRuntimeError(operation string, err error) error {

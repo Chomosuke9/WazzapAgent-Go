@@ -4,18 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 )
-
-// Load returns a secret-safe settings view. It is an alias for GetSettings for
-// callers that model the operation after the repository method.
-func (controller *Controller) Load(ctx context.Context) (SettingsView, error) {
-	return controller.GetSettings(ctx)
-}
 
 func (controller *Controller) GetSettings(ctx context.Context) (SettingsView, error) {
 	if controller == nil || controller.repository == nil {
@@ -46,18 +39,12 @@ func (controller *Controller) ValidateSettings(ctx context.Context, patch Settin
 	return validationResult(merged), nil
 }
 
-// Validate is a compact name for ValidateSettings.
-func (controller *Controller) Validate(ctx context.Context, patch SettingsPatch) (ValidationResult, error) {
-	return controller.ValidateSettings(ctx, patch)
-}
-
 func (controller *Controller) Save(ctx context.Context, expectedRevision uint64, patch SettingsPatch) (SaveSettingsResult, error) {
 	if controller == nil || controller.repository == nil {
 		return SaveSettingsResult{}, controllerError("save settings", errors.New("settings controller is unavailable"))
 	}
-	controller.mutate.Lock()
-	defer controller.mutate.Unlock()
-
+	// The repository rejects the write if another save landed after this load,
+	// so secrets are never merged against a revision the editor did not see.
 	snapshot, err := controller.repository.Load(ctx)
 	if err != nil {
 		return SaveSettingsResult{}, safeRepositoryError("load settings for save", err)
@@ -83,22 +70,8 @@ func (controller *Controller) Save(ctx context.Context, expectedRevision uint64,
 	}, nil
 }
 
-func (controller *Controller) SaveSettings(ctx context.Context, request SaveSettingsRequest) (SaveSettingsResult, error) {
-	return controller.Save(ctx, request.ExpectedRevision, request.Patch)
-}
-
-func settingsFromPatch(patch SettingsPatch) config.Settings {
-	if !reflect.ValueOf(patch.Draft).IsZero() {
-		return patch.Draft
-	}
-	if !reflect.ValueOf(patch.Settings).IsZero() {
-		return patch.Settings
-	}
-	return patch.Values
-}
-
 func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, error) {
-	merged := settingsFromPatch(patch)
+	merged := patch.Draft
 	merged.LLMAPIKey = current.LLMAPIKey
 	merged.FallbackAPIKey = current.FallbackAPIKey
 	merged.LangSmithAPIKey = current.LangSmithAPIKey

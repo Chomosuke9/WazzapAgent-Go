@@ -46,6 +46,7 @@ type Application struct {
 	options Options
 
 	ready        atomic.Bool
+	started      chan struct{} // closed once composition finished and workers run
 	accountState atomic.Pointer[account.Runtime]
 	adapterState atomic.Pointer[whatsapp.Adapter]
 	runtimeState atomic.Pointer[conversationRuntime]
@@ -72,6 +73,7 @@ func New(cfg config.Snapshot, logger *slog.Logger, options Options) *Application
 		options: options,
 		metrics: observability.NewMetrics(),
 		state:   lifecycleNew,
+		started: make(chan struct{}),
 	}
 	application.runtimeFactory = func(ctx context.Context) (runtimeHandle, error) {
 		return application.composeRuntime(ctx)
@@ -176,6 +178,7 @@ func (application *Application) run(parent context.Context, diagnostics bool, st
 	}
 
 	application.ready.Store(true)
+	close(application.started)
 	if listener != nil {
 		application.logger.Info("application started", "address", listener.Addr().String(), "config", application.config.Redacted())
 	} else {

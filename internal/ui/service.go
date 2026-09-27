@@ -389,12 +389,8 @@ func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMember
 func (s *AppService) GetWhatsAppBroadcastGroups() ([]WhatsAppBroadcastGroupDTO, error) {
 	var groups []control.AgentBroadcastGroup
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support WhatsApp broadcast")
-		}
 		var actionErr error
-		groups, actionErr = broadcaster.ListBroadcastGroups(ctx)
+		groups, actionErr = runtime.ListBroadcastGroups(ctx)
 		return actionErr
 	})
 	if err != nil {
@@ -419,12 +415,8 @@ func (s *AppService) SendWhatsAppBroadcast(request SendWhatsAppBroadcastRequestD
 	s.recordChatActionDetails("INFO", "WhatsApp broadcast send started", fmt.Sprintf("groups=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
 	var results []control.AgentBroadcastGroupResult
 	err := s.withBroadcastActions(broadcastActionTimeout(len(request.GroupIDs), request.BatchSize, request.BatchDelaySeconds), func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support WhatsApp broadcast")
-		}
 		var actionErr error
-		results, actionErr = broadcaster.BroadcastWhatsAppGroups(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds)
+		results, actionErr = runtime.BroadcastWhatsAppGroups(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds)
 		return actionErr
 	})
 	if err != nil {
@@ -481,12 +473,8 @@ func (s *AppService) ScheduleWhatsAppBroadcast(request ScheduleWhatsAppBroadcast
 	}
 	var schedule control.AgentBroadcastSchedule
 	err = s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
-		}
 		var actionErr error
-		schedule, actionErr = broadcaster.ScheduleWhatsAppBroadcast(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds, scheduledAt)
+		schedule, actionErr = runtime.ScheduleWhatsAppBroadcast(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds, scheduledAt)
 		return actionErr
 	})
 	if err != nil {
@@ -499,12 +487,8 @@ func (s *AppService) ScheduleWhatsAppBroadcast(request ScheduleWhatsAppBroadcast
 func (s *AppService) GetWhatsAppBroadcastSchedules() ([]WhatsAppBroadcastScheduleDTO, error) {
 	var schedules []control.AgentBroadcastSchedule
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
-		}
 		var actionErr error
-		schedules, actionErr = broadcaster.ListWhatsAppBroadcastSchedules(ctx)
+		schedules, actionErr = runtime.ListWhatsAppBroadcastSchedules(ctx)
 		return actionErr
 	})
 	if err != nil {
@@ -519,11 +503,7 @@ func (s *AppService) GetWhatsAppBroadcastSchedules() ([]WhatsAppBroadcastSchedul
 
 func (s *AppService) CancelWhatsAppBroadcastSchedule(id string) error {
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		broadcaster, ok := runtime.(control.ManagedAgentBroadcastActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support WhatsApp broadcast schedules")
-		}
-		return broadcaster.CancelWhatsAppBroadcastSchedule(ctx, id)
+		return runtime.CancelWhatsAppBroadcastSchedule(ctx, id)
 	})
 	if err != nil {
 		return err
@@ -576,12 +556,8 @@ func (s *AppService) ResetWhatsAppChatSettings(request ResetWhatsAppChatSettings
 	}
 	var changed int64
 	err = s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		resetter, ok := runtime.(control.ManagedAgentChatSettingsReset)
-		if !ok {
-			return errors.New("the active Agent runtime does not support chat settings reset")
-		}
 		var resetErr error
-		changed, resetErr = resetter.ResetChatSettings(ctx, control.ChatSettingsResetCategory(request.Category), view.Values.ChatDefaults)
+		changed, resetErr = runtime.ResetChatSettings(ctx, control.ChatSettingsResetCategory(request.Category), view.Values.ChatDefaults)
 		return resetErr
 	})
 	if err != nil {
@@ -647,11 +623,7 @@ func (s *AppService) SendWhatsAppMessage(chatID, text, replyToMessageID string) 
 			message, actionErr = runtime.SendChatMessage(ctx, chatID, text)
 			return actionErr
 		}
-		replyRuntime, ok := runtime.(control.ManagedAgentChatReplyActions)
-		if !ok {
-			return errors.New("the active Agent runtime does not support chat replies")
-		}
-		message, actionErr = replyRuntime.SendChatReply(ctx, chatID, text, replyToMessageID)
+		message, actionErr = runtime.SendChatReply(ctx, chatID, text, replyToMessageID)
 		return actionErr
 	})
 	if err != nil {
@@ -703,7 +675,7 @@ func (s *AppService) withManagedChatActions(timeout time.Duration, failureLogMes
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err := s.agent.WithChatActions(ctx, func(runtime control.ManagedAgentChatActions) error {
+	err := s.agent.WithChatActions(ctx, func(ctx context.Context, runtime control.ManagedAgentChatActions) error {
 		return action(runtime, ctx)
 	})
 	if err != nil {

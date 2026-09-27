@@ -628,3 +628,27 @@ func modelRequest(t *testing.T, providerID identity.ProviderID) agent.ModelReque
 		ContextMessages:  map[string]identity.MessageID{"000001": currentMessageID},
 	}
 }
+
+func TestSystemPolicyDateIsRenderedPerRequest(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	client, err := New(Config{
+		Endpoint: "https://provider.invalid/v1", APIKey: "secret", ProviderID: providerID,
+		SystemPolicy: "Today's date: {{current_date}}.",
+		Timeout:      time.Second, Concurrency: 1, MaxResponseBytes: 4096, Commands: inbound.CommandRegistry(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	day := time.Date(2026, 9, 15, 23, 0, 0, 0, time.UTC)
+	client.now = func() time.Time { return day }
+	for _, want := range []string{"15 Sep 2026", "16 Sep 2026"} {
+		messages, _, err := client.messages(modelRequest(t, providerID))
+		if err != nil {
+			t.Fatalf("build messages: %v", err)
+		}
+		if !strings.Contains(messages[0].Content, want) {
+			t.Fatalf("system message = %q, want date %s", messages[0].Content, want)
+		}
+		day = day.Add(2 * time.Hour)
+	}
+}

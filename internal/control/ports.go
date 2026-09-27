@@ -62,12 +62,14 @@ type AgentRuntimeFactory interface {
 }
 
 // ManagedAgentRuntime is the process-owned bot runtime used by the GUI.
-// Snapshot contains only runtime readiness and connection state, never config
-// values or provider credentials.
+// Started closes once composition finished and workers are running. Snapshot
+// contains only connection state, never config values or provider credentials.
 type ManagedAgentRuntime interface {
 	Run(context.Context) error
 	Close(context.Context) error
+	Started() <-chan struct{}
 	Snapshot() AgentRuntimeSnapshot
+	ManagedAgentChatActions
 }
 
 // AgentSessionControl lets bot startup stop a session-only client before

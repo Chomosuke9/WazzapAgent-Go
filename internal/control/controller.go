@@ -2,16 +2,14 @@ package control
 
 import (
 	"errors"
-	"sync"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
-// Controller owns settings mutations. The mutex deliberately covers only
-// controller mutations; reads do not wait for a slow storage operation.
+// Controller owns settings mutations. Concurrent saves are resolved by the
+// repository's revision compare-and-swap, so the controller holds no lock.
 type Controller struct {
 	repository SettingsRepository
-	mutate     sync.Mutex
 }
 
 // NewController creates the settings controller. It does not open a database
@@ -21,9 +19,4 @@ func NewController(repository SettingsRepository) (*Controller, error) {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create settings controller", errors.New("settings repository is required"))
 	}
 	return &Controller{repository: repository}, nil
-}
-
-// NewSettingsController is the explicit constructor name for composition code.
-func NewSettingsController(repository SettingsRepository) (*Controller, error) {
-	return NewController(repository)
 }

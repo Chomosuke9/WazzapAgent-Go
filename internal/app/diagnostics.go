@@ -114,11 +114,11 @@ func (application *Application) Ready() bool {
 	return true
 }
 
-// Started reports that runtime composition completed and the process-owned
+// Started closes when runtime composition completed and the process-owned
 // worker lifecycle began. It is distinct from Ready, which also requires an
 // open WhatsApp connection.
-func (application *Application) Started() bool {
-	return application != nil && application.ready.Load()
+func (application *Application) Started() <-chan struct{} {
+	return application.started
 }
 
 // WhatsAppSnapshot returns account connection state without exposing client or
