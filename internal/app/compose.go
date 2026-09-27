@@ -176,13 +176,6 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		})
 	})
 	commandPlatform := command.Platform{Text: waAdapter, Buttons: waAdapter, Group: waAdapter}
-	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, commandPlatform, application.metrics, agent.SystemClock{})
-	if err != nil {
-		return nil, err
-	}
-	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
-		return nil, err
-	}
 	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		return nil, err
@@ -199,6 +192,15 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		},
 	})
 	if err != nil {
+		return nil, err
+	}
+	// Commands the model issues schedule tasks on the same dispatcher.
+	commandPlatform.Tasks = inboundDispatch
+	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, commandPlatform, application.metrics, agent.SystemClock{})
+	if err != nil {
+		return nil, err
+	}
+	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
 		return nil, err
 	}
 	if err := waAdapter.BindHandler(inboundDispatch); err != nil {

@@ -98,6 +98,7 @@ package, so a generic helper name will collide with another command.
 | `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Changes the chat config. Crash-safe (see "Changing config"). |
 | `c.ResetHistory(ctx)` | Clears the chat history. |
 | `c.Group()` | The group moderation port: announce, description, revoke, kick, mute. Returns an error if unavailable. |
+| `c.ScheduleTask(ctx, fireAt, prompt)` | Runs `prompt` as an AI turn in this chat at `fireAt` (at most a day ahead). Saved, so it survives a restart. |
 | `c.QuotedRaw(ctx)` | The raw provider JSON of the quoted message. It is only captured for `/catch`. |
 | `c.Commands()` | Every registered command, sorted. Used by `/help`. |
 

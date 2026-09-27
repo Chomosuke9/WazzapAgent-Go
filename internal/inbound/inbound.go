@@ -35,6 +35,7 @@ type Store interface {
 	// ListUnfinishedInChat returns up to limit of one chat's unfinished
 	// messages, oldest first.
 	ListUnfinishedInChat(context.Context, agent.Key, int) ([]conversation.IncomingMessage, error)
+	TaskStore
 }
 
 type AgentLifecycleObserver interface {
@@ -289,15 +290,9 @@ func (handler *Dispatcher) processBatch(
 	if err != nil {
 		return err
 	}
-	commandNames := make([]string, 0)
-	for _, cmd := range builtinCommandRegistry.Commands() {
-		allowed, evaluateErr := command.EvaluatePermission(cmd.Permission, facts)
-		if evaluateErr != nil {
-			return agent.NewError(agent.ErrorIntegrityFailure, "list model commands", evaluateErr)
-		}
-		if allowed {
-			commandNames = append(commandNames, cmd.Name)
-		}
+	commandNames, err := modelCommandNames(facts)
+	if err != nil {
+		return err
 	}
 	chatName := anchorMessage.SenderName
 	var observedChat *agent.ChatContext
@@ -345,6 +340,21 @@ func (handler *Dispatcher) processBatch(
 		handler.options.Events.ObserveAgentSucceeded(anchorMessage, result, time.Since(started), chatName)
 	}
 	return err
+}
+
+// modelCommandNames lists the commands the model may issue under facts.
+func modelCommandNames(facts command.PermissionFacts) ([]string, error) {
+	names := make([]string, 0)
+	for _, cmd := range builtinCommandRegistry.Commands() {
+		allowed, err := command.EvaluatePermission(cmd.Permission, facts)
+		if err != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "list model commands", err)
+		}
+		if allowed {
+			names = append(names, cmd.Name)
+		}
+	}
+	return names, nil
 }
 
 func invocationFromMessage(message conversation.IncomingMessage, version agent.ConfigVersion, capabilities agent.CapabilitySet, commands []string) (agent.Invocation, error) {

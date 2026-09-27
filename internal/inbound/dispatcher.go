@@ -51,6 +51,8 @@ type Dispatcher struct {
 
 	mu    sync.Mutex
 	chats map[agent.Key]*chatQueue
+	// tasks holds the timer of every scheduled task armed in this process.
+	tasks map[identity.CausationID]*time.Timer
 }
 
 type chatQueue struct {
@@ -109,13 +111,19 @@ func NewDispatcher(
 		options.Report = func(error) {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Dispatcher{
+	dispatcher := &Dispatcher{
 		handlerServices: handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer, platform: platform},
 		options:         options,
 		ctx:             ctx,
 		cancel:          cancel,
 		chats:           make(map[agent.Key]*chatQueue),
-	}, nil
+		tasks:           make(map[identity.CausationID]*time.Timer),
+	}
+	if dispatcher.platform.Tasks == nil {
+		// The dispatcher runs scheduled tasks, so it is their scheduler.
+		dispatcher.platform.Tasks = dispatcher
+	}
+	return dispatcher, nil
 }
 
 // Run waits for ctx, then stops starting turns and waits for running ones.
@@ -129,15 +137,23 @@ func (dispatcher *Dispatcher) Run(ctx context.Context) error {
 			queue.timer = nil
 		}
 	}
+	for id, timer := range dispatcher.tasks {
+		timer.Stop()
+		delete(dispatcher.tasks, id)
+	}
 	dispatcher.mu.Unlock()
 	dispatcher.turns.Wait()
 	return nil
 }
 
-// Recover resumes every message the last run left unfinished, oldest first,
-// reading the inbox one page at a time. It returns the first transient
-// failure, so the caller can run it again; other failures are reported.
+// Recover arms the saved scheduled tasks, then resumes every message the
+// last run left unfinished, oldest first, reading the inbox one page at a
+// time. It returns the first transient failure, so the caller can run it
+// again; other failures are reported.
 func (dispatcher *Dispatcher) Recover(ctx context.Context, tenantID identity.TenantID) error {
+	if err := dispatcher.armStoredTasks(ctx, tenantID); err != nil {
+		return err
+	}
 	var after *conversation.IncomingMessage
 	var transient error
 	for {

@@ -21,15 +21,26 @@ import (
 var outboundMentionPattern = regexp.MustCompile(`@([^@()\r\n]+?)\s*\(([0-9A-Za-z]{3,16})\)`)
 
 func (adapter *Adapter) textMessage(ctx context.Context, request action.SendTextRequest, address string, target types.JID) (*waE2E.Message, error) {
-	renderedText, mentionedJIDs, nonJIDMentions := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key))
+	rendered, err := renderOutboundMentions(request.Text, target, adapter.ownJID(), adapter.mentionResolver(ctx, request.Key), adapter.groupAdmins(ctx, target))
+	if err != nil {
+		return nil, err
+	}
+	mentionedJIDs := rendered.jids
 	message := &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text: proto.String(renderedText),
+			Text: proto.String(rendered.text),
 		},
 	}
 	contextInfo := &waE2E.ContextInfo{MentionedJID: mentionedJIDs}
-	if nonJIDMentions > 0 {
-		contextInfo.NonJIDMentions = proto.Uint32(nonJIDMentions)
+	if rendered.nonJID > 0 {
+		contextInfo.NonJIDMentions = proto.Uint32(rendered.nonJID)
+	}
+	if rendered.admins {
+		// WhatsApp shows a mention of the group's own JID with this subject
+		// as "@admin"; the admins themselves are in MentionedJID.
+		contextInfo.GroupMentions = []*waE2E.GroupMention{{
+			GroupJID: proto.String(target.ToNonAD().String()), GroupSubject: proto.String("admin"),
+		}}
 	}
 
 	// Resolve the model-selected target before sending. An unresolved target must
@@ -52,7 +63,7 @@ func (adapter *Adapter) textMessage(ctx context.Context, request action.SendText
 			contextInfo.Participant = proto.String(own.String())
 		}
 	}
-	if !request.QuotedMessageID.IsZero() || len(mentionedJIDs) > 0 || nonJIDMentions > 0 {
+	if !request.QuotedMessageID.IsZero() || len(mentionedJIDs) > 0 || rendered.nonJID > 0 || rendered.admins {
 		message.ExtendedTextMessage.ContextInfo = contextInfo
 	}
 	return message, nil
@@ -183,19 +194,51 @@ func (adapter *Adapter) mentionResolver(ctx context.Context, key agent.Key) func
 	}
 }
 
+// groupAdmins lists the admins of a group chat from the synchronized group
+// snapshot. It fails while the snapshot is not ready, so the send is tried
+// again later instead of showing "@admin" that notifies nobody.
+func (adapter *Adapter) groupAdmins(ctx context.Context, chat types.JID) func() ([]types.JID, error) {
+	return func() ([]types.JID, error) {
+		info, err := adapter.readGroupInfo(ctx, chat)
+		if err != nil {
+			return nil, err
+		}
+		admins := make([]types.JID, 0, 4)
+		for _, participant := range info.Participants {
+			if !participant.IsAdmin && !participant.IsSuperAdmin {
+				continue
+			}
+			if !participant.LID.IsEmpty() {
+				admins = append(admins, participant.LID)
+			} else {
+				admins = append(admins, participant.JID)
+			}
+		}
+		return admins, nil
+	}
+}
+
+type renderedMentions struct {
+	text   string
+	jids   []string
+	nonJID uint32
+	// admins is set when the text mentions the group's admins.
+	admins bool
+}
+
 // renderOutboundMentions rewrites the model's "@Name (ref)" markup into
-// WhatsApp wire mentions. "all" becomes a non-JID group mention, "bot" the
-// account itself, and any other ref is resolved to a member JID; unresolved
-// refs degrade to plain "@Name" text rather than failing the send.
-func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool)) (string, []string, uint32) {
+// WhatsApp wire mentions. "all" becomes a non-JID group mention, "admin" a
+// group mention that tags every admin listed by admins, "bot" the account
+// itself, and any other ref is resolved to a member JID; unresolved refs
+// degrade to plain "@Name" text rather than failing the send.
+func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(identity.SenderRef) (types.JID, bool), admins func() ([]types.JID, error)) (renderedMentions, error) {
 	matches := outboundMentionPattern.FindAllStringSubmatchIndex(rawText, -1)
 	if len(matches) == 0 {
-		return rawText, nil, 0
+		return renderedMentions{text: rawText}, nil
 	}
 	var rendered strings.Builder
-	mentioned := make([]string, 0, len(matches))
+	result := renderedMentions{jids: make([]string, 0, len(matches))}
 	seen := make(map[string]struct{}, len(matches))
-	var nonJIDMentions uint32
 	cursor := 0
 	addMention := func(jid types.JID) {
 		if jid.IsEmpty() {
@@ -206,7 +249,7 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 			return
 		}
 		seen[value] = struct{}{}
-		mentioned = append(mentioned, value)
+		result.jids = append(result.jids, value)
 	}
 	for _, match := range matches {
 		rendered.WriteString(rawText[cursor:match[0]])
@@ -217,7 +260,22 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 		case "all":
 			replacement = "@all"
 			if target.Server == types.GroupServer {
-				nonJIDMentions = 1
+				result.nonJID = 1
+			}
+		case "admin":
+			replacement = "@admin"
+			if target.Server == types.GroupServer {
+				// The text carries the full group JID; WhatsApp replaces it
+				// with the group mention's subject.
+				replacement = "@" + target.ToNonAD().String()
+				result.admins = true
+				list, err := admins()
+				if err != nil {
+					return renderedMentions{}, err
+				}
+				for _, admin := range list {
+					addMention(admin)
+				}
 			}
 		case "bot":
 			if !bot.IsEmpty() {
@@ -237,5 +295,6 @@ func renderOutboundMentions(rawText string, target, bot types.JID, resolve func(
 		cursor = match[1]
 	}
 	rendered.WriteString(rawText[cursor:])
-	return rendered.String(), mentioned, nonJIDMentions
+	result.text = rendered.String()
+	return result, nil
 }

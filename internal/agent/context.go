@@ -126,7 +126,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		}
 		current := entry.InvocationID == request.CurrentInvocationID
 		if current {
-			if entry.Role != HistoryUser || currentFound {
+			if entry.Role == HistoryAssistant || currentFound {
 				return nil, NewError(ErrorIntegrityFailure, "build model context", fmt.Errorf("current invocation history is ambiguous"))
 			}
 			currentFound = true
@@ -241,7 +241,8 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 
 func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
 	text := flattenContent(entry.Content)
-	if entry.Role == HistoryUser {
+	if entry.Role != HistoryAssistant {
+		// System entries carry task text someone in the chat wrote.
 		text = prepareUntrustedChatText(text)
 	}
 	text = renderMentionView(text, entry.Mentions, mentionNames, assistantName)

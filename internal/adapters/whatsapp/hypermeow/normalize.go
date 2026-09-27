@@ -54,6 +54,7 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 	if text == "" {
 		return conversation.IncomingCandidate{}, false
 	}
+	text = renderGroupMentions(text, contextInfo)
 	chat := event.Info.Chat.ToNonAD()
 	sender := event.Info.Sender.ToNonAD()
 	senderLID, ok := lidAddress(sender, event.Info.SenderAlt)
@@ -130,6 +131,19 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 		OccurredAt:                event.Info.Timestamp.UTC(),
 		ReceivedAt:                time.Now().UTC(),
 	}, true
+}
+
+// renderGroupMentions shows a group mention, such as the one WhatsApp sends
+// for "@admin", by its subject instead of the raw group address in the text.
+func renderGroupMentions(text string, contextInfo *waE2E.ContextInfo) string {
+	for _, groupMention := range contextInfo.GetGroupMentions() {
+		address, subject := groupMention.GetGroupJID(), strings.TrimSpace(groupMention.GetGroupSubject())
+		if address == "" || subject == "" || strings.ContainsAny(subject, "\r\n") {
+			continue
+		}
+		text = strings.ReplaceAll(text, "@"+address, "@"+subject)
+	}
+	return text
 }
 
 // messageContent returns the text the pipeline sees and the context info that
