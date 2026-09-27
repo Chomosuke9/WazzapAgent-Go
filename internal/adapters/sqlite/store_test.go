@@ -586,7 +586,7 @@ func TestBatchClaimRecordsMembersAndUnfinishedAnchorSurvivesReopen(t *testing.T)
 	}
 	first.Message.InvocationID = firstID
 	second.Message.InvocationID = secondID
-	unfinished, err := store.Inbound().ListUnfinished(ctx, first.Message.TenantID)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, first.Message.TenantID, nil, 0)
 	if err != nil || len(unfinished) != 2 || unfinished[0].InvocationID != firstID || unfinished[1].InvocationID != secondID {
 		t.Fatalf("unfinished before claim = %#v, err=%v", unfinished, err)
 	}
@@ -603,7 +603,7 @@ func TestBatchClaimRecordsMembersAndUnfinishedAnchorSurvivesReopen(t *testing.T)
 		t.Fatalf("reopen store: %v", err)
 	}
 	defer reopened.Close()
-	unfinished, err = reopened.Inbound().ListUnfinished(ctx, first.Message.TenantID)
+	unfinished, err = reopened.Inbound().ListUnfinished(ctx, first.Message.TenantID, nil, 0)
 	if err != nil || len(unfinished) != 1 || unfinished[0].InvocationID != secondID {
 		t.Fatalf("unfinished after restart = %#v, err=%v", unfinished, err)
 	}
@@ -651,7 +651,7 @@ func TestStartedTurnOnlyEverRunsAsAnAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim second: %v", err)
 	}
-	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID, nil, 0)
 	if err != nil || len(unfinished) != 2 || unfinished[0].InvocationID != first.Message.InvocationID {
 		t.Fatalf("unfinished = %#v, err=%v", unfinished, err)
 	}
@@ -689,7 +689,7 @@ func TestPreResetMessageIsDroppedFromBatch(t *testing.T) {
 	if err != nil || len(rest) != 0 || len(batch) != 0 {
 		t.Fatalf("pre-reset batch = %#v, rest=%d, err=%v", batch, len(rest), err)
 	}
-	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID)
+	unfinished, err := store.Inbound().ListUnfinished(ctx, key.TenantID, nil, 0)
 	if err != nil || len(unfinished) != 0 {
 		t.Fatalf("pre-reset message still unfinished: %#v, err=%v", unfinished, err)
 	}

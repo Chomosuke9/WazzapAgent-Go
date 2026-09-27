@@ -532,17 +532,27 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 	return access, nil
 }
 
-// ListUnfinished returns every message the last run accepted but never
-// answered or ignored, oldest first. It runs at startup, when nothing else
-// can be working on them.
+// ListUnfinished returns up to limit messages the last run accepted but
+// never answered or ignored, oldest first, starting after the message after
+// (nil: from the start). A limit of zero or less means all of them.
 func (store *InboundStore) ListUnfinished(
 	ctx context.Context,
 	tenantID identity.TenantID,
+	after *conversation.IncomingMessage,
+	limit int,
 ) ([]conversation.IncomingMessage, error) {
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list unfinished inbound", errors.New("tenant is required"))
 	}
-	return store.listUnfinished(ctx, tenantID, "", nil, -1)
+	if limit <= 0 {
+		limit = -1
+	}
+	if after == nil {
+		return store.listUnfinished(ctx, tenantID, "", nil, limit)
+	}
+	return store.listUnfinished(ctx, tenantID, ` AND e.rowid > (SELECT rowid FROM inbound_events
+        WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?)`,
+		[]any{tenantID.String(), after.AccountID.String(), after.ChatID.String(), after.InvocationID.String()}, limit)
 }
 
 // ListUnfinishedInChat returns up to limit unfinished messages of one chat,

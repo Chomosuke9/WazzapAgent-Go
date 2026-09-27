@@ -134,21 +134,28 @@ func (dispatcher *Dispatcher) Run(ctx context.Context) error {
 	return nil
 }
 
-// Recover resumes every message the last run left unfinished, oldest first.
+// Recover resumes every message the last run left unfinished, oldest first,
+// reading the inbox one page at a time.
 func (dispatcher *Dispatcher) Recover(ctx context.Context, tenantID identity.TenantID) error {
-	messages, err := dispatcher.store.ListUnfinished(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	for _, message := range messages {
-		if ctx.Err() != nil {
+	var after *conversation.IncomingMessage
+	for {
+		messages, err := dispatcher.store.ListUnfinished(ctx, tenantID, after, maxPending)
+		if err != nil {
+			return err
+		}
+		for _, message := range messages {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err := dispatcher.Resume(ctx, message); err != nil {
+				dispatcher.options.Report(err)
+			}
+		}
+		if len(messages) < maxPending {
 			return nil
 		}
-		if err := dispatcher.Resume(ctx, message); err != nil {
-			dispatcher.options.Report(err)
-		}
+		after = &messages[len(messages)-1]
 	}
-	return nil
 }
 
 func (dispatcher *Dispatcher) Handle(ctx context.Context, candidate conversation.IncomingCandidate) error {
@@ -214,7 +221,12 @@ func (dispatcher *Dispatcher) runCommand(ctx context.Context, key agent.Key, mes
 		queue.commands.Unlock()
 		dispatcher.mu.Lock()
 		queue.users--
-		dispatcher.forgetIfIdle(key, queue)
+		if queue.overflow && queue.users == 0 && !queue.running && queue.timer == nil &&
+			len(queue.pending) == 0 && dispatcher.ctx.Err() == nil {
+			dispatcher.refill(key, queue)
+		} else {
+			dispatcher.forgetIfIdle(key, queue)
+		}
 		dispatcher.mu.Unlock()
 	}()
 	// A command runs once: resumeCommand closes a failed one (failCommand).
@@ -386,7 +398,6 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 		queue.running = false
 		queue.refilling = false
 		missed := queue.overflow // an arrival landed after the read
-		queue.overflow = false
 		// A full page means more may still wait in the inbox.
 		queue.overflow = len(messages) == maxPending
 		for _, message := range messages {
@@ -401,8 +412,15 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 			dispatcher.schedule(key, queue, 0)
 			return
 		}
-		if (missed || queue.overflow) && err == nil && dispatcher.ctx.Err() == nil {
+		switch {
+		case err != nil || dispatcher.ctx.Err() != nil:
+			queue.overflow = false
+		case missed || queue.overflow && queue.users == 0:
 			dispatcher.refill(key, queue)
+			return
+		case queue.overflow:
+			// The page held only commands that are still running; the last
+			// of them to finish reads the inbox again.
 			return
 		}
 		dispatcher.forgetIfIdle(key, queue)

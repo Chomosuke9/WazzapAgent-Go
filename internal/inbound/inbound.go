@@ -29,9 +29,9 @@ type Store interface {
 	// the anchor that gets the reply. It may consume only part of the input
 	// and returns the rest, in arrival order, to queue again.
 	ClaimBatch(context.Context, []conversation.IncomingMessage) ([]conversation.IncomingMessage, []conversation.IncomingMessage, error)
-	// ListUnfinished returns messages the last run accepted but never
-	// finished, oldest first.
-	ListUnfinished(context.Context, identity.TenantID) ([]conversation.IncomingMessage, error)
+	// ListUnfinished returns up to limit messages the last run accepted but
+	// never finished, oldest first, starting after the message after.
+	ListUnfinished(ctx context.Context, tenantID identity.TenantID, after *conversation.IncomingMessage, limit int) ([]conversation.IncomingMessage, error)
 	// ListUnfinishedInChat returns up to limit of one chat's unfinished
 	// messages, oldest first.
 	ListUnfinishedInChat(context.Context, agent.Key, int) ([]conversation.IncomingMessage, error)

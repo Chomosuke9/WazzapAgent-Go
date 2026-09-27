@@ -336,7 +336,7 @@ func TestMessagesBeyondTheMemoryBoundAreReadBackFromTheInbox(t *testing.T) {
 			t.Fatalf("handle overflowing burst: %v", err)
 		}
 	}
-	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 	if err != nil || len(unfinished) != 0 {
 		t.Fatalf("messages left unanswered after overflow: %d, err=%v", len(unfinished), err)
 	}
@@ -394,9 +394,28 @@ func TestAFailedInboxReadBackIsTriedAgain(t *testing.T) {
 	if err := fixture.handler.settle(nil); err != nil {
 		t.Fatalf("settle overflowing burst: %v", err)
 	}
-	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 	if err != nil || len(unfinished) != 0 {
 		t.Fatalf("messages left unanswered after a failed read-back: %d, err=%v", len(unfinished), err)
+	}
+}
+
+func TestRecoveryReadsTheInboxPageByPage(t *testing.T) {
+	defer inbound.SetMaxPending(2)()
+	fixture := newFixture(t)
+	for index := 0; index < 5; index++ {
+		chat := fmt.Sprintf("1555000002%d@s.whatsapp.net", index)
+		candidate := fixture.candidate(fmt.Sprintf("paged-%d", index), chat, conversation.ChatDirect, "hello")
+		if _, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate); err != nil {
+			t.Fatalf("store unfinished message: %v", err)
+		}
+	}
+	if err := fixture.handler.Recover(context.Background(), fixture.tenantID); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
+	if err != nil || len(unfinished) != 0 || fixture.sender.count() != 5 {
+		t.Fatalf("after paged recovery: unfinished=%d replies=%d err=%v, want 0/5", len(unfinished), fixture.sender.count(), err)
 	}
 }
 
@@ -776,7 +795,7 @@ func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim before crash: %v", err)
 	}
-	messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+	messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 	if err != nil {
 		t.Fatalf("list unfinished inbound: %v", err)
 	}
@@ -936,7 +955,7 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 			if test.reply != "" && !strings.Contains(fixture.sender.last().Text, test.reply) {
 				t.Fatalf("failure reply = %q, want it to contain %q", fixture.sender.last().Text, test.reply)
 			}
-			messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID)
+			messages, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
 			if err != nil {
 				t.Fatalf("list unfinished inbound: %v", err)
 			}
