@@ -56,22 +56,6 @@ func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversa
 	return gate.authorizeHuman(ctx, principal, snapshot.Permission, false)
 }
 
-// AuthorizeCommand is intentionally separate from Agent. The principal was
-// formed from a durably resolved LID at inbound intake, while this method
-// rereads the current account policy before a command changes chat state.
-func (gate *FixedGate) AuthorizeCommand(ctx context.Context, principal Principal, capability Capability, permission agent.PermissionConfig) error {
-	if !gate.enabled.Load() || principal.Kind != PrincipalHuman {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", errors.New("eligible human principal is required"))
-	}
-	if !capability.Valid() {
-		return agent.NewError(agent.ErrorPermissionDenied, "authorize command", errors.New("command capability is not enabled"))
-	}
-	// The descriptor's Permission expression is the command role gate. The
-	// capability remains an effect/feature identity and is validated here, but
-	// it must not silently override a command module's declared expression.
-	return gate.authorizeHuman(ctx, principal, permission, false)
-}
-
 // CommandPermissionFacts resolves the facts consumed by a command's
 // declarative permission expression. Human facts come from the current
 // durable participant/chat record plus the latest synchronized group snapshot. A

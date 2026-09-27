@@ -245,9 +245,13 @@ func (controller *AgentController) Close(ctx context.Context) error {
 	defer controller.operations.Unlock()
 	controller.mu.Lock()
 	controller.closed = true
-	controller.rootCancel()
+	run := controller.detachRunLocked()
 	controller.mu.Unlock()
-	return controller.stopCurrent(ctx)
+	// Cancel the root only after the active run is detached; otherwise runAgent
+	// can observe the cancellation, clear controller.run first, and the runtime
+	// would never be closed.
+	controller.rootCancel()
+	return controller.stopRun(ctx, run)
 }
 
 func (controller *AgentController) runtimeSnapshot(ctx context.Context, expectedRevision *uint64) (config.Snapshot, uint64, error) {
@@ -397,18 +401,31 @@ func (controller *AgentController) abortStarting(run *agentRuntimeRun, timeout t
 
 func (controller *AgentController) stopCurrent(ctx context.Context) error {
 	controller.mu.Lock()
+	run := controller.detachRunLocked()
+	controller.mu.Unlock()
+	return controller.stopRun(ctx, run)
+}
+
+// detachRunLocked marks the active run as stopping and returns it, or records
+// the stopped state when nothing is running. controller.mu must be held.
+func (controller *AgentController) detachRunLocked() *agentRuntimeRun {
 	run := controller.run
 	if run == nil {
 		if controller.state != BotFailed {
 			controller.state = BotStopped
 			controller.activeRev = 0
 		}
-		controller.mu.Unlock()
 		return nil
 	}
 	controller.state = BotStopping
 	controller.activeRev = 0
-	controller.mu.Unlock()
+	return run
+}
+
+func (controller *AgentController) stopRun(ctx context.Context, run *agentRuntimeRun) error {
+	if run == nil {
+		return nil
+	}
 	run.cancel()
 	closeCtx := ctx
 	cancel := func() {}

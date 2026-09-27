@@ -23,13 +23,7 @@ type ClaimedMessage struct {
 type Store interface {
 	ClaimAndResolveSender(context.Context, conversation.IncomingCandidate) (ClaimedMessage, error)
 	MarkIgnored(context.Context, conversation.IncomingMessage, IgnoreReason) error
-	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
-	BeginPromptMutation(context.Context, conversation.IncomingMessage, PromptCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-	BeginTriggerMutation(context.Context, conversation.IncomingMessage, TriggerCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
+	command.Store
 	IsChatMuted(context.Context, agent.Key, identity.SenderRef, time.Time) (bool, error)
 	StageBatch(context.Context, conversation.IncomingMessage, time.Time) (BatchStage, error)
 	ClaimBatch(context.Context, conversation.IncomingMessage, time.Time, uint32) (BatchClaim, error)
@@ -106,7 +100,6 @@ type Registry interface {
 
 type Policy interface {
 	AuthorizeInvocation(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) error
-	AuthorizeCommand(context.Context, policy.Principal, policy.Capability, agent.PermissionConfig) error
 	ModelCapabilities(agent.PermissionConfig) (agent.CapabilitySet, error)
 }
 
@@ -150,7 +143,7 @@ type handlerServices struct {
 	policy    Policy
 	responses ResponseWriter
 	observer  Observer
-	adapter   command.Adapter
+	platform  command.Platform
 	stripes   *[64]sync.Mutex
 }
 
@@ -158,7 +151,7 @@ func (handler *CommandHandler) resumeCommand(
 	ctx context.Context,
 	message conversation.IncomingMessage,
 	request command.Request,
-	descriptor command.Descriptor,
+	cmd command.Command,
 ) error {
 	stripe := handler.stripe(message.ChatID)
 	stripe.Lock()
@@ -177,48 +170,28 @@ func (handler *CommandHandler) resumeCommand(
 	if err != nil {
 		return err
 	}
-	facts, err := handler.commandPermissionFacts(ctx, principal, snapshot.Permission, message.FromMe, message.ChatKind)
-	if err != nil {
-		if agent.IsCode(err, agent.ErrorPermissionDenied) {
-			reply := descriptor.DeniedReply
-			if reply == "" {
-				reply = "This command cannot be used in this chat."
-			}
-			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
-		}
-		return err
-	}
-	allowed, err := builtinCommandRegistry.Allows(request, facts)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		reply := descriptor.DeniedReply
+	deny := func() error {
+		reply := cmd.DeniedReply
 		if reply == "" {
 			reply = "This command cannot be used in this chat."
 		}
 		return handler.responses.Reply(ctx, message, snapshot.Version, reply)
 	}
-	if !message.FromMe {
-		if err := handler.policy.AuthorizeCommand(ctx, principal, descriptor.Capability, snapshot.Permission); err != nil {
-			reply := descriptor.DeniedReply
-			if reply == "" {
-				reply = "This command cannot be used in this chat."
-			}
-			return handler.responses.Reply(ctx, message, snapshot.Version, reply)
-		}
+	facts, err := handler.commandPermissionFacts(ctx, principal, snapshot.Permission, message.FromMe, message.ChatKind)
+	if agent.IsCode(err, agent.ErrorPermissionDenied) {
+		return deny()
 	}
-
-	return builtinCommandRegistry.Dispatch(ctx, request, command.Context{
-		Agent:    currentAgent,
-		Snapshot: snapshot,
-		Message:  message,
-		Facts:    facts,
-		Registry: builtinCommandRegistry,
-		Store:    handler.store,
-		Observer: handler.observer,
-		Adapter:  handler.adapter,
+	if err != nil {
+		return err
+	}
+	err = builtinCommandRegistry.Dispatch(ctx, request, command.Invocation{
+		Agent: currentAgent, Config: snapshot, Message: message, Facts: facts,
+		Platform: handler.platform, Store: handler.store, Observer: handler.observer,
 	})
+	if errors.Is(err, command.ErrDenied) {
+		return deny()
+	}
+	return err
 }
 
 func commandPrincipal(message conversation.IncomingMessage) (policy.Principal, error) {
@@ -325,13 +298,13 @@ func (handler *AIHandler) processBatch(
 		return err
 	}
 	commandNames := make([]string, 0)
-	for _, descriptor := range builtinCommandRegistry.Descriptors() {
-		allowed, evaluateErr := command.EvaluatePermission(descriptor.Permission, facts)
+	for _, cmd := range builtinCommandRegistry.Commands() {
+		allowed, evaluateErr := command.EvaluatePermission(cmd.Permission, facts)
 		if evaluateErr != nil {
 			return agent.NewError(agent.ErrorIntegrityFailure, "list model commands", evaluateErr)
 		}
 		if allowed {
-			commandNames = append(commandNames, string(descriptor.Name))
+			commandNames = append(commandNames, cmd.Name)
 		}
 	}
 	if len(commandNames) > 0 && !capabilities.Has("command.execute") {

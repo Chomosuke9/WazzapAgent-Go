@@ -38,12 +38,12 @@ func newHandlerServices(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter command.Adapter,
+	platform command.Platform,
 ) (handlerServices, error) {
 	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
 		return handlerServices{}, agent.NewError(agent.ErrorInvalidArgument, "create inbound lane services", errors.New("store, registry, policy, response writer, and observer are required"))
 	}
-	return handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer, adapter: adapter}, nil
+	return handlerServices{store: store, agents: agents, policy: policy, responses: responses, observer: observer, platform: platform}, nil
 }
 
 func newCommandHandler(services handlerServices) (*CommandHandler, error) {
@@ -73,9 +73,9 @@ func NewCommandHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter command.Adapter,
+	platform command.Platform,
 ) (*CommandHandler, error) {
-	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)
+	services, err := newHandlerServices(store, agents, policy, responses, observer, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +90,9 @@ func NewAIHandler(
 	policy Policy,
 	responses ResponseWriter,
 	observer Observer,
-	adapter command.Adapter,
 	options BatchOptions,
 ) (*AIHandler, error) {
-	services, err := newHandlerServices(store, agents, policy, responses, observer, adapter)
+	services, err := newHandlerServices(store, agents, policy, responses, observer, command.Platform{})
 	if err != nil {
 		return nil, err
 	}
@@ -116,11 +115,11 @@ func (handler *CommandHandler) Resume(ctx context.Context, message conversation.
 	case !message.Allowlisted:
 		return handler.ignore(ctx, message, IgnoreNotAllowlisted)
 	}
-	request, descriptor, recognized := parseRegisteredCommand(message.Text)
+	request, cmd, recognized := parseRegisteredCommand(message.Text)
 	if !recognized {
 		return agent.NewError(agent.ErrorIntegrityFailure, "run command handler", errors.New("registered command disappeared during dispatch"))
 	}
-	return handler.resumeCommand(ctx, message, request, descriptor)
+	return handler.resumeCommand(ctx, message, request, cmd)
 }
 
 func (handler *AIHandler) Resume(ctx context.Context, message conversation.IncomingMessage) error {

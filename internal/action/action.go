@@ -54,6 +54,23 @@ type SendTextRequest struct {
 	QuotedMessageID identity.MessageID
 }
 
+// Button is one quick-reply button. Tapping it sends ID back as the user's
+// message, so a slash-command ID ("/trigger mention off") re-enters that command.
+type Button struct {
+	ID    string
+	Label string
+}
+
+// SendButtonsRequest sends Text with up to MaxButtons quick-reply buttons.
+type SendButtonsRequest struct {
+	Key      agent.Key
+	ActionID identity.ActionID
+	Text     string
+	Buttons  []Button
+}
+
+const MaxButtons = 10
+
 type SendTextResult struct {
 	ProviderReceipt string
 }

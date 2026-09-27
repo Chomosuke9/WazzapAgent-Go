@@ -2,6 +2,8 @@ package hypermeow
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,7 +40,7 @@ func ignoredNativeReason(event *events.Message) string {
 	if event.IsEdit {
 		return "edited_message"
 	}
-	if event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil {
+	if text, _ := buttonReply(event.Message); event.Message.GetConversation() == "" && event.Message.GetExtendedTextMessage().GetText() == "" && event.Message.GetStickerMessage() == nil && text == "" {
 		return "unsupported_content"
 	}
 	return "invalid_metadata"
@@ -48,14 +50,18 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 	if event == nil || event.Message == nil || event.IsEdit {
 		return conversation.IncomingCandidate{}, false
 	}
-	text := event.Message.GetConversation()
+	// A button tap routes by its ID before anything else, so a
+	// "/command args" button re-enters its command like typed text.
+	text, contextInfo := buttonReply(event.Message)
 	extended := event.Message.GetExtendedTextMessage()
-	if text == "" && extended != nil {
-		text = extended.GetText()
-	}
-	contextInfo := (*waE2E.ContextInfo)(nil)
-	if extended != nil {
-		contextInfo = extended.GetContextInfo()
+	if text == "" {
+		text = event.Message.GetConversation()
+		if text == "" && extended != nil {
+			text = extended.GetText()
+		}
+		if extended != nil {
+			contextInfo = extended.GetContextInfo()
+		}
 	}
 	if text == "" {
 		if sticker := event.Message.GetStickerMessage(); sticker != nil {
@@ -144,6 +150,37 @@ func (normalizer *messageNormalizer) normalizeMessage(ctx context.Context, event
 		OccurredAt:                event.Info.Timestamp.UTC(),
 		ReceivedAt:                time.Now().UTC(),
 	}, true
+}
+
+// buttonReply extracts a tap on a list, buttons, template, or native-flow
+// message. Slash-command IDs become the message text; any other ID yields the
+// label the user saw, so the conversation reads naturally.
+func buttonReply(message *waE2E.Message) (string, *waE2E.ContextInfo) {
+	pick := func(id, label string) string {
+		if strings.HasPrefix(id, "/") || strings.TrimSpace(label) == "" {
+			return id
+		}
+		return label
+	}
+	// Protobuf getters are nil-safe, so each chain is empty when absent.
+	if list := message.GetListResponseMessage(); list.GetSingleSelectReply().GetSelectedRowID() != "" {
+		return pick(list.GetSingleSelectReply().GetSelectedRowID(), list.GetTitle()), list.GetContextInfo()
+	}
+	if buttons := message.GetButtonsResponseMessage(); buttons.GetSelectedButtonID() != "" {
+		return pick(buttons.GetSelectedButtonID(), buttons.GetSelectedDisplayText()), buttons.GetContextInfo()
+	}
+	if template := message.GetTemplateButtonReplyMessage(); template.GetSelectedID() != "" {
+		return pick(template.GetSelectedID(), template.GetSelectedDisplayText()), template.GetContextInfo()
+	}
+	interactive := message.GetInteractiveResponseMessage()
+	if raw := interactive.GetNativeFlowResponseMessage().GetParamsJSON(); raw != "" {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(raw), &params); err == nil && params["id"] != nil {
+			// The id is usually a string, but numeric ids are valid too.
+			return pick(fmt.Sprint(params["id"]), interactive.GetBody().GetText()), interactive.GetContextInfo()
+		}
+	}
+	return "", nil
 }
 
 func (normalizer *messageNormalizer) quotedMessageFromMe(participant string) *bool {

@@ -6,13 +6,16 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	inboundcommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
 )
 
-// The /group handler discovers the port by type assertion, so a drifted method
-// set would only fail at runtime without this guard.
-var _ inboundcommands.GroupModerator = (*Adapter)(nil)
+// compose wires the adapter into command.Platform; keep the port method sets
+// in sync with the adapter.
+var (
+	_ command.GroupModerator = (*Adapter)(nil)
+	_ command.ButtonSender   = (*Adapter)(nil)
+)
 
 type muteTargets struct {
 	staticTargets

@@ -291,17 +291,17 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 	commandDescription := "No registered command is available for this invocation; use null."
 	if len(request.Commands) > 0 {
 		available := make([]string, 0, len(request.Commands))
-		descriptors := registry.Descriptors()
-		byName := make(map[string]command.Descriptor, len(descriptors))
-		for _, descriptor := range descriptors {
-			byName[string(descriptor.Name)] = descriptor
+		registered := registry.Commands()
+		byName := make(map[string]command.Command, len(registered))
+		for _, cmd := range registered {
+			byName[cmd.Name] = cmd
 		}
 		for _, name := range request.Commands {
-			descriptor, ok := byName[name]
+			cmd, ok := byName[name]
 			if !ok {
 				return nil, agent.NewError(agent.ErrorIntegrityFailure, "build model tools", fmt.Errorf("command is not registered"))
 			}
-			available = append(available, fmt.Sprintf("/%s - %s", name, descriptor.Description))
+			available = append(available, fmt.Sprintf("/%s - %s", name, cmd.Description))
 		}
 		commandDescription = "Each item must be one complete registered command, with or without the initial slash. Available commands: " + strings.Join(available, "; ")
 	}

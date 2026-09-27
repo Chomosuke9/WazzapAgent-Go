@@ -14,6 +14,7 @@ import (
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
 	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/fallback"
@@ -189,7 +190,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 			InvokeEvents: agentLogs, Clock: agent.SystemClock{},
 		})
 	})
-	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, waAdapter, application.metrics, agent.SystemClock{})
+	commandPlatform := command.Platform{Text: waAdapter, Buttons: waAdapter, Group: waAdapter}
+	modelCommands, err := inbound.NewModelCommandExecutor(factory, gate, commandPlatform, application.metrics, agent.SystemClock{})
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +207,11 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	commandHandler, err := inbound.NewCommandHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, waAdapter)
+	commandHandler, err := inbound.NewCommandHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform)
 	if err != nil {
 		return nil, err
 	}
-	aiHandler, err := inbound.NewAIHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, waAdapter, inbound.BatchOptions{
+	aiHandler, err := inbound.NewAIHandler(store.Inbound(), registry, gate, commandResponses, application.metrics, inbound.BatchOptions{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(), Clock: agent.SystemClock{},
 		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter,
 	})

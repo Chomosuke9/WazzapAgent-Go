@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -299,6 +300,37 @@ func (config *Config) SetTriggers(ctx context.Context, expected ConfigVersion, v
 	})
 }
 
+// Update applies change to a copy of the current values and commits the
+// result as one versioned write. The changed fields reported to observers are
+// derived from the difference, so callers do not have to name them.
+func (config *Config) Update(ctx context.Context, expected ConfigVersion, change func(*ConfigValues)) (ConfigSnapshot, error) {
+	if change == nil {
+		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "update config", fmt.Errorf("change is required"))
+	}
+	return config.mutate(ctx, expected, nil, change)
+}
+
+// changedConfigFields lists the fields that differ between two value sets.
+func changedConfigFields(before, after ConfigValues) []ConfigField {
+	var fields []ConfigField
+	if before.Model != after.Model {
+		fields = append(fields, ConfigFieldModel)
+	}
+	if before.Prompt != after.Prompt {
+		fields = append(fields, ConfigFieldPrompt)
+	}
+	if !reflect.DeepEqual(before.PromptOverride, after.PromptOverride) {
+		fields = append(fields, ConfigFieldPromptOverride)
+	}
+	if !reflect.DeepEqual(before.Permission, after.Permission) {
+		fields = append(fields, ConfigFieldPermission)
+	}
+	if before.Triggers != after.Triggers {
+		fields = append(fields, ConfigFieldTriggers)
+	}
+	return fields
+}
+
 func (config *Config) mutate(
 	ctx context.Context,
 	expected ConfigVersion,
@@ -317,6 +349,9 @@ func (config *Config) mutate(
 	}
 	values := current.Values()
 	change(&values)
+	if fields == nil {
+		fields = changedConfigFields(current.Values(), values)
+	}
 	if err := validateConfigValues(values); err != nil {
 		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "mutate config", err)
 	}

@@ -1,206 +1,147 @@
-// Package command owns declarative slash-command identity, parsing, permission
-// evaluation, and the narrow context passed to command handlers. It does not
-// import provider code.
 package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
-
-type Name string
 
 var tokenPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-type Adapter interface {
-	SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error)
-}
+// ErrDenied is wrapped by Dispatch when a command's Permission rejects the
+// sender, so a host can tell that apart from a permission error raised
+// while the command ran (for example the bot not being a group admin).
+var ErrDenied = errors.New("permission expression denied the command")
 
-type Handler func(context.Context, Context, Adapter) error
-
-// PermissionFacts is an alias for the policy facts accepted by the permission
-// DSL. Keeping the alias here lets command modules remain declarative while
-// trusted policy implementations own how facts are obtained.
-type PermissionFacts = policy.PermissionFacts
-
-type Descriptor struct {
-	Name        Name
-	Aliases     []string
-	Capability  policy.Capability
-	Permission  string
-	Description string
-	DeniedReply string
-	Handler     Handler
-}
-
+// Request is a parsed "/token args" message, resolved to a canonical name.
 type Request struct {
-	Name             Name
+	Name             string
 	Arguments        string
 	ArgumentsPresent bool
 }
 
-// Context contains the trusted application collaborators and permission facts
-// a command needs. Facts are produced by the policy boundary and are evaluated
-// again by Registry.Dispatch immediately before the handler runs. Command
-// handlers must not infer authority from message text or this context.
-type Context struct {
-	Agent    *agent.Agent
-	Snapshot agent.ConfigSnapshot
-	Message  conversation.IncomingMessage
-	Facts    PermissionFacts
-	Registry *Registry
-	Store    CommandStore
-	Observer Observer
-	Adapter  Adapter
-}
-
-type CommandStore interface {
-	MarkCommandHandled(context.Context, conversation.IncomingMessage) error
-	BeginPromptMutation(context.Context, conversation.IncomingMessage, PromptCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkPromptMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-	BeginPermissionMutation(context.Context, conversation.IncomingMessage, PermissionCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkPermissionMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-	BeginTriggerMutation(context.Context, conversation.IncomingMessage, TriggerCommand, agent.ConfigVersion) (PromptMutation, error)
-	MarkTriggerMutationApplied(context.Context, conversation.IncomingMessage, agent.ConfigVersion, agent.ConfigVersion) error
-}
-
-type Observer interface {
-	ObserveHistoryReset()
-}
-
+// Registry maps every command name and alias to its Command.
 type Registry struct {
-	descriptors map[Name]Descriptor
-	tokens      map[string]Name
+	commands map[string]Command
+	tokens   map[string]string
 }
 
-func NewRegistry(descriptors []Descriptor) (*Registry, error) {
-	if len(descriptors) == 0 {
+func NewRegistry(commands []Command) (*Registry, error) {
+	if len(commands) == 0 {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("at least one command is required"))
 	}
-	registry := &Registry{descriptors: make(map[Name]Descriptor, len(descriptors)), tokens: make(map[string]Name, len(descriptors)*2)}
-	for _, descriptor := range descriptors {
-		if !tokenPattern.MatchString(string(descriptor.Name)) || !descriptor.Capability.Valid() || strings.TrimSpace(descriptor.Permission) == "" {
-			return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("command name, capability, and permission are required"))
+	registry := &Registry{commands: make(map[string]Command, len(commands)), tokens: make(map[string]string, len(commands)*2)}
+	for _, cmd := range commands {
+		if !tokenPattern.MatchString(cmd.Name) || cmd.Run == nil || strings.TrimSpace(cmd.Permission) == "" {
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("command %q needs a lowercase name, a permission, and Run", cmd.Name))
 		}
-		descriptor.Permission = strings.TrimSpace(descriptor.Permission)
-		if err := ValidatePermission(descriptor.Permission); err != nil {
-			return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("permission for %q is invalid: %w", descriptor.Name, err))
+		cmd.Permission = strings.TrimSpace(cmd.Permission)
+		if err := ValidatePermission(cmd.Permission); err != nil {
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("permission for %q is invalid: %w", cmd.Name, err))
 		}
-		if _, exists := registry.descriptors[descriptor.Name]; exists {
-			return nil, agent.NewError(agent.ErrorConflict, "create command registry", fmt.Errorf("canonical command is duplicated"))
-		}
-		aliases := append([]string{string(descriptor.Name)}, descriptor.Aliases...)
-		copiedAliases := make([]string, 0, len(descriptor.Aliases))
-		for index, token := range aliases {
+		aliases := make([]string, 0, len(cmd.Aliases))
+		for index, token := range append([]string{cmd.Name}, cmd.Aliases...) {
 			token = strings.ToLower(strings.TrimSpace(token))
 			if !tokenPattern.MatchString(token) {
-				return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("command token is invalid"))
+				return nil, agent.NewError(agent.ErrorInvalidArgument, "create command registry", fmt.Errorf("command token %q is invalid", token))
 			}
-			if _, exists := registry.tokens[token]; exists {
-				return nil, agent.NewError(agent.ErrorConflict, "create command registry", fmt.Errorf("command token is duplicated"))
+			if owner, exists := registry.tokens[token]; exists {
+				return nil, agent.NewError(agent.ErrorConflict, "create command registry", fmt.Errorf("/%s is claimed by both %q and %q", token, owner, cmd.Name))
 			}
-			registry.tokens[token] = descriptor.Name
+			registry.tokens[token] = cmd.Name
 			if index > 0 {
-				copiedAliases = append(copiedAliases, token)
+				aliases = append(aliases, token)
 			}
 		}
-		descriptor.Aliases = copiedAliases
-		registry.descriptors[descriptor.Name] = descriptor
+		cmd.Aliases = aliases
+		registry.commands[cmd.Name] = cmd
 	}
 	return registry, nil
 }
 
 // Parse returns recognized=false for non-slash text and unknown slash tokens.
-// A recognized command remains recognized even when its arguments are invalid;
-// the command handler owns syntax feedback and must never fall through to AI.
-func (registry *Registry) Parse(text string) (request Request, descriptor Descriptor, recognized bool) {
+// A recognized command stays recognized even when its arguments are invalid:
+// the command owns syntax feedback and must never fall through to the AI.
+func (registry *Registry) Parse(text string) (request Request, cmd Command, recognized bool) {
 	if registry == nil || !strings.HasPrefix(text, "/") {
-		return Request{}, Descriptor{}, false
+		return Request{}, Command{}, false
 	}
-	remainder := strings.TrimPrefix(text, "/")
-	token, arguments, argumentsPresent := strings.Cut(remainder, " ")
-	if !argumentsPresent {
-		arguments = ""
-	}
-	canonical, found := registry.tokens[strings.ToLower(strings.TrimSpace(token))]
+	token, arguments, argumentsPresent := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+	name, found := registry.tokens[strings.ToLower(strings.TrimSpace(token))]
 	if !found {
-		return Request{}, Descriptor{}, false
+		return Request{}, Command{}, false
 	}
-	descriptor = registry.descriptors[canonical]
-	return Request{Name: canonical, Arguments: arguments, ArgumentsPresent: argumentsPresent}, descriptor, true
+	return Request{Name: name, Arguments: arguments, ArgumentsPresent: argumentsPresent}, registry.commands[name], true
 }
 
-// Dispatch invokes the handler attached to a registered request after
-// evaluating its declarative permission against the trusted invocation facts.
-// Aliases are normalized here as a defensive measure, although Parse already
-// returns a canonical request in the normal inbound path.
-func (registry *Registry) Dispatch(ctx context.Context, request Request, commandContext Context) error {
-	if registry == nil {
-		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch command", fmt.Errorf("command registry is nil"))
-	}
-	canonical, ok := registry.tokens[strings.ToLower(strings.TrimSpace(string(request.Name)))]
-	if !ok {
-		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch command", fmt.Errorf("command is not registered"))
-	}
-	request.Name = canonical
-	descriptor, ok := registry.descriptors[canonical]
-	if !ok || descriptor.Handler == nil {
-		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch command", fmt.Errorf("command handler is not registered"))
-	}
-	allowed, err := EvaluatePermission(descriptor.Permission, commandContext.Facts)
-	if err != nil {
-		return agent.NewError(agent.ErrorIntegrityFailure, "dispatch command", err)
-	}
-	if !allowed {
-		return agent.NewError(agent.ErrorPermissionDenied, "dispatch command", fmt.Errorf("permission expression denied command"))
-	}
-	return descriptor.Handler(ctx, commandContext, commandContext.Adapter)
-}
-
-// Allows evaluates the permission for a recognized request without invoking
-// its handler. It is useful when the caller needs to send a command-specific
-// denial reply while keeping the final check in Dispatch.
+// Allows evaluates a command's permission without running it.
 func (registry *Registry) Allows(request Request, facts PermissionFacts) (bool, error) {
-	if registry == nil {
-		return false, agent.NewError(agent.ErrorIntegrityFailure, "check command permission", fmt.Errorf("command registry is nil"))
+	cmd, err := registry.lookup(request.Name, "check command permission")
+	if err != nil {
+		return false, err
 	}
-	canonical, ok := registry.tokens[strings.ToLower(strings.TrimSpace(string(request.Name)))]
-	if !ok {
-		return false, agent.NewError(agent.ErrorIntegrityFailure, "check command permission", fmt.Errorf("command is not registered"))
-	}
-	descriptor, ok := registry.descriptors[canonical]
-	if !ok {
-		return false, agent.NewError(agent.ErrorIntegrityFailure, "check command permission", fmt.Errorf("command descriptor is not registered"))
-	}
-	allowed, err := EvaluatePermission(descriptor.Permission, facts)
+	allowed, err := EvaluatePermission(cmd.Permission, facts)
 	if err != nil {
 		return false, agent.NewError(agent.ErrorIntegrityFailure, "check command permission", err)
 	}
 	return allowed, nil
 }
 
-func (registry *Registry) Descriptors() []Descriptor {
+// Dispatch checks the command's permission, runs it, and marks the inbox
+// message handled once Run succeeds. A denied command returns an
+// ErrorPermissionDenied wrapping ErrDenied without running.
+func (registry *Registry) Dispatch(ctx context.Context, request Request, invocation Invocation) error {
+	cmd, err := registry.lookup(request.Name, "dispatch command")
+	if err != nil {
+		return err
+	}
+	allowed, err := registry.Allows(request, invocation.Facts)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return agent.NewError(agent.ErrorPermissionDenied, "dispatch command", fmt.Errorf("/%s: %w", cmd.Name, ErrDenied))
+	}
+	c := &Context{
+		Name: cmd.Name, Args: request.Arguments, HasArgs: request.ArgumentsPresent,
+		Message: invocation.Message, Facts: invocation.Facts, Agent: invocation.Agent, Config: invocation.Config,
+		registry: registry, invocation: invocation,
+	}
+	if err := cmd.Run(ctx, c); err != nil {
+		return err
+	}
+	if invocation.Store == nil {
+		return nil
+	}
+	return invocation.Store.MarkCommandHandled(ctx, invocation.Message)
+}
+
+// Commands returns every registered command, sorted by name.
+func (registry *Registry) Commands() []Command {
 	if registry == nil {
 		return nil
 	}
-	names := make([]Name, 0, len(registry.descriptors))
-	for name := range registry.descriptors {
-		names = append(names, name)
+	result := make([]Command, 0, len(registry.commands))
+	for _, cmd := range registry.commands {
+		cmd.Aliases = append([]string(nil), cmd.Aliases...)
+		result = append(result, cmd)
 	}
-	sort.Slice(names, func(left, right int) bool { return names[left] < names[right] })
-	result := make([]Descriptor, 0, len(names))
-	for _, name := range names {
-		descriptor := registry.descriptors[name]
-		descriptor.Aliases = append([]string(nil), descriptor.Aliases...)
-		result = append(result, descriptor)
-	}
+	sort.Slice(result, func(left, right int) bool { return result[left].Name < result[right].Name })
 	return result
+}
+
+func (registry *Registry) lookup(name, operation string) (Command, error) {
+	if registry == nil {
+		return Command{}, agent.NewError(agent.ErrorIntegrityFailure, operation, fmt.Errorf("command registry is nil"))
+	}
+	canonical, ok := registry.tokens[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return Command{}, agent.NewError(agent.ErrorIntegrityFailure, operation, fmt.Errorf("/%s is not registered", name))
+	}
+	return registry.commands[canonical], nil
 }
