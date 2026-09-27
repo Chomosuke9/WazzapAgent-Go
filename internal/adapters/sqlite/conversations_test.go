@@ -89,6 +89,7 @@ func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	scope := control.SessionScope{TenantID: tenantID, AccountID: accountID}
 	conversations, err := reader.ListBotConversations(ctx, scope, transcriptPageSize)
 	if err != nil || len(conversations) != 1 {
@@ -156,6 +157,7 @@ func TestConversationReaderLoadsPassiveGroupHistoryWithoutAgentConfig(t *testing
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	messages, err := reader.ListBotMessages(ctx, control.SessionScope{TenantID: tenantID, AccountID: accountID}, key.ChatID, transcriptPageSize)
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("read passive group transcript = %#v, err=%v", messages, err)
@@ -190,6 +192,7 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	t.Cleanup(func() { _ = reader.Close() })
 	scope := control.SessionScope{TenantID: tenantID, AccountID: accountID}
 	assertName := func(want string) {
 		t.Helper()
