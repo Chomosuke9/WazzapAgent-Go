@@ -51,12 +51,9 @@ type SettingsValuesDTO struct {
 	MessageDebounce string `json:"messageDebounce"`
 	MessageBurstCap uint32 `json:"messageBurstCap"`
 
-	AgentMaxLive             uint32 `json:"agentMaxLive"`
-	AgentIdleTTL             string `json:"agentIdleTTL"`
-	AgentConstructionTimeout string `json:"agentConstructionTimeout"`
-	ConnectTimeout           string `json:"connectTimeout"`
-	SendTimeout              string `json:"sendTimeout"`
-	ShutdownTimeout          string `json:"shutdownTimeout"`
+	ConnectTimeout  string `json:"connectTimeout"`
+	SendTimeout     string `json:"sendTimeout"`
+	ShutdownTimeout string `json:"shutdownTimeout"`
 
 	PolicyID       string `json:"policyID"`
 	PolicyRevision string `json:"policyRevision"`
@@ -275,9 +272,8 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		CommandQueue: settings.CommandQueue, CommandWorkers: settings.CommandWorkers,
 		AIQueue: settings.AIQueue, AIWorkers: settings.AIWorkers,
 		MessageDebounce: settings.MessageDebounce.String(), MessageBurstCap: settings.MessageBurstCap,
-		AgentMaxLive: settings.AgentMaxLive, AgentIdleTTL: settings.AgentIdleTTL.String(),
-		AgentConstructionTimeout: settings.AgentConstructionTimeout.String(), ConnectTimeout: settings.ConnectTimeout.String(),
-		SendTimeout: settings.SendTimeout.String(), ShutdownTimeout: settings.ShutdownTimeout.String(),
+		ConnectTimeout: settings.ConnectTimeout.String(),
+		SendTimeout:    settings.SendTimeout.String(), ShutdownTimeout: settings.ShutdownTimeout.String(),
 		PolicyID: settings.PolicyID, PolicyRevision: strconv.FormatUint(settings.PolicyRevision, 10),
 		LogLevel: settings.LogLevel, LogFormat: settings.LogFormat,
 		DataDir: settings.DataDir, EnvFile: settings.EnvFile, HTTPAddress: settings.HTTPAddress,
@@ -325,14 +321,6 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	if err != nil {
 		return config.Settings{}, err
 	}
-	settings.AgentIdleTTL, err = fieldDuration(values.AgentIdleTTL, "agentIdleTTL")
-	if err != nil {
-		return config.Settings{}, err
-	}
-	settings.AgentConstructionTimeout, err = fieldDuration(values.AgentConstructionTimeout, "agentConstructionTimeout")
-	if err != nil {
-		return config.Settings{}, err
-	}
 	settings.ConnectTimeout, err = fieldDuration(values.ConnectTimeout, "connectTimeout")
 	if err != nil {
 		return config.Settings{}, err
@@ -371,7 +359,6 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
 	settings.InboundQueue, settings.InboundWorkers, settings.CommandQueue, settings.CommandWorkers = values.InboundQueue, values.InboundWorkers, values.CommandQueue, values.CommandWorkers
 	settings.AIQueue, settings.AIWorkers, settings.MessageBurstCap = values.AIQueue, values.AIWorkers, values.MessageBurstCap
-	settings.AgentMaxLive = values.AgentMaxLive
 	settings.PolicyID, settings.LogLevel, settings.LogFormat = values.PolicyID, values.LogLevel, values.LogFormat
 	settings.DataDir, settings.EnvFile, settings.HTTPAddress, settings.PairingOutput = values.DataDir, values.EnvFile, values.HTTPAddress, values.PairingOutput
 	settings.NoColor, settings.ForceColor, settings.StartOnLaunch = values.NoColor, values.ForceColor, values.StartOnLaunch

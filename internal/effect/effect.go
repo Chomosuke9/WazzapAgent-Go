@@ -190,8 +190,9 @@ type Sender interface {
 	ExecuteEffect(context.Context, Stored) (providerReceipt string, err error)
 }
 
+// CommandExecutor runs a model-requested command. It authorizes nothing
+// itself beyond what the command registry's permission expression decides.
 type CommandExecutor interface {
-	AuthorizeCommandEffect(context.Context, Stored, RunCommand) error
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
@@ -252,12 +253,13 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if !dispatcher.sender.Ready() {
 		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
+	// A command is checked only by its registry permission expression when it
+	// runs; every other effect is checked against the model's capabilities.
+	_, isCommand := stored.Request.Effect.(RunCommand)
 	var authorizeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
+	if isCommand {
 		if dispatcher.commands == nil {
-			authorizeErr = agent.NewError(agent.ErrorNotReady, "authorize command effect", errors.New("command executor is not bound"))
-		} else {
-			authorizeErr = dispatcher.commands.AuthorizeCommandEffect(ctx, stored, command)
+			authorizeErr = agent.NewError(agent.ErrorNotReady, "dispatch command effect", errors.New("command executor is not bound"))
 		}
 	} else {
 		authorizeErr = dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
@@ -278,12 +280,16 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	}
 	var receipt string
 	var executeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
-		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, command)
+	if isCommand {
+		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, stored.Request.Effect.(RunCommand))
 	} else {
 		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
 	}
 	if executeErr != nil {
+		if isCommand && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
+			// The registry refused the command before it ran, so nothing happened.
+			return dispatcher.finalizePreExecution(stored, agent.ErrorPermissionDenied, executeErr)
+		}
 		if stored.Request.Effect.Durable() {
 			_ = dispatcher.store.MarkUnknown(context.Background(), ref, stored.Lease, agent.CodeOf(executeErr), dispatcher.clock.Now())
 			return agent.NewError(agent.ErrorUnknownOutcome, "dispatch effect", executeErr)

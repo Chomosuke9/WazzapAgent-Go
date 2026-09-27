@@ -47,14 +47,6 @@ func (runtime *conversationRuntime) close(ctx context.Context) error {
 			}
 		}
 	}
-	if runtime.registry != nil {
-		if err := runtime.registry.Close(ctx); err != nil {
-			joined = errors.Join(joined, err)
-			if cleanupTimedOut(ctx, err) {
-				return joined
-			}
-		}
-	}
 	storeCloseFailed := false
 	if runtime.store != nil {
 		if err := runtime.store.Checkpoint(ctx); err != nil {

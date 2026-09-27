@@ -3,10 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -109,21 +107,11 @@ const (
 
 func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMuteKick }
 
-// ModelToolCapabilities is the complete model-output capability set. Only
-// message.react becomes a provider tool; group capabilities authorize command
-// strings carried inside reply_message, never moderation function tools.
+// ModelToolCapabilities is the complete model-output capability set: the
+// react_to_message tool. Commands the model requests in reply_message are not
+// capabilities; the command registry's permission expression decides them.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	values := []Capability{"message.react", "group.close", "group.open", "group.description"}
-	if permission.ModerationLevel >= ModerationDelete {
-		values = append(values, "group.delete")
-	}
-	if permission.ModerationLevel >= ModerationDeleteMute {
-		values = append(values, "group.mute")
-	}
-	if permission.ModerationLevel >= ModerationDeleteMuteKick {
-		values = append(values, "group.kick")
-	}
-	result, _ := NewCapabilitySet(values...)
+	result, _ := NewCapabilitySet("message.react")
 	return result
 }
 
@@ -160,57 +148,22 @@ type ConfigStore interface {
 	CompareAndSwap(context.Context, Key, ConfigVersion, ConfigValues) (ConfigSnapshot, error)
 }
 
-type ConfigField uint8
-
-const (
-	ConfigFieldModel ConfigField = iota + 1
-	ConfigFieldPrompt
-	ConfigFieldPromptOverride
-	ConfigFieldPermission
-	ConfigFieldTriggers
-)
-
-type ConfigChanged struct {
-	Key           Key
-	Previous      ConfigVersion
-	Current       ConfigVersion
-	ChangedFields []ConfigField
-	OccurredAt    time.Time
-}
-
-type ConfigEventSink interface{ TryPublish(ConfigChanged) bool }
-
 type Clock interface{ Now() time.Time }
 
 type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
-type DiscardConfigEvents struct{}
-
-func (DiscardConfigEvents) TryPublish(ConfigChanged) bool { return true }
-
+// Config reads and writes one chat's durable config. It keeps no copy: every
+// read goes to the store, and writes are compare-and-swap on the version.
 type Config struct {
-	key    Key
-	store  ConfigStore
-	events ConfigEventSink
-	clock  Clock
-
-	mu       sync.RWMutex
-	snapshot ConfigSnapshot
-	staleAt  ConfigVersion
+	key   Key
+	store ConfigStore
 }
 
-func newConfig(
-	ctx context.Context,
-	key Key,
-	defaults ConfigValues,
-	store ConfigStore,
-	events ConfigEventSink,
-	clock Clock,
-) (*Config, error) {
-	if store == nil || events == nil || clock == nil {
-		return nil, NewError(ErrorInvalidArgument, "create config", fmt.Errorf("store, events, and clock are required"))
+func newConfig(ctx context.Context, key Key, defaults ConfigValues, store ConfigStore) (*Config, error) {
+	if store == nil {
+		return nil, NewError(ErrorInvalidArgument, "create config", fmt.Errorf("store is required"))
 	}
 	if err := validateConfigValues(defaults); err != nil {
 		return nil, NewError(ErrorInvalidArgument, "create config", err)
@@ -222,21 +175,10 @@ func newConfig(
 	if err := validateConfigSnapshot(snapshot); err != nil {
 		return nil, NewError(ErrorIntegrityFailure, "create config", err)
 	}
-	return &Config{
-		key:      key,
-		store:    store,
-		events:   events,
-		clock:    clock,
-		snapshot: cloneConfigSnapshot(snapshot),
-	}, nil
+	return &Config{key: key, store: store}, nil
 }
 
-func (config *Config) Snapshot() ConfigSnapshot {
-	config.mu.RLock()
-	defer config.mu.RUnlock()
-	return cloneConfigSnapshot(config.snapshot)
-}
-
+// Refresh returns the chat's current durable config.
 func (config *Config) Refresh(ctx context.Context) (ConfigSnapshot, error) {
 	loaded, err := config.store.Load(ctx, config.key)
 	if err != nil {
@@ -245,153 +187,63 @@ func (config *Config) Refresh(ctx context.Context) (ConfigSnapshot, error) {
 	if err := validateConfigSnapshot(loaded); err != nil {
 		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "refresh config", err)
 	}
-
-	config.mu.Lock()
-	defer config.mu.Unlock()
-	if loaded.Version < config.snapshot.Version {
-		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "refresh config", fmt.Errorf("durable config version regressed"))
-	}
-	if loaded.Version == config.snapshot.Version && !configSnapshotsEqual(loaded, config.snapshot) {
-		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "refresh config", fmt.Errorf("config values changed without a version increment"))
-	}
-	if loaded.Version > config.snapshot.Version {
-		config.snapshot = cloneConfigSnapshot(loaded)
-	}
-	if config.staleAt <= config.snapshot.Version {
-		config.staleAt = 0
-	}
-	return cloneConfigSnapshot(config.snapshot), nil
+	return loaded, nil
 }
 
 func (config *Config) SetModel(ctx context.Context, expected ConfigVersion, value ModelConfig) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldModel}, func(values *ConfigValues) {
-		values.Model = value
-	})
+	return config.Update(ctx, expected, func(values *ConfigValues) { values.Model = value })
 }
 
 func (config *Config) SetPrompt(ctx context.Context, expected ConfigVersion, value string) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldPrompt}, func(values *ConfigValues) {
-		values.Prompt = value
-	})
+	return config.Update(ctx, expected, func(values *ConfigValues) { values.Prompt = value })
 }
 
 func (config *Config) SetPromptOverride(ctx context.Context, expected ConfigVersion, value PromptOverride) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldPromptOverride}, func(values *ConfigValues) {
+	return config.Update(ctx, expected, func(values *ConfigValues) {
 		copyOverride := value
 		values.PromptOverride = &copyOverride
 	})
 }
 
 func (config *Config) ClearPromptOverride(ctx context.Context, expected ConfigVersion) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldPromptOverride}, func(values *ConfigValues) {
-		values.PromptOverride = nil
-	})
+	return config.Update(ctx, expected, func(values *ConfigValues) { values.PromptOverride = nil })
 }
 
 func (config *Config) SetPermission(ctx context.Context, expected ConfigVersion, value PermissionConfig) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldPermission}, func(values *ConfigValues) {
-		values.Permission = value
-	})
+	return config.Update(ctx, expected, func(values *ConfigValues) { values.Permission = value })
 }
 
 func (config *Config) SetTriggers(ctx context.Context, expected ConfigVersion, value TriggerConfig) (ConfigSnapshot, error) {
-	return config.mutate(ctx, expected, []ConfigField{ConfigFieldTriggers}, func(values *ConfigValues) {
-		values.Triggers = value
-	})
+	return config.Update(ctx, expected, func(values *ConfigValues) { values.Triggers = value })
 }
 
-// Update applies change to a copy of the current values and commits the
-// result as one versioned write. The changed fields reported to observers are
-// derived from the difference, so callers do not have to name them.
+// Update applies change to the values at version expected and commits the
+// result as the next version. It fails with ErrorConflict if the stored
+// version is no longer expected.
 func (config *Config) Update(ctx context.Context, expected ConfigVersion, change func(*ConfigValues)) (ConfigSnapshot, error) {
-	if change == nil {
-		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "update config", fmt.Errorf("change is required"))
+	if expected == 0 || change == nil {
+		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "update config", fmt.Errorf("expected version and change are required"))
 	}
-	return config.mutate(ctx, expected, nil, change)
-}
-
-// changedConfigFields lists the fields that differ between two value sets.
-func changedConfigFields(before, after ConfigValues) []ConfigField {
-	var fields []ConfigField
-	if before.Model != after.Model {
-		fields = append(fields, ConfigFieldModel)
+	current, err := config.Refresh(ctx)
+	if err != nil {
+		return ConfigSnapshot{}, err
 	}
-	if before.Prompt != after.Prompt {
-		fields = append(fields, ConfigFieldPrompt)
-	}
-	if !reflect.DeepEqual(before.PromptOverride, after.PromptOverride) {
-		fields = append(fields, ConfigFieldPromptOverride)
-	}
-	if !reflect.DeepEqual(before.Permission, after.Permission) {
-		fields = append(fields, ConfigFieldPermission)
-	}
-	if before.Triggers != after.Triggers {
-		fields = append(fields, ConfigFieldTriggers)
-	}
-	return fields
-}
-
-func (config *Config) mutate(
-	ctx context.Context,
-	expected ConfigVersion,
-	fields []ConfigField,
-	change func(*ConfigValues),
-) (ConfigSnapshot, error) {
-	if expected == 0 {
-		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "mutate config", fmt.Errorf("expected version is required"))
-	}
-
-	config.mu.RLock()
-	current := cloneConfigSnapshot(config.snapshot)
-	config.mu.RUnlock()
 	if current.Version != expected {
-		return ConfigSnapshot{}, NewError(ErrorConflict, "mutate config", fmt.Errorf("stale config version"))
+		return ConfigSnapshot{}, NewError(ErrorConflict, "update config", fmt.Errorf("stale config version"))
 	}
 	values := current.Values()
 	change(&values)
-	if fields == nil {
-		fields = changedConfigFields(current.Values(), values)
-	}
 	if err := validateConfigValues(values); err != nil {
-		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "mutate config", err)
+		return ConfigSnapshot{}, NewError(ErrorInvalidArgument, "update config", err)
 	}
 	committed, err := config.store.CompareAndSwap(ctx, config.key, expected, cloneConfigValues(values))
 	if err != nil {
-		return ConfigSnapshot{}, NewError(ErrorStorageFailure, "mutate config", err)
-	}
-	if committed.Version != expected+1 || committed.Version == 0 {
-		return ConfigSnapshot{}, Errorf(ErrorIntegrityFailure, "mutate config", "store returned nonsequential version")
+		return ConfigSnapshot{}, NewError(ErrorStorageFailure, "update config", err)
 	}
 	if err := validateConfigSnapshot(committed); err != nil {
-		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "mutate config", err)
+		return ConfigSnapshot{}, NewError(ErrorIntegrityFailure, "update config", err)
 	}
-
-	config.mu.Lock()
-	if committed.Version > config.snapshot.Version {
-		config.snapshot = cloneConfigSnapshot(committed)
-	}
-	if config.staleAt <= config.snapshot.Version {
-		config.staleAt = 0
-	}
-	config.mu.Unlock()
-
-	event := ConfigChanged{
-		Key:           config.key,
-		Previous:      expected,
-		Current:       committed.Version,
-		ChangedFields: append([]ConfigField(nil), fields...),
-		OccurredAt:    config.clock.Now(),
-	}
-	config.events.TryPublish(event)
-	return cloneConfigSnapshot(committed), nil
-}
-
-func (config *Config) markStale(version ConfigVersion) {
-	config.mu.Lock()
-	if version > config.staleAt {
-		config.staleAt = version
-	}
-	config.mu.Unlock()
+	return committed, nil
 }
 
 func (snapshot ConfigSnapshot) Values() ConfigValues {
@@ -453,12 +305,6 @@ func cloneConfigValues(values ConfigValues) ConfigValues {
 	return values
 }
 
-func cloneConfigSnapshot(snapshot ConfigSnapshot) ConfigSnapshot {
-	snapshot.PromptOverride = clonePromptOverride(snapshot.PromptOverride)
-	snapshot.Permission = clonePermissionConfig(snapshot.Permission)
-	return snapshot
-}
-
 func clonePermissionConfig(value PermissionConfig) PermissionConfig {
 	return value
 }
@@ -469,16 +315,4 @@ func clonePromptOverride(value *PromptOverride) *PromptOverride {
 	}
 	copyValue := *value
 	return &copyValue
-}
-
-func configSnapshotsEqual(left, right ConfigSnapshot) bool {
-	if left.Version != right.Version || left.Model != right.Model || left.Prompt != right.Prompt ||
-		left.Permission.PolicyID != right.Permission.PolicyID || left.Permission.Revision != right.Permission.Revision ||
-		left.Permission.ModerationLevel != right.Permission.ModerationLevel || left.Triggers != right.Triggers {
-		return false
-	}
-	if left.PromptOverride == nil || right.PromptOverride == nil {
-		return left.PromptOverride == nil && right.PromptOverride == nil
-	}
-	return *left.PromptOverride == *right.PromptOverride
 }

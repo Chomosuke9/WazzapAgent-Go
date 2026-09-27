@@ -65,28 +65,6 @@ func TestGroupEffectRequiresInboundAdminRequester(t *testing.T) {
 	}
 }
 
-func TestModelCapabilitiesUseOneGroupAuthorityObservation(t *testing.T) {
-	key := fixedEffectKey(t)
-	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
-	permission := agent.PermissionConfig{PolicyID: policyID, Revision: 1, ModerationLevel: agent.ModerationDeleteMuteKick}
-	configs := &fixedConfigReader{snapshot: agent.ConfigSnapshot{Version: 1, Permission: permission}}
-	authority := &fixedAuthority{value: policy.ChatAuthority{
-		ChatKind: conversation.ChatGroup, ActorIsAdmin: true, BotIsAdmin: true, ObservedAt: time.Now().UTC().UnixMilli(),
-	}}
-	gate, err := policy.NewFixedGate(policyID, 1, configs, fixedGroupChatAccess{}, authority, "", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	message := fixedInvocationMessage(t, key, conversation.ChatGroup, "help")
-	capabilities, err := gate.ModelCapabilitiesForMessage(context.Background(), message, permission)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if authority.calls != 1 || !capabilities.Has("message.react") {
-		t.Fatalf("authority calls = %d, capabilities = %v", authority.calls, capabilities)
-	}
-}
-
 func TestFixedGateUsesPerChatInvocationTriggers(t *testing.T) {
 	key := fixedEffectKey(t)
 	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
