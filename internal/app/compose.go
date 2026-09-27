@@ -27,7 +27,6 @@ const (
 	generationLeaseMargin = 30 * time.Second
 	actionLeaseMargin     = 10 * time.Second
 	maintenanceInterval   = time.Hour
-	terminalContentAge    = 24 * time.Hour
 	terminalRetentionAge  = 30 * 24 * time.Hour
 )
 
@@ -236,7 +235,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	maintenanceWorker, err := maintenance.NewWorkerWithHistory(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalContentAge, terminalRetentionAge, 500,
+	maintenanceWorker, err := maintenance.NewWorker(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalRetentionAge, 500,
 		agent.RetentionPolicy{KeepLatest: application.config.HistoryKeepLatest(), MaxAge: application.config.HistoryMaxAge()})
 	if err != nil {
 		return nil, err

@@ -156,6 +156,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 // ledger has not recorded yet. Each file runs in its own BEGIN IMMEDIATE
 // transaction and the ledger is re-read inside it, so two handles on the same
 // file (the agent store and the UI reader) cannot apply a migration twice.
+// Foreign keys are off while a migration runs, as SQLite requires for table
+// rebuilds, and foreign_key_check must pass before it commits.
 func applyMigrations(ctx context.Context, db *sql.DB, files embed.FS, dir string) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -201,6 +203,10 @@ func applyMigration(ctx context.Context, db *sql.DB, version int, name string, c
 		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
 	}
 	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
+	}
+	defer conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "begin migration", err)
 	}
@@ -228,6 +234,13 @@ func applyMigration(ctx context.Context, db *sql.DB, version int, name string, c
 		version, name, checksum, time.Now().UTC().UnixMilli(),
 	); err != nil {
 		return fail("record migration", err)
+	}
+	var violation string
+	switch err := conn.QueryRowContext(ctx, "SELECT \"table\" FROM pragma_foreign_key_check LIMIT 1").Scan(&violation); {
+	case err == nil:
+		return fail("check migration foreign keys", fmt.Errorf("foreign key violation in %s", violation))
+	case !errors.Is(err, sql.ErrNoRows):
+		return fail("check migration foreign keys", err)
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fail("commit migration", err)

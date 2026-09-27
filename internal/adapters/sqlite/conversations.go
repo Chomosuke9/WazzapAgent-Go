@@ -87,7 +87,7 @@ func (reader *ConversationReader) ListBotConversations(ctx context.Context, scop
 	       CASE WHEN EXISTS (
 	           SELECT 1 FROM typed_effects e
 	           WHERE e.tenant_id = c.tenant_id AND e.account_id = c.account_id AND e.chat_id = c.id
-	             AND e.target_message_id = last_entry.message_id AND e.effect_kind = ? AND e.state = ?
+	             AND e.target_message_id = last_entry.message_id AND e.kind = ? AND e.state = ?
 	       ) THEN 'Message deleted on WhatsApp' ELSE last_entry.content_text END,
 	       last_entry.message_id, last_entry.role, last_entry.created_at_ms, l.message_count
 	FROM latest l
@@ -285,7 +285,7 @@ func deletedMessageIDs(ctx context.Context, db *sql.DB, scope control.SessionSco
 		args = append(args, message.ID.String())
 	}
 	rows, err := db.QueryContext(ctx, `SELECT target_message_id FROM typed_effects
-	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_kind = ? AND state = ?
+	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND kind = ? AND state = ?
 	      AND target_message_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, transcriptStorageError("query deleted message markers", err)

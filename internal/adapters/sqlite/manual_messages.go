@@ -54,7 +54,7 @@ func (store *Store) IsMessageDeleted(ctx context.Context, key agent.Key, message
 	err := store.db.QueryRowContext(ctx, `SELECT EXISTS(
 	    SELECT 1 FROM typed_effects
 	    WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND target_message_id = ?
-	      AND effect_kind = ? AND state = ?
+	      AND kind = ? AND state = ?
 	)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), messageID.String(),
 		uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded),

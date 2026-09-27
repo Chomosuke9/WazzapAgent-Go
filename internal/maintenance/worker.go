@@ -12,7 +12,6 @@ import (
 type Request struct {
 	TenantID          identity.TenantID
 	Now               time.Time
-	ScrubBefore       time.Time
 	DeleteBefore      time.Time
 	HistoryBefore     time.Time
 	HistoryKeepLatest uint32
@@ -20,10 +19,8 @@ type Request struct {
 }
 
 type Result struct {
-	InboundScrubbed int64
-	ActionsScrubbed int64
-	TurnsDeleted    int64
-	HistoryRemoved  int64
+	TurnsDeleted   int64
+	HistoryRemoved int64
 }
 
 type Store interface {
@@ -35,36 +32,24 @@ type Worker struct {
 	store         Store
 	clock         agent.Clock
 	interval      time.Duration
-	scrubAge      time.Duration
 	retainAge     time.Duration
 	batchSize     uint32
 	historyPolicy agent.RetentionPolicy
 }
 
+// NewWorker deletes finished operational rows older than retainAge and, when
+// historyPolicy is set, trims history beyond its keep-latest/max-age bounds.
 func NewWorker(
 	tenantID identity.TenantID,
 	store Store,
 	clock agent.Clock,
 	interval time.Duration,
-	scrubAge time.Duration,
-	retainAge time.Duration,
-	batchSize uint32,
-) (*Worker, error) {
-	return NewWorkerWithHistory(tenantID, store, clock, interval, scrubAge, retainAge, batchSize, agent.RetentionPolicy{})
-}
-
-func NewWorkerWithHistory(
-	tenantID identity.TenantID,
-	store Store,
-	clock agent.Clock,
-	interval time.Duration,
-	scrubAge time.Duration,
 	retainAge time.Duration,
 	batchSize uint32,
 	historyPolicy agent.RetentionPolicy,
 ) (*Worker, error) {
-	if tenantID.IsZero() || store == nil || clock == nil || interval <= 0 || scrubAge <= 0 ||
-		retainAge <= scrubAge || batchSize == 0 || batchSize > 10_000 {
+	if tenantID.IsZero() || store == nil || clock == nil || interval <= 0 || retainAge <= 0 ||
+		batchSize == 0 || batchSize > 10_000 {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create maintenance worker", fmt.Errorf("valid identity, dependencies, retention, and batch size are required"))
 	}
 	if (historyPolicy.KeepLatest == 0) != (historyPolicy.MaxAge == 0) || historyPolicy.MaxAge < 0 {
@@ -72,8 +57,7 @@ func NewWorkerWithHistory(
 	}
 	return &Worker{
 		tenantID: tenantID, store: store, clock: clock, interval: interval,
-		scrubAge: scrubAge, retainAge: retainAge, batchSize: batchSize,
-		historyPolicy: historyPolicy,
+		retainAge: retainAge, batchSize: batchSize, historyPolicy: historyPolicy,
 	}, nil
 }
 
@@ -98,7 +82,7 @@ func (worker *Worker) Run(ctx context.Context) error {
 func (worker *Worker) maintain(ctx context.Context) (Result, error) {
 	now := worker.clock.Now()
 	request := Request{
-		TenantID: worker.tenantID, Now: now, ScrubBefore: now.Add(-worker.scrubAge),
+		TenantID: worker.tenantID, Now: now,
 		DeleteBefore: now.Add(-worker.retainAge), BatchSize: worker.batchSize,
 	}
 	if worker.historyPolicy.MaxAge > 0 {

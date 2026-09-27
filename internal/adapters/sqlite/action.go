@@ -1,7 +1,6 @@
 package sqlite
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -98,10 +97,10 @@ func (store *ActionStore) Claim(ctx context.Context, ref agent.DispatchRef, now 
 		return action.StoredAction{}, agent.NewError(agent.ErrorConflict, "claim outbound action", errors.New("action changed concurrently"))
 	}
 	turnResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET turn_state = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ?
         AND turn_state IN (?, ?)`,
 		uint8(agent.TurnDeliveryPending), nowMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), stored.InvocationID.String(),
 		uint8(agent.TurnResponsePlanned), uint8(agent.TurnDeliveryPending),
 	)
 	if err := requireOne(turnResult, err, "mark turn delivery pending"); err != nil {
@@ -213,7 +212,7 @@ func (store *ActionStore) Complete(
 	if err := requireOne(result, err, "complete outbound action"); err != nil {
 		return err
 	}
-	if err := updateReceiptAndTurn(ctx, tx, ref, agent.DeliverySucceeded, agent.TurnSucceeded, providerReceipt, "", now.UnixMilli(), now.UnixMilli()); err != nil {
+	if err := updateTurnDelivery(ctx, tx, ref, agent.DeliverySucceeded, agent.TurnSucceeded, "", now.UnixMilli()); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -259,7 +258,7 @@ func (store *ActionStore) Release(
 	if err := requireOne(result, err, "release outbound action"); err != nil {
 		return err
 	}
-	if err := updateReceiptAndTurn(ctx, tx, ref, delivery, turnState, "", code, nullableCompleted(retryable, nowMS), nowMS); err != nil {
+	if err := updateTurnDelivery(ctx, tx, ref, delivery, turnState, code, nowMS); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -316,20 +315,18 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 		responseValue   string
 		replyToValue    sql.NullString
 		text            string
-		payloadDigest   []byte
 		state           int64
 		lease           sql.NullString
 		leaseUntil      sql.NullInt64
 		retryAfter      sql.NullInt64
 		completedAt     sql.NullInt64
 		providerReceipt sql.NullString
-		contentScrubbed int64
 	)
-	err := query.QueryRowContext(ctx, `SELECT invocation_id, response_id, text, payload_digest, state, action_lease,
-	        action_lease_until_ms, retry_after_ms, completed_at_ms, provider_receipt, content_scrubbed, reply_to_message_id
+	err := query.QueryRowContext(ctx, `SELECT invocation_id, response_id, text, state, action_lease,
+	        action_lease_until_ms, retry_after_ms, completed_at_ms, provider_receipt, reply_to_message_id
       FROM outbound_actions WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-	).Scan(&invocationValue, &responseValue, &text, &payloadDigest, &state, &lease, &leaseUntil, &retryAfter, &completedAt, &providerReceipt, &contentScrubbed, &replyToValue)
+	).Scan(&invocationValue, &responseValue, &text, &state, &lease, &leaseUntil, &retryAfter, &completedAt, &providerReceipt, &replyToValue)
 	if err != nil {
 		return action.StoredAction{}, leaseUntil, retryAfter, err
 	}
@@ -347,15 +344,6 @@ func loadAction(ctx context.Context, query actionQuerier, ref agent.DispatchRef)
 		if err != nil {
 			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound reply target", err)
 		}
-	}
-	if contentScrubbed == 0 {
-		wantedDigest := digestAction(ref.Key, ref.ActionID, text)
-		if len(payloadDigest) != len(wantedDigest) || !bytes.Equal(payloadDigest, wantedDigest[:]) {
-			return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", errors.New("payload digest mismatch"))
-		}
-	} else if contentScrubbed != 1 || text != "" || len(payloadDigest) != 32 ||
-		(action.State(state) != action.StateSucceeded && action.State(state) != action.StateFailedTerminal && action.State(state) != action.StateUnknownOutcome) {
-		return action.StoredAction{}, leaseUntil, retryAfter, agent.NewError(agent.ErrorIntegrityFailure, "decode outbound action", errors.New("invalid scrubbed action"))
 	}
 	stored := action.StoredAction{
 		Ref:              ref,
@@ -389,33 +377,28 @@ func markUnknownTx(ctx context.Context, tx *sql.Tx, stored action.StoredAction, 
 	if err := requireOne(result, err, "mark action unknown"); err != nil {
 		return err
 	}
-	return updateReceiptAndTurn(ctx, tx, stored.Ref, agent.DeliveryUnknownOutcome, agent.TurnUnknownOutcome, "", code, nowMS, nowMS)
+	return updateTurnDelivery(ctx, tx, stored.Ref, agent.DeliveryUnknownOutcome, agent.TurnUnknownOutcome, code, nowMS)
 }
 
-func updateReceiptAndTurn(
+// updateTurnDelivery moves the turn and the assistant history row to match a
+// reply's delivery outcome. The outbound_actions row is the source of truth;
+// these are the two views of it that callers read.
+func updateTurnDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 	ref agent.DispatchRef,
 	delivery agent.DeliveryStatus,
 	turnState agent.TurnState,
-	providerReceipt string,
 	code agent.ErrorCode,
-	completedAt any,
 	updatedAtMS int64,
 ) error {
-	receiptResult, err := tx.ExecContext(ctx, `UPDATE action_receipts SET
-        status = ?, provider_receipt = ?, error_code = ?, completed_at_ms = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?`,
-		uint8(delivery), nullableString(providerReceipt), nullableErrorCode(code), completedAt, updatedAtMS,
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
-	)
-	if err := requireOne(receiptResult, err, "update action receipt"); err != nil {
-		return err
-	}
 	turnResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        delivery_status = ?, turn_state = ?, last_error_code = ?, updated_at_ms = ?
-      WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?`,
-		uint8(delivery), uint8(turnState), nullableErrorCode(code), updatedAtMS,
+        turn_state = ?, last_error_code = ?, updated_at_ms = ?
+      WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
+        AND invocation_id = (SELECT invocation_id FROM outbound_actions
+          WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND action_id = ?)`,
+		uint8(turnState), nullableErrorCode(code), updatedAtMS,
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.ActionID.String(),
 	)
 	if err := requireOne(turnResult, err, "update turn delivery"); err != nil {

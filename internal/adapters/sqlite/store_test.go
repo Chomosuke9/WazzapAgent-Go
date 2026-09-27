@@ -20,7 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 18
+const wantMigrationCount = 19
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
@@ -519,7 +519,7 @@ func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
 	}
 	now := time.Now().UTC().Add(72 * time.Hour)
 	maintained, err := store.Maintain(ctx, maintenance.Request{
-		TenantID: key.TenantID, Now: now, ScrubBefore: now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: now,
 		DeleteBefore: now.Add(-48 * time.Hour), BatchSize: 100,
 	})
 	if err != nil || maintained.TurnsDeleted != 2 {
@@ -968,22 +968,15 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}
 	clock.now = clock.now.Add(25 * time.Hour)
 	maintained, err := store.Maintain(context.Background(), maintenance.Request{
-		TenantID: key.TenantID, Now: clock.now, ScrubBefore: clock.now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: clock.now,
 		DeleteBefore: clock.now.Add(-30 * 24 * time.Hour), BatchSize: 10,
 	})
-	if err != nil {
-		t.Fatalf("scrub terminal content: %v", err)
-	}
-	if maintained.InboundScrubbed != 1 || maintained.ActionsScrubbed != 1 || maintained.TurnsDeleted != 0 {
-		t.Fatalf("scrub result = %#v", maintained)
-	}
-	observed, err = actions.Claim(context.Background(), plan.Dispatch, clock.now)
-	if err != nil || observed.State != action.StateSucceeded || observed.Text != "" {
-		t.Fatalf("observe scrubbed terminal action = %#v, err=%v", observed, err)
+	if err != nil || maintained.TurnsDeleted != 0 {
+		t.Fatalf("young terminal turn was deleted = %#v, err=%v", maintained, err)
 	}
 	clock.now = clock.now.Add(30 * 24 * time.Hour)
 	maintained, err = store.Maintain(context.Background(), maintenance.Request{
-		TenantID: key.TenantID, Now: clock.now, ScrubBefore: clock.now.Add(-24 * time.Hour),
+		TenantID: key.TenantID, Now: clock.now,
 		DeleteBefore: clock.now.Add(-30 * 24 * time.Hour), BatchSize: 10,
 	})
 	if err != nil || maintained.TurnsDeleted != 1 {

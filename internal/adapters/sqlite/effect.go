@@ -1,9 +1,9 @@
 package sqlite
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,7 +19,7 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 	if err := request.Validate(); err != nil || now.IsZero() {
 		return effect.Stored{}, agent.NewError(agent.ErrorInvalidArgument, "plan typed effect", fmt.Errorf("valid request and current time are required"))
 	}
-	digest, err := effect.DigestPlan(request)
+	kind, target, payload, err := encodeEffect(request)
 	if err != nil {
 		return effect.Stored{}, err
 	}
@@ -36,17 +36,12 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 			return effect.Stored{}, err
 		}
 	}
-	principalParticipant, principalLID, principalInvocation := storedPrincipal(request.Principal)
-	target, emoji, presence, commandText := storedEffect(request.Effect)
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO typed_effects(
         tenant_id, account_id, chat_id, effect_id, invocation_id,
-        principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
-		effect_kind, target_message_id, emoji, presence_state, command_text, payload_digest, state,
-        created_at_ms, updated_at_ms
-	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		kind, target_message_id, payload, state, created_at_ms, updated_at_ms
+	  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.Ref.Key.TenantID.String(), request.Ref.Key.AccountID.String(), request.Ref.Key.ChatID.String(), request.Ref.EffectID.String(), request.InvocationID.String(),
-		uint8(request.Principal.Kind), principalParticipant, principalLID, principalInvocation,
-		uint8(request.Effect.Kind()), target, emoji, presence, commandText, digest[:], uint8(effect.StatePending), now.UTC().UnixMilli(), now.UTC().UnixMilli(),
+		kind, target, payload, uint8(effect.StatePending), now.UTC().UnixMilli(), now.UTC().UnixMilli(),
 	)
 	if err != nil {
 		return effect.Stored{}, storageError("insert typed effect", err)
@@ -60,8 +55,8 @@ func (store *EffectStore) Plan(ctx context.Context, request effect.PlanRequest, 
 		return effect.Stored{}, err
 	}
 	if changed == 0 {
-		storedDigest, digestErr := effect.DigestPlan(stored.Request)
-		if digestErr != nil || !bytes.Equal(digest[:], storedDigest[:]) {
+		_, _, storedPayload, encodeErr := encodeEffect(stored.Request)
+		if encodeErr != nil || storedPayload != payload || stored.Request.InvocationID != request.InvocationID {
 			return effect.Stored{}, agent.NewError(agent.ErrorConflict, "plan typed effect", errors.New("effect ID is already bound to another payload"))
 		}
 	}
@@ -195,14 +190,13 @@ func (store *EffectStore) ListRecoverableEffects(ctx context.Context, tenantID i
 				  AND inbound_events.chat_id = typed_effects.chat_id
 				  AND inbound_events.invocation_id = typed_effects.invocation_id
 				  AND inbound_events.turn_state = ?
-				  AND inbound_events.delivery_status = ?
-				  AND inbound_events.action_id IS NULL
 				  AND inbound_events.invocation_digest IS NOT NULL
+				  AND `+noOutboundAction("inbound_events")+`
 			)
 		)
       ORDER BY updated_at_ms, effect_id
       LIMIT ?`,
-		tenantID.String(), uint8(effect.StatePending), uint8(effect.StateClaimed), uint8(effect.StateExecuting), now.UTC().UnixMilli(), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded), limit,
+		tenantID.String(), uint8(effect.StatePending), uint8(effect.StateClaimed), uint8(effect.StateExecuting), now.UTC().UnixMilli(), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded), limit,
 	)
 	if err != nil {
 		return nil, storageError("list recoverable effects", err)
@@ -268,10 +262,10 @@ func modelEffectResponseDelivered(ctx context.Context, query effectQuerier, ref 
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ?
         AND invocation_id = (SELECT invocation_id FROM typed_effects
           WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?)
-		AND turn_state = ? AND delivery_status = ?
-		AND action_id IS NULL AND invocation_digest IS NOT NULL`,
+		AND turn_state = ? AND invocation_digest IS NOT NULL
+		AND `+noOutboundAction("inbound_events")+``,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(),
-		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(agent.TurnSucceeded), uint8(agent.DeliverySucceeded),
+		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(), uint8(agent.TurnSucceeded),
 	).Scan(&effectOnly)
 	if err != nil {
 		return false, storageError("read effect-only turn dependency", err)
@@ -403,34 +397,6 @@ func effectTarget(value effect.Effect) (identity.MessageID, bool) {
 	return identity.MessageID{}, false
 }
 
-func storedPrincipal(principal policy.Principal) (participantID, lid, invocationID any) {
-	switch principal.Kind {
-	case policy.PrincipalHuman:
-		return principal.ParticipantID.String(), principal.LID.String(), nil
-	case policy.PrincipalModel, policy.PrincipalRecovery:
-		return nil, nil, principal.InvocationID.String()
-	default:
-		return nil, nil, nil
-	}
-}
-
-func storedEffect(value effect.Effect) (target, emoji, presence, commandText any) {
-	switch typed := value.(type) {
-	case effect.React:
-		return typed.TargetMessageID.String(), typed.Emoji, nil, nil
-	case effect.DeleteMessage:
-		return typed.TargetMessageID.String(), nil, nil, nil
-	case effect.MarkRead:
-		return typed.TargetMessageID.String(), nil, nil, nil
-	case effect.SetChatPresence:
-		return nil, nil, string(typed.State), nil
-	case effect.RunCommand:
-		return nullableMessageID(typed.TargetMessageID), nil, nil, typed.Command
-	default:
-		return nil, nil, nil, nil
-	}
-}
-
 func nullableMessageID(value identity.MessageID) any {
 	if value.IsZero() {
 		return nil
@@ -442,22 +408,105 @@ type effectQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// effectPayload is the JSON stored in typed_effects.payload: who asked for
+// the effect and its kind-specific fields. Go validates it on decode.
+type effectPayload struct {
+	Principal   policy.PrincipalKind `json:"principal"`
+	Participant string               `json:"participant,omitempty"`
+	LID         string               `json:"lid,omitempty"`
+	Invocation  string               `json:"invocation,omitempty"`
+	Emoji       string               `json:"emoji,omitempty"`
+	Presence    string               `json:"presence,omitempty"`
+	Command     string               `json:"command,omitempty"`
+}
+
+// encodeEffect returns the kind, the queryable target column and the JSON
+// payload for request.
+func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
+	payload := effectPayload{Principal: request.Principal.Kind}
+	switch request.Principal.Kind {
+	case policy.PrincipalHuman:
+		payload.Participant, payload.LID = request.Principal.ParticipantID.String(), request.Principal.LID.String()
+	case policy.PrincipalModel, policy.PrincipalRecovery:
+		payload.Invocation = request.Principal.InvocationID.String()
+	}
+	var target identity.MessageID
+	switch typed := request.Effect.(type) {
+	case effect.React:
+		target, payload.Emoji = typed.TargetMessageID, typed.Emoji
+	case effect.DeleteMessage:
+		target = typed.TargetMessageID
+	case effect.MarkRead:
+		target = typed.TargetMessageID
+	case effect.SetChatPresence:
+		payload.Presence = string(typed.State)
+	case effect.RunCommand:
+		target, payload.Command = typed.TargetMessageID, typed.Command
+	default:
+		return 0, nil, "", agent.NewError(agent.ErrorInvalidArgument, "encode typed effect", errors.New("effect type is not supported"))
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, "", agent.NewError(agent.ErrorInternal, "encode typed effect", err)
+	}
+	return uint8(request.Effect.Kind()), nullableMessageID(target), string(encoded), nil
+}
+
+func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw string) (policy.Principal, effect.Effect, error) {
+	var payload effectPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
+	}
+	principal := policy.Principal{Kind: payload.Principal, TenantID: ref.Key.TenantID, AccountID: ref.Key.AccountID, ChatID: ref.Key.ChatID}
+	var err error
+	switch payload.Principal {
+	case policy.PrincipalHuman:
+		principal.ParticipantID, err = identity.ParseParticipantID(payload.Participant)
+		if err == nil {
+			principal.LID, err = identity.ParseLID(payload.LID)
+		}
+	case policy.PrincipalModel, policy.PrincipalRecovery:
+		principal.InvocationID, err = identity.ParseInvocationID(payload.Invocation)
+	}
+	if err != nil {
+		return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect principal", err)
+	}
+	var targetID identity.MessageID
+	if target.Valid {
+		if targetID, err = identity.ParseMessageID(target.String); err != nil {
+			return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect target", err)
+		}
+	}
+	var value effect.Effect
+	switch kind {
+	case effect.KindReact:
+		value = effect.React{TargetMessageID: targetID, Emoji: payload.Emoji}
+	case effect.KindDeleteMessage:
+		value = effect.DeleteMessage{TargetMessageID: targetID}
+	case effect.KindMarkRead:
+		value = effect.MarkRead{TargetMessageID: targetID}
+	case effect.KindSetChatPresence:
+		value = effect.SetChatPresence{State: effect.PresenceState(payload.Presence)}
+	case effect.KindRunCommand:
+		value = effect.RunCommand{Command: payload.Command, TargetMessageID: targetID}
+	default:
+		return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect kind is invalid"))
+	}
+	return principal, value, nil
+}
+
 func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effect.Stored, sql.NullInt64, error) {
 	var (
-		invocationValue                                         string
-		principalParticipant, principalLID, principalInvocation sql.NullString
-		principalKind, effectKind, state                        int64
-		target, emoji, presence, commandText, lease, receipt    sql.NullString
-		payloadDigest                                           []byte
-		completedAt, leaseUntil                                 sql.NullInt64
+		invocationValue, payload string
+		kind, state              int64
+		target, lease, receipt   sql.NullString
+		completedAt, leaseUntil  sql.NullInt64
 	)
-	err := query.QueryRowContext(ctx, `SELECT invocation_id, principal_kind, principal_participant_id, principal_lid, principal_invocation_id,
-		effect_kind, target_message_id, emoji, presence_state, command_text, payload_digest, state, effect_lease,
+	err := query.QueryRowContext(ctx, `SELECT invocation_id, kind, target_message_id, payload, state, effect_lease,
         effect_lease_until_ms, provider_receipt, completed_at_ms
       FROM typed_effects WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND effect_id = ?`,
 		ref.Key.TenantID.String(), ref.Key.AccountID.String(), ref.Key.ChatID.String(), ref.EffectID.String(),
-	).Scan(&invocationValue, &principalKind, &principalParticipant, &principalLID, &principalInvocation,
-		&effectKind, &target, &emoji, &presence, &commandText, &payloadDigest, &state, &lease, &leaseUntil, &receipt, &completedAt)
+	).Scan(&invocationValue, &kind, &target, &payload, &state, &lease, &leaseUntil, &receipt, &completedAt)
 	if err != nil {
 		return effect.Stored{}, leaseUntil, err
 	}
@@ -465,21 +514,13 @@ func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effec
 	if err != nil {
 		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
 	}
-	principal, err := decodeEffectPrincipal(ref.Key, policy.PrincipalKind(principalKind), principalParticipant, principalLID, principalInvocation)
+	principal, value, err := decodeEffect(ref, effect.Kind(kind), target, payload)
 	if err != nil {
 		return effect.Stored{}, leaseUntil, err
 	}
-	payload, err := decodeStoredEffect(effect.Kind(effectKind), target, emoji, presence, commandText)
-	if err != nil {
-		return effect.Stored{}, leaseUntil, err
-	}
-	stored := effect.Stored{Request: effect.PlanRequest{Ref: ref, InvocationID: invocationID, Principal: principal, Effect: payload}, State: effect.State(state), ProviderReceipt: receipt.String}
+	stored := effect.Stored{Request: effect.PlanRequest{Ref: ref, InvocationID: invocationID, Principal: principal, Effect: value}, State: effect.State(state), ProviderReceipt: receipt.String}
 	if err := stored.Request.Validate(); err != nil {
 		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", err)
-	}
-	wantedDigest, err := effect.DigestPlan(stored.Request)
-	if err != nil || len(payloadDigest) != len(wantedDigest) || !bytes.Equal(payloadDigest, wantedDigest[:]) {
-		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("payload digest mismatch"))
 	}
 	if stored.State < effect.StatePending || stored.State > effect.StateSkipped {
 		return effect.Stored{}, leaseUntil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect state is invalid"))
@@ -492,67 +533,6 @@ func loadEffect(ctx context.Context, query effectQuerier, ref effect.Ref) (effec
 		stored.CompletedAt = &value
 	}
 	return stored, leaseUntil, nil
-}
-
-func decodeEffectPrincipal(key agent.Key, kind policy.PrincipalKind, participant, lid, invocation sql.NullString) (policy.Principal, error) {
-	principal := policy.Principal{Kind: kind, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID}
-	var err error
-	switch kind {
-	case policy.PrincipalHuman:
-		principal.ParticipantID, err = identity.ParseParticipantID(participant.String)
-		if err == nil {
-			principal.LID, err = identity.ParseLID(lid.String)
-		}
-	case policy.PrincipalModel, policy.PrincipalRecovery:
-		principal.InvocationID, err = identity.ParseInvocationID(invocation.String)
-	case policy.PrincipalSystem:
-	default:
-		err = errors.New("principal kind is invalid")
-	}
-	if err != nil {
-		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect principal", err)
-	}
-	if err := principal.Validate(); err != nil {
-		return policy.Principal{}, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect principal", err)
-	}
-	return principal, nil
-}
-
-func decodeStoredEffect(kind effect.Kind, target, emoji, presence, commandText sql.NullString) (effect.Effect, error) {
-	switch kind {
-	case effect.KindReact:
-		messageID, err := identity.ParseMessageID(target.String)
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode reaction effect", err)
-		}
-		return effect.React{TargetMessageID: messageID, Emoji: emoji.String}, nil
-	case effect.KindDeleteMessage:
-		messageID, err := identity.ParseMessageID(target.String)
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode delete effect", err)
-		}
-		return effect.DeleteMessage{TargetMessageID: messageID}, nil
-	case effect.KindMarkRead:
-		messageID, err := identity.ParseMessageID(target.String)
-		if err != nil {
-			return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode mark-read effect", err)
-		}
-		return effect.MarkRead{TargetMessageID: messageID}, nil
-	case effect.KindSetChatPresence:
-		return effect.SetChatPresence{State: effect.PresenceState(presence.String)}, nil
-	case effect.KindRunCommand:
-		var messageID identity.MessageID
-		var err error
-		if target.Valid {
-			messageID, err = identity.ParseMessageID(target.String)
-			if err != nil {
-				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode group command effect", err)
-			}
-		}
-		return effect.RunCommand{Command: commandText.String, TargetMessageID: messageID}, nil
-	default:
-		return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect kind is invalid"))
-	}
 }
 
 func finishEffectTx(ctx context.Context, tx *sql.Tx, stored effect.Stored, state effect.State, code agent.ErrorCode, receipt string, nowMS int64) error {

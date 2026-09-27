@@ -22,7 +22,7 @@ func TestDeletedMessageIDsOnlyReadsVisiblePage(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.ExecContext(ctx, `CREATE TABLE typed_effects (
-		tenant_id TEXT, account_id TEXT, chat_id TEXT, effect_kind INTEGER,
+		tenant_id TEXT, account_id TEXT, chat_id TEXT, kind INTEGER,
 		state INTEGER, target_message_id TEXT)`); err != nil {
 		t.Fatal(err)
 	}

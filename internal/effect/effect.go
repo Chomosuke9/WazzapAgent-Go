@@ -3,10 +3,7 @@
 package effect
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"strings"
 	"time"
@@ -133,49 +130,6 @@ type PlanRequest struct {
 	InvocationID identity.InvocationID
 	Principal    policy.Principal
 	Effect       Effect
-}
-
-// DigestPlan makes an idempotency collision detectable without persisting an
-// untyped payload blob. It includes provenance and scope as well as the typed
-// effect fields.
-func DigestPlan(request PlanRequest) ([32]byte, error) {
-	if err := request.Validate(); err != nil {
-		return [32]byte{}, err
-	}
-	var canonical bytes.Buffer
-	canonical.WriteString("wazzapagent.typed-effect.v1")
-	writeDigestField(&canonical, request.Ref.Key.TenantID.String())
-	writeDigestField(&canonical, request.Ref.Key.AccountID.String())
-	writeDigestField(&canonical, request.Ref.Key.ChatID.String())
-	writeDigestField(&canonical, request.Ref.EffectID.String())
-	writeDigestField(&canonical, request.InvocationID.String())
-	canonical.WriteByte(byte(request.Principal.Kind))
-	writeDigestField(&canonical, request.Principal.ParticipantID.String())
-	writeDigestField(&canonical, request.Principal.LID.String())
-	writeDigestField(&canonical, request.Principal.InvocationID.String())
-	canonical.WriteByte(byte(request.Effect.Kind()))
-	switch typed := request.Effect.(type) {
-	case React:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-		writeDigestField(&canonical, typed.Emoji)
-	case DeleteMessage:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	case MarkRead:
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	case SetChatPresence:
-		writeDigestField(&canonical, string(typed.State))
-	case RunCommand:
-		writeDigestField(&canonical, typed.Command)
-		writeDigestField(&canonical, typed.TargetMessageID.String())
-	default:
-		return [32]byte{}, agent.NewError(agent.ErrorInvalidArgument, "digest effect plan", errors.New("effect type is not supported"))
-	}
-	return sha256.Sum256(canonical.Bytes()), nil
-}
-
-func writeDigestField(buffer *bytes.Buffer, value string) {
-	_ = binary.Write(buffer, binary.BigEndian, uint32(len(value)))
-	buffer.WriteString(value)
 }
 
 func (request PlanRequest) Validate() error {

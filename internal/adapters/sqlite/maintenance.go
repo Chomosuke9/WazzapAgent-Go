@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
 )
 
+// Maintain deletes operational rows that have outlived their use. Finished
+// inbound turns (and, by cascade, their replies) go after DeleteBefore; they
+// only serve deduplication and usage stats by then. Message text lives on in
+// history_entries, which has its own keep-latest/max-age rule.
 func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (maintenance.Result, error) {
-	if request.TenantID.IsZero() || request.Now.IsZero() || request.ScrubBefore.IsZero() || request.DeleteBefore.IsZero() ||
-		!request.DeleteBefore.Before(request.ScrubBefore) || !request.ScrubBefore.Before(request.Now) ||
-		request.BatchSize == 0 || request.BatchSize > 10_000 {
+	if request.TenantID.IsZero() || request.Now.IsZero() || request.DeleteBefore.IsZero() ||
+		!request.DeleteBefore.Before(request.Now) || request.BatchSize == 0 || request.BatchSize > 10_000 {
 		return maintenance.Result{}, agent.NewError(agent.ErrorInvalidArgument, "maintain application store", errors.New("valid tenant, times, and batch size are required"))
 	}
 	if (request.HistoryKeepLatest == 0) != request.HistoryBefore.IsZero() ||
@@ -25,64 +28,6 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	}
 	defer tx.Rollback()
 	result := maintenance.Result{}
-	actionResult, err := tx.ExecContext(ctx, `UPDATE outbound_actions SET text = '', content_scrubbed = 1
-      WHERE rowid IN (
-        SELECT rowid FROM outbound_actions
-        WHERE tenant_id = ? AND content_scrubbed = 0 AND completed_at_ms <= ?
-          AND state IN (?, ?, ?)
-        ORDER BY completed_at_ms, action_id LIMIT ?
-      )`,
-		request.TenantID.String(), request.ScrubBefore.UnixMilli(),
-		uint8(action.StateSucceeded), uint8(action.StateFailedTerminal), uint8(action.StateUnknownOutcome), request.BatchSize,
-	)
-	if err != nil {
-		return maintenance.Result{}, storageError("scrub terminal actions", err)
-	}
-	result.ActionsScrubbed, err = actionResult.RowsAffected()
-	if err != nil {
-		return maintenance.Result{}, storageError("inspect scrubbed actions", err)
-	}
-	inboundResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        sender_name = '', input_text = '', response_text = CASE WHEN response_text IS NULL THEN NULL ELSE '' END,
-        quoted_message_id = NULL, quoted_role = NULL, quoted_sender_ref = NULL, quoted_text = NULL, replied_to_bot = 0,
-        content_scrubbed = 1
-      WHERE rowid IN (
-        SELECT rowid FROM inbound_events
-        WHERE tenant_id = ? AND content_scrubbed = 0 AND updated_at_ms <= ?
-          AND turn_state IN (?, ?, ?, ?)
-        ORDER BY updated_at_ms, invocation_id LIMIT ?
-      )`,
-		request.TenantID.String(), request.ScrubBefore.UnixMilli(), ignoredTurnState,
-		uint8(agent.TurnSucceeded), uint8(agent.TurnFailedTerminal), uint8(agent.TurnUnknownOutcome), request.BatchSize,
-	)
-	if err != nil {
-		return maintenance.Result{}, storageError("scrub terminal inbound content", err)
-	}
-	result.InboundScrubbed, err = inboundResult.RowsAffected()
-	if err != nil {
-		return maintenance.Result{}, storageError("inspect scrubbed inbound", err)
-	}
-	batchedScrubResult, err := tx.ExecContext(ctx, `UPDATE inbound_events SET
-        sender_name = '', input_text = '', quoted_message_id = NULL, quoted_role = NULL,
-        quoted_sender_ref = NULL, quoted_text = NULL, replied_to_bot = 0, content_scrubbed = 1
-      WHERE rowid IN (
-        SELECT member.rowid FROM inbound_events member
-        JOIN inbound_events anchor ON anchor.tenant_id = member.tenant_id
-          AND anchor.account_id = member.account_id AND anchor.chat_id = member.chat_id
-          AND anchor.invocation_id = member.batch_anchor_invocation_id
-        WHERE member.tenant_id = ? AND member.turn_state = ? AND member.content_scrubbed = 0
-          AND anchor.updated_at_ms <= ? AND anchor.turn_state IN (?, ?, ?)
-        ORDER BY anchor.updated_at_ms, member.batch_position LIMIT ?
-      )`,
-		request.TenantID.String(), batchedTurnState, request.ScrubBefore.UnixMilli(),
-		uint8(agent.TurnSucceeded), uint8(agent.TurnFailedTerminal), uint8(agent.TurnUnknownOutcome), request.BatchSize,
-	)
-	if err != nil {
-		return maintenance.Result{}, storageError("scrub batched inbound content", err)
-	}
-	if count, rowsErr := batchedScrubResult.RowsAffected(); rowsErr == nil {
-		result.InboundScrubbed += count
-	}
 	batchedDeleteResult, err := tx.ExecContext(ctx, `DELETE FROM inbound_events
       WHERE rowid IN (
         SELECT member.rowid FROM inbound_events member
@@ -119,6 +64,25 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 		return maintenance.Result{}, storageError("inspect deleted terminal turns", err)
 	}
 	result.TurnsDeleted += deletedTerminal
+	// A finished effect is only still read when it deleted a message that is
+	// in retained history (the transcript marks that message deleted).
+	if _, err := tx.ExecContext(ctx, `DELETE FROM typed_effects
+      WHERE rowid IN (
+        SELECT e.rowid FROM typed_effects e
+        WHERE e.tenant_id = ? AND e.updated_at_ms <= ? AND e.state IN (?, ?, ?, ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM history_entries h
+            WHERE h.tenant_id = e.tenant_id AND h.account_id = e.account_id
+              AND h.chat_id = e.chat_id AND h.message_id = e.target_message_id
+          )
+        ORDER BY e.updated_at_ms LIMIT ?
+      )`,
+		request.TenantID.String(), request.DeleteBefore.UnixMilli(),
+		uint8(effect.StateSucceeded), uint8(effect.StateFailedTerminal), uint8(effect.StateUnknownOutcome), uint8(effect.StateSkipped),
+		request.BatchSize,
+	); err != nil {
+		return maintenance.Result{}, storageError("delete expired effects", err)
+	}
 	if request.HistoryKeepLatest > 0 {
 		historyResult, err := tx.ExecContext(ctx, `DELETE FROM history_entries WHERE sequence IN (
           SELECT sequence FROM (
@@ -159,7 +123,6 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
             AND e.account_id = message_mentions.account_id
             AND e.chat_id = message_mentions.chat_id
             AND e.message_id = message_mentions.message_id
-            AND e.content_scrubbed = 0
         )
         AND NOT EXISTS (
           SELECT 1 FROM history_entries h
@@ -172,13 +135,13 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 		return maintenance.Result{}, storageError("expire message mention bindings", err)
 	}
 	// Display names are a convenience cache, not durable identity. Keep them
-	// only while unsanitized inbound data or retained history can use the ref.
+	// only while retained inbound rows or history can use the ref.
 	if _, err := tx.ExecContext(ctx, `UPDATE sender_refs AS r SET display_name = ''
       WHERE r.tenant_id = ? AND trim(r.display_name) != ''
         AND NOT EXISTS (
           SELECT 1 FROM inbound_events e
           WHERE e.tenant_id = r.tenant_id AND e.account_id = r.account_id
-            AND e.chat_id = r.chat_id AND e.sender_ref = r.sender_ref AND e.content_scrubbed = 0
+            AND e.chat_id = r.chat_id AND e.sender_ref = r.sender_ref
 		)
 		AND NOT EXISTS (
 		  SELECT 1 FROM message_mentions m
