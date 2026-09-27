@@ -533,8 +533,8 @@ func (store *InboundStore) ReadHumanAccess(ctx context.Context, principal policy
 }
 
 // ListUnfinished returns every message the last run accepted but never
-// answered or ignored, oldest first. It runs once at startup, when nothing
-// else can be working on them.
+// answered or ignored, oldest first. It runs at startup, when nothing else
+// can be working on them.
 func (store *InboundStore) ListUnfinished(
 	ctx context.Context,
 	tenantID identity.TenantID,
@@ -542,6 +542,34 @@ func (store *InboundStore) ListUnfinished(
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list unfinished inbound", errors.New("tenant is required"))
 	}
+	return store.listUnfinished(ctx, tenantID, "", nil, -1)
+}
+
+// ListUnfinishedInChat returns up to limit unfinished messages of one chat,
+// oldest first.
+func (store *InboundStore) ListUnfinishedInChat(
+	ctx context.Context,
+	key agent.Key,
+	limit int,
+) ([]conversation.IncomingMessage, error) {
+	if err := key.Validate(); err != nil || limit <= 0 {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "list unfinished inbound", errors.New("chat and a positive limit are required"))
+	}
+	return store.listUnfinished(ctx, key.TenantID, " AND e.account_id = ? AND e.chat_id = ?",
+		[]any{key.AccountID.String(), key.ChatID.String()}, limit)
+}
+
+// listUnfinished lists unfinished messages matching where (an extra AND
+// clause on e, with its args), oldest first; a negative limit means all.
+func (store *InboundStore) listUnfinished(
+	ctx context.Context,
+	tenantID identity.TenantID,
+	where string,
+	whereArgs []any,
+	limit int,
+) ([]conversation.IncomingMessage, error) {
+	args := append([]any{tenantID.String()}, whereArgs...)
+	args = append(args, uint8(agent.TurnGenerating), uint8(agent.TurnFailedRetryable), limit)
 	rows, err := store.db.QueryContext(ctx, `SELECT
         e.message_id, e.invocation_id, e.causation_id, e.account_id, e.chat_id,
 		e.participant_id, p.lid, e.sender_ref, e.sender_name, e.sender_is_admin, e.sender_is_super_admin, e.input_text,
@@ -551,10 +579,10 @@ func (store *InboundStore) ListUnfinished(
       FROM inbound_events e
       JOIN chats c ON c.tenant_id = e.tenant_id AND c.account_id = e.account_id AND c.id = e.chat_id
       JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
-	  WHERE e.tenant_id = ? AND p.lid IS NOT NULL AND `+noOutboundAction("e")+`
+	  WHERE e.tenant_id = ?`+where+` AND p.lid IS NOT NULL AND `+noOutboundAction("e")+`
         AND e.turn_state IN (0, ?, ?)
-      ORDER BY e.rowid`,
-		tenantID.String(), uint8(agent.TurnGenerating), uint8(agent.TurnFailedRetryable),
+      ORDER BY e.rowid LIMIT ?`,
+		args...,
 	)
 	if err != nil {
 		return nil, storageError("list unfinished inbound", err)

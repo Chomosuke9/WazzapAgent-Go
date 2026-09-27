@@ -362,11 +362,11 @@ type flakyInboxStore struct {
 	failures atomic.Int32
 }
 
-func (store *flakyInboxStore) ListUnfinished(ctx context.Context, tenantID identity.TenantID) ([]conversation.IncomingMessage, error) {
+func (store *flakyInboxStore) ListUnfinishedInChat(ctx context.Context, key agent.Key, limit int) ([]conversation.IncomingMessage, error) {
 	if store.failures.Add(-1) >= 0 {
 		return nil, agent.NewError(agent.ErrorUnavailable, "list unfinished", errors.New("database is busy"))
 	}
-	return store.Store.ListUnfinished(ctx, tenantID)
+	return store.Store.ListUnfinishedInChat(ctx, key, limit)
 }
 
 func TestAFailedInboxReadBackIsTriedAgain(t *testing.T) {

@@ -311,6 +311,11 @@ func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue, seq uin
 			queue.retries < maxGenerationRetries
 		switch {
 		case retry:
+			// A failure other than a transient one is still reported; running
+			// it again is harmless, since the claim skips an answered anchor.
+			if !agent.RetryableGeneration(err) {
+				dispatcher.options.Report(err)
+			}
 			queue.retries++
 			requeue = append(redo, requeue...)
 		case err != nil && dispatcher.ctx.Err() == nil:
@@ -338,7 +343,7 @@ func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue, seq uin
 }
 
 // runTurn claims batch and answers it. It returns the messages of batch the
-// claim did not consume, and redo: what to run again if err is transient.
+// claim did not consume, and redo: what to run again when err is set.
 // Once claimed, only the anchor still needs a reply; the rest of its batch is
 // recorded as part of it.
 func (dispatcher *Dispatcher) runTurn(ctx context.Context, batch []conversation.IncomingMessage) (rest, redo []conversation.IncomingMessage, err error) {
@@ -358,10 +363,7 @@ func (dispatcher *Dispatcher) runTurn(ctx context.Context, batch []conversation.
 	}
 	dispatcher.observer.ObserveInboundBatch(uint32(len(messages)))
 	if err := dispatcher.processBatch(ctx, currentAgent, messages); err != nil {
-		if agent.RetryableGeneration(err) {
-			return rest, anchor, err
-		}
-		return rest, nil, err
+		return rest, anchor, err
 	}
 	return rest, nil, nil
 }
@@ -374,7 +376,7 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 	dispatcher.turns.Add(1)
 	go func() {
 		defer dispatcher.turns.Done()
-		messages, err := dispatcher.readInbox(key.TenantID)
+		messages, err := dispatcher.readInbox(key)
 		if err != nil && dispatcher.ctx.Err() == nil {
 			// The next startup recovers what is left in the inbox.
 			dispatcher.options.Report(err)
@@ -385,14 +387,12 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 		queue.refilling = false
 		missed := queue.overflow // an arrival landed after the read
 		queue.overflow = false
+		// A full page means more may still wait in the inbox.
+		queue.overflow = len(messages) == maxPending
 		for _, message := range messages {
 			// A command still in the inbox is running right now on its own path.
-			if message.AccountID != key.AccountID || message.ChatID != key.ChatID || IsCommand(message.Text) {
+			if IsCommand(message.Text) {
 				continue
-			}
-			if len(queue.pending) >= maxPending {
-				queue.overflow = true
-				break
 			}
 			queue.pending = append(queue.pending, message)
 		}
@@ -401,7 +401,7 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 			dispatcher.schedule(key, queue, 0)
 			return
 		}
-		if missed && err == nil && dispatcher.ctx.Err() == nil {
+		if (missed || queue.overflow) && err == nil && dispatcher.ctx.Err() == nil {
 			dispatcher.refill(key, queue)
 			return
 		}
@@ -409,11 +409,11 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 	}()
 }
 
-// readInbox lists the tenant's unfinished messages, trying a failed read
-// again like a failed generation.
-func (dispatcher *Dispatcher) readInbox(tenantID identity.TenantID) ([]conversation.IncomingMessage, error) {
+// readInbox reads one page of the chat's unfinished messages, trying a
+// failed read again like a failed generation.
+func (dispatcher *Dispatcher) readInbox(key agent.Key) ([]conversation.IncomingMessage, error) {
 	for attempt := 0; ; attempt++ {
-		messages, err := dispatcher.store.ListUnfinished(dispatcher.ctx, tenantID)
+		messages, err := dispatcher.store.ListUnfinishedInChat(dispatcher.ctx, key, maxPending)
 		if err == nil || attempt == maxGenerationRetries {
 			return messages, err
 		}

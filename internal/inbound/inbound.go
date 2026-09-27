@@ -32,6 +32,9 @@ type Store interface {
 	// ListUnfinished returns messages the last run accepted but never
 	// finished, oldest first.
 	ListUnfinished(context.Context, identity.TenantID) ([]conversation.IncomingMessage, error)
+	// ListUnfinishedInChat returns up to limit of one chat's unfinished
+	// messages, oldest first.
+	ListUnfinishedInChat(context.Context, agent.Key, int) ([]conversation.IncomingMessage, error)
 }
 
 type AgentLifecycleObserver interface {
