@@ -203,10 +203,9 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	if additionalPromptCount > 1 {
 		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "build model request", fmt.Errorf("system policy has duplicate additional prompt placeholders"))
 	}
-	var basePrompt, additionalPrompt string
+	var additionalPrompt string
 	for _, message := range request.Messages {
 		if message.Provenance == agent.ProvenanceBasePrompt {
-			basePrompt = message.Content
 			additionalPrompt = message.AdditionalPrompt
 		}
 	}
@@ -216,7 +215,6 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	if additionalPromptCount == 1 {
 		systemContent = strings.Replace(systemContent, "{{additional_prompt}}", additionalPrompt, 1)
 	}
-	systemContent = appendBasePromptContent(systemContent, basePrompt)
 	messages := []completionMessage{{Role: "system", Content: systemContent}}
 	for _, message := range request.Messages {
 		if message.Provenance == agent.ProvenanceBasePrompt {
@@ -236,23 +234,6 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 		messages = append(messages, completionMessage{Role: role, Content: message.Content})
 	}
 	return messages, tools, nil
-}
-
-func appendBasePromptContent(systemPolicy, basePrompt string) string {
-	if basePrompt == "" {
-		return systemPolicy
-	}
-	const additionalOpenTag = "<additional>"
-	insertionIndex := strings.Index(systemPolicy, additionalOpenTag)
-	if insertionIndex < 0 {
-		const rootCloseTag = "</main>"
-		closingIndex := strings.LastIndex(systemPolicy, rootCloseTag)
-		if closingIndex < 0 || strings.TrimSpace(systemPolicy[closingIndex+len(rootCloseTag):]) != "" {
-			return systemPolicy + "\n\n" + basePrompt
-		}
-		insertionIndex = closingIndex
-	}
-	return strings.TrimRight(systemPolicy[:insertionIndex], "\r\n") + "\n\n" + basePrompt + "\n\n" + systemPolicy[insertionIndex:]
 }
 
 type completionRequest struct {

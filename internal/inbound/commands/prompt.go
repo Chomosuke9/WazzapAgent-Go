@@ -12,9 +12,9 @@ import (
 func init() {
 	register(command.Command{
 		Name:        "prompt",
-		Permission:  "owner and !fromMe",
+		Permission:  "(owner or (admin and group)) and !fromMe",
 		Description: "Views, updates, or deletes the custom chat prompt.",
-		DeniedReply: "The /prompt command can only be used by the configured owner.",
+		DeniedReply: "The /prompt command can only be used by group admins or the owner.",
 		Run:         runPrompt,
 	})
 }

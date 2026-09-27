@@ -170,7 +170,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 		t.Fatalf("handle dump: %v", err)
 	}
 	output := fixture.sender.last().Text
-	if !strings.Contains(output, "=== SYSTEM ===\nbase prompt") ||
+	if !strings.Contains(output, "=== SYSTEM ===\n<additional>\nbase prompt\n</additional>") ||
 		!strings.Contains(output, "=== USER ===\n") ||
 		strings.Count(output, "=== USER ===") != 3 ||
 		!strings.Contains(output, "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>") ||
@@ -532,7 +532,7 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
 		t.Fatalf("denied reset: %v", err)
 	}
-	if !strings.Contains(fixture.sender.last().Text, "can only be used by the configured owner") {
+	if !strings.Contains(fixture.sender.last().Text, "can only be used by group admins or the owner") {
 		t.Fatalf("reset denial = %q", fixture.sender.last().Text)
 	}
 	reset := fixture.candidate("control-reset", chat, conversation.ChatDirect, "/reset")
@@ -578,7 +578,7 @@ func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
 	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
 		t.Fatalf("resume command: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "The /reset command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /reset command can only be used by group admins or the owner." {
 		t.Fatalf("forged owner command response = %q", got)
 	}
 }
@@ -625,7 +625,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if afterDenied.Version != snapshot.Version || afterDenied.PromptOverride.Text != "speak concisely" {
 		t.Fatalf("non-owner changed config: %#v", afterDenied)
 	}
-	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by group admins or the owner." {
 		t.Fatalf("denial response = %q", got)
 	}
 
@@ -752,7 +752,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	if err != nil || afterDenied.Permission.ModerationLevel != agent.ModerationDeleteMuteKick {
 		t.Fatalf("non-owner changed moderation level: %#v, %v", afterDenied.Permission, err)
 	}
-	if got := fixture.sender.last().Text; got != "The /permission command can only be used by the configured owner." {
+	if got := fixture.sender.last().Text; got != "The /permission command can only be used by group admins or the owner." {
 		t.Fatalf("permission denial response = %q", got)
 	}
 }
