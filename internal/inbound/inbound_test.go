@@ -599,10 +599,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	key := agent.Key{TenantID: claimed.Message.TenantID, AccountID: claimed.Message.AccountID, ChatID: claimed.Message.ChatID}
 	snapshot, err := fixture.store.Configs().Load(context.Background(), key)
 	if err != nil || snapshot.Permission.ModerationLevel != agent.ModerationDeleteMuteKick ||
-		!snapshot.Permission.ModelToolCapabilities().Has("message.react") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.delete") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.mute") ||
-		!snapshot.Permission.ModelToolCapabilities().Has("group.kick") {
+		!snapshot.Permission.ModelToolCapabilities().Has("message.react") {
 		t.Fatalf("stored permission = %#v, %v", snapshot.Permission, err)
 	}
 	if fixture.model.calls.Load() != 0 {
@@ -619,7 +616,7 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	if !request.Capabilities.Has("command.execute") || len(request.Commands) != 3 ||
+	if len(request.Commands) != 3 ||
 		request.Commands[0] != "catch" || request.Commands[1] != "help" || request.Commands[2] != "info" {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}

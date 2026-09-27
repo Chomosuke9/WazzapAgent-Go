@@ -109,21 +109,11 @@ const (
 
 func (level ModerationLevel) Valid() bool { return level <= ModerationDeleteMuteKick }
 
-// ModelToolCapabilities is the complete model-output capability set. Only
-// message.react becomes a provider tool; group capabilities authorize command
-// strings carried inside reply_message, never moderation function tools.
+// ModelToolCapabilities is the complete model-output capability set: the
+// react_to_message tool. Commands the model requests in reply_message are not
+// capabilities; the command registry's permission expression decides them.
 func (permission PermissionConfig) ModelToolCapabilities() CapabilitySet {
-	values := []Capability{"message.react", "group.close", "group.open", "group.description"}
-	if permission.ModerationLevel >= ModerationDelete {
-		values = append(values, "group.delete")
-	}
-	if permission.ModerationLevel >= ModerationDeleteMute {
-		values = append(values, "group.mute")
-	}
-	if permission.ModerationLevel >= ModerationDeleteMuteKick {
-		values = append(values, "group.kick")
-	}
-	result, _ := NewCapabilitySet(values...)
+	result, _ := NewCapabilitySet("message.react")
 	return result
 }
 

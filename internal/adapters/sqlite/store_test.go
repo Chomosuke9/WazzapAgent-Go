@@ -190,10 +190,7 @@ func TestConfigPersistsModerationLevelAndAlwaysDerivesReactionTool(t *testing.T)
 	}
 	reloaded, err := store.Configs().Load(context.Background(), key)
 	if err != nil || reloaded.Permission.ModerationLevel != agent.ModerationDeleteMute ||
-		!reloaded.Permission.ModelToolCapabilities().Has("message.react") ||
-		!reloaded.Permission.ModelToolCapabilities().Has("group.delete") ||
-		!reloaded.Permission.ModelToolCapabilities().Has("group.mute") ||
-		reloaded.Permission.ModelToolCapabilities().Has("group.kick") || reloaded.Version != updated.Version {
+		!reloaded.Permission.ModelToolCapabilities().Has("message.react") || reloaded.Version != updated.Version {
 		t.Fatalf("reloaded permission = %#v, %v", reloaded.Permission, err)
 	}
 	values = updated.Values()

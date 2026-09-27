@@ -236,8 +236,9 @@ type Sender interface {
 	ExecuteEffect(context.Context, Stored) (providerReceipt string, err error)
 }
 
+// CommandExecutor runs a model-requested command. It authorizes nothing
+// itself beyond what the command registry's permission expression decides.
 type CommandExecutor interface {
-	AuthorizeCommandEffect(context.Context, Stored, RunCommand) error
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
@@ -298,12 +299,13 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	if !dispatcher.sender.Ready() {
 		return dispatcher.requeuePreExecution(stored, agent.NewError(agent.ErrorNotReady, "dispatch effect", errors.New("effect sender is not ready")))
 	}
+	// A command is checked only by its registry permission expression when it
+	// runs; every other effect is checked against the model's capabilities.
+	_, isCommand := stored.Request.Effect.(RunCommand)
 	var authorizeErr error
-	if command, ok := stored.Request.Effect.(RunCommand); ok {
+	if isCommand {
 		if dispatcher.commands == nil {
-			authorizeErr = agent.NewError(agent.ErrorNotReady, "authorize command effect", errors.New("command executor is not bound"))
-		} else {
-			authorizeErr = dispatcher.commands.AuthorizeCommandEffect(ctx, stored, command)
+			authorizeErr = agent.NewError(agent.ErrorNotReady, "dispatch command effect", errors.New("command executor is not bound"))
 		}
 	} else {
 		authorizeErr = dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
