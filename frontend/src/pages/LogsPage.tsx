@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
-import { getLogs, type LogEntryDTO } from "../services/backend";
+import { getLogDetails, getLogs, type LogEntryDTO } from "../services/backend";
 
 type LevelFilter = "all" | "ERROR" | "WARN";
 
@@ -14,6 +14,30 @@ export function LogsPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<LevelFilter>("all");
   const [query, setQuery] = useState("");
+  const [opened, setOpened] = useState<{ entry: LogEntryDTO; text?: string; error?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+
+  const openDetails = useCallback(async (entry: LogEntryDTO) => {
+    setOpened({ entry });
+    setCopied(false);
+    dialog.current?.showModal();
+    try {
+      setOpened({ entry, text: await getLogDetails(entry.id) });
+    } catch (reason: unknown) {
+      setOpened({ entry, error: reason instanceof Error ? reason.message : "Could not read the full error." });
+    }
+  }, []);
+
+  const copyDetails = useCallback(async () => {
+    if (!opened?.text) return;
+    try {
+      await navigator.clipboard.writeText(opened.text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }, [opened]);
 
   const refresh = useCallback(async () => {
     try {
@@ -45,7 +69,7 @@ export function LogsPage() {
     <header className="page-header"><div><p className="eyebrow">APP ACTIVITY</p><h1>Activity</h1><p className="lede">Monitor the Agent, WhatsApp connection, and settings changes while the app is running.</p></div><StatusBadge tone={errorCount ? "warn" : "good"}>{errorCount ? `${errorCount} errors` : `${entries.length} events`}</StatusBadge></header>
     <section className="card logs-card">
       <div className="logs-toolbar">
-        <div><h3>Recent activity</h3><p className="muted small">The latest 500 events from this app session. Updates automatically.</p></div>
+        <div><h3>Recent activity</h3><p className="muted small">The latest 500 events, plus warnings and errors kept from earlier runs. Updates automatically.</p></div>
         <button className="button secondary" onClick={() => void refresh()}>Refresh</button>
       </div>
       <div className="logs-filters">
@@ -55,11 +79,21 @@ export function LogsPage() {
         </div>
       </div>
       {error && <p className="error-text" role="alert">{error}</p>}
-      {visibleEntries.length ? <ol className="logs-list">{visibleEntries.map((entry, index) => <li className={`log-entry log-${entry.level.toLowerCase()}`} key={`${entry.time}-${index}`}>
+      {visibleEntries.length ? <ol className="logs-list">{visibleEntries.map((entry, index) => <li className={`log-entry log-${entry.level.toLowerCase()}`} key={entry.id || `${entry.time}-${index}`}>
         <time dateTime={entry.time}>{formatTimestamp(entry.time)}</time>
         <span className="log-level">{entry.level}</span>
-        <div className="log-copy"><strong>{entry.message}</strong>{entry.details && <p>{entry.details}</p>}</div>
+        <div className="log-copy"><strong>{entry.message}</strong>{entry.details && <p>{entry.details}</p>}{entry.hasFull && <button className="log-full-button" onClick={() => void openDetails(entry)}>Full error</button>}</div>
       </li>)}</ol> : <div className="logs-empty"><span aria-hidden="true">≡</span><strong>{entries.length ? "No matching logs" : "No activity yet"}</strong><p>{entries.length ? "Change your search or filter to see other activity." : "Logs will appear here when the Agent or WhatsApp session does something."}</p></div>}
     </section>
+    <dialog ref={dialog} className={`log-dialog log-${opened?.entry.level.toLowerCase() ?? "info"}`} onClose={() => setOpened(null)}>
+      {opened && <>
+        <header><span className="log-level">{opened.entry.level}</span><strong>{opened.entry.message}</strong><time dateTime={opened.entry.time}>{formatTimestamp(opened.entry.time)}</time></header>
+        {opened.error ? <p className="error-text" role="alert">{opened.error}</p> : <pre>{opened.text ?? "Loading…"}</pre>}
+        <footer>
+          <button className="button secondary" disabled={!opened.text} onClick={() => void copyDetails()}>{copied ? "Copied" : "Copy"}</button>
+          <button className="button primary" onClick={() => dialog.current?.close()}>Close</button>
+        </footer>
+      </>}
+    </dialog>
   </div>;
 }

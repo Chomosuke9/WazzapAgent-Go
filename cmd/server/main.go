@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -73,6 +74,9 @@ func run() error {
 	}
 	logger := slog.New(observability.NewMultiHandler(consoleLogger.Handler(), logs.Handler()))
 	slog.SetDefault(logger)
+	if err := logs.Persist(filepath.Join(lease.Root(), observability.ProblemLogFile)); err != nil {
+		logger.Warn("earlier warnings and errors could not be loaded", "error", err)
+	}
 	store, err := appsqlite.OpenSettings(ctx, appsqlite.SettingsPath(lease.Root()))
 	if err != nil {
 		return err
@@ -106,11 +110,11 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := agents.Close(shutdownCtx); err != nil {
-			logger.Error("stop Agent runtime", "code", agent.CodeOf(err))
+			logger.Error("stop Agent runtime", "code", agent.CodeOf(err), "error", err)
 			return
 		}
 		if err := sessions.Close(shutdownCtx); err != nil {
-			logger.Error("stop WhatsApp session", "code", agent.CodeOf(err))
+			logger.Error("stop WhatsApp session", "code", agent.CodeOf(err), "error", err)
 			return
 		}
 		if err := store.Checkpoint(shutdownCtx); err != nil {
@@ -145,11 +149,11 @@ func run() error {
 	}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	if startup, err := settings.GetSettings(ctx); err != nil {
-		logger.Warn("read start-on-launch preference", "code", agent.CodeOf(err))
+		logger.Warn("read start-on-launch preference", "code", agent.CodeOf(err), "error", err)
 	} else if startup.Values.Settings.StartOnLaunch {
 		go func() {
 			if _, err := agents.Start(ctx); err != nil {
-				logger.Warn("start Agent on launch", "code", agent.CodeOf(err))
+				logger.Warn("start Agent on launch", "code", agent.CodeOf(err), "error", err)
 			}
 		}()
 	}

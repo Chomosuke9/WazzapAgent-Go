@@ -31,6 +31,8 @@ type LogEntryDTO struct {
 	Level   string `json:"level"`
 	Message string `json:"message"`
 	Details string `json:"details"`
+	ID      uint64 `json:"id"`
+	HasFull bool   `json:"hasFull"`
 }
 
 type WhatsAppConversationDTO struct {
@@ -245,7 +247,9 @@ func (s *AppService) GetAppInfo() AppInfo {
 	}
 }
 
-// GetLogs returns the newest safe application events captured in this run.
+// GetLogs returns the newest application events, including the warnings and
+// errors kept from earlier runs. HasFull marks entries whose full error text
+// GetLogDetails can return.
 func (s *AppService) GetLogs() []LogEntryDTO {
 	if s == nil || s.logs == nil {
 		return nil
@@ -253,9 +257,22 @@ func (s *AppService) GetLogs() []LogEntryDTO {
 	entries := s.logs.Entries()
 	result := make([]LogEntryDTO, len(entries))
 	for index, entry := range entries {
-		result[index] = LogEntryDTO{Time: entry.Time, Level: entry.Level, Message: entry.Message, Details: entry.Details}
+		result[index] = LogEntryDTO{Time: entry.Time, Level: entry.Level, Message: entry.Message, Details: entry.Details, ID: entry.ID, HasFull: entry.Full != ""}
 	}
 	return result
+}
+
+// GetLogDetails returns the full text of one warning or error: every logged
+// field and the whole underlying error chain.
+func (s *AppService) GetLogDetails(id uint64) (string, error) {
+	if s == nil || s.logs == nil {
+		return "", errors.New("app log is not available")
+	}
+	full, ok := s.logs.Full(id)
+	if !ok {
+		return "", agent.NewError(agent.ErrorNotFound, "read log details", errors.New("this log entry is no longer kept"))
+	}
+	return full, nil
 }
 
 func (s *AppService) GetWhatsAppConversations() ([]WhatsAppConversationDTO, error) {
@@ -781,7 +798,7 @@ func (s *AppService) recordChatAction(level, message string, err error) {
 			details += " op=" + operation.Operation()
 		}
 	}
-	s.recordChatActionDetails(level, message, details)
+	s.logs.RecordError(level, message, details, err)
 }
 
 func (s *AppService) recordChatActionDetails(level, message, details string) {
@@ -799,7 +816,7 @@ func (s *AppService) recordLog(level, message string, err error) {
 	if err != nil {
 		details = "code=" + string(agent.CodeOf(err)) + " · " + err.Error()
 	}
-	s.logs.Record(level, message, details)
+	s.logs.RecordError(level, message, details, err)
 }
 
 // GetSettings returns the current public settings snapshot. Secret values are

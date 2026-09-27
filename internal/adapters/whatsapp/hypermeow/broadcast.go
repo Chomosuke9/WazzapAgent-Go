@@ -193,7 +193,7 @@ func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broa
 				if sendErr != nil {
 					result.ErrorCode = agent.CodeOf(nativeEffectError(sendCtx, "send WhatsApp broadcast", sendErr))
 					if adapter.logger != nil {
-						adapter.logger.Warn("WhatsApp broadcast send failed", "chat_name", target.name, "code", result.ErrorCode, "reason", broadcastFailureReason(sendCtx, sendErr))
+						adapter.logger.Warn("WhatsApp broadcast send failed", "chat_name", target.name, "code", result.ErrorCode, "reason", broadcastFailureReason(sendCtx, sendErr), "error", sendErr)
 					}
 				} else if response.ID == "" {
 					result.ErrorCode = agent.ErrorUnknownOutcome
@@ -317,7 +317,7 @@ func (adapter *Adapter) broadcastScheduleWorker() {
 	ctx := adapter.rootCtx
 	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := adapter.broadcasts.RecoverInterruptedBroadcastSchedules(recoveryCtx); err != nil {
-		adapter.logger.Error("could not recover interrupted WhatsApp broadcast schedules", "code", agent.CodeOf(err))
+		adapter.logger.Error("could not recover interrupted WhatsApp broadcast schedules", "code", agent.CodeOf(err), "error", err)
 	}
 	recoveryCancel()
 	ticker := time.NewTicker(broadcastSchedulePoll)
@@ -326,7 +326,7 @@ func (adapter *Adapter) broadcastScheduleWorker() {
 		if adapter.Ready() {
 			schedule, err := adapter.broadcasts.ClaimDueBroadcastSchedule(ctx, time.Now().UTC())
 			if err != nil {
-				adapter.logger.Error("could not claim WhatsApp broadcast schedule", "code", agent.CodeOf(err))
+				adapter.logger.Error("could not claim WhatsApp broadcast schedule", "code", agent.CodeOf(err), "error", err)
 			} else if schedule != nil {
 				adapter.runBroadcastSchedule(ctx, *schedule)
 				continue
@@ -391,7 +391,7 @@ func (adapter *Adapter) finishBroadcastSchedule(id string, results []broadcastmo
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := adapter.broadcasts.CompleteBroadcastSchedule(ctx, id, status, results); err != nil {
-		adapter.logger.Error("could not persist WhatsApp broadcast result", "code", agent.CodeOf(err))
+		adapter.logger.Error("could not persist WhatsApp broadcast result", "code", agent.CodeOf(err), "error", err)
 	}
 }
 
@@ -411,7 +411,7 @@ func broadcastMessage(format, payload string) (*waE2E.Message, error) {
 	case "payload":
 		message := &waE2E.Message{}
 		if err := (protojson.UnmarshalOptions{}).Unmarshal([]byte(payload), message); err != nil {
-			return nil, agent.NewError(agent.ErrorInvalidArgument, "validate WhatsApp broadcast payload", errors.New("message JSON must match the WhatsApp waE2E.Message protobuf format"))
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "validate WhatsApp broadcast payload", fmt.Errorf("message JSON must match the WhatsApp waE2E.Message protobuf format: %w", err))
 		}
 		if proto.Size(message) == 0 {
 			return nil, agent.NewError(agent.ErrorInvalidArgument, "validate WhatsApp broadcast payload", errors.New("message payload must contain a WhatsApp message field"))

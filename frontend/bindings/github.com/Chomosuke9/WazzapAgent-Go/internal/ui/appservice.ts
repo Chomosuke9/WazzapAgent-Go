@@ -44,7 +44,17 @@ export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
 }
 
 /**
- * GetLogs returns the newest safe application events captured in this run.
+ * GetLogDetails returns the full text of one warning or error: every logged
+ * field and the whole underlying error chain.
+ */
+export function GetLogDetails(id: number): $CancellablePromise<string> {
+    return $Call.ByID(1905880396, id);
+}
+
+/**
+ * GetLogs returns the newest application events, including the warnings and
+ * errors kept from earlier runs. HasFull marks entries whose full error text
+ * GetLogDetails can return.
  */
 export function GetLogs(): $CancellablePromise<$models.LogEntryDTO[] | null> {
     return $Call.ByID(34595455);

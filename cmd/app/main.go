@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ func main() {
 	}
 	logger := slog.New(observability.NewMultiHandler(consoleLogger.Handler(), logBuffer.Handler()))
 	slog.SetDefault(logger)
+	if err := logBuffer.Persist(filepath.Join(lease.Root(), observability.ProblemLogFile)); err != nil {
+		logger.Warn("earlier warnings and errors could not be loaded", "error", err)
+	}
 	settingsStore, err := appsqlite.OpenSettings(ctx, appsqlite.SettingsPath(lease.Root()))
 	if err != nil {
 		_ = lease.Close()

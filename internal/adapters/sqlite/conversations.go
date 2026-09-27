@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,11 +322,11 @@ func (reader *ConversationReader) open(ctx context.Context, scope control.Sessio
 	if _, err := os.Stat(absolute); errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	} else if err != nil {
-		return nil, false, agent.NewError(agent.ErrorStorageFailure, "inspect transcript database", errors.New("transcript database is unavailable"))
+		return nil, false, agent.NewError(agent.ErrorStorageFailure, "inspect transcript database", fmt.Errorf("transcript database is unavailable: %w", err))
 	}
 	db, err := openDatabase(ctx, absolute, "")
 	if err != nil {
-		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", errors.New("transcript database is unavailable"))
+		return nil, false, agent.NewError(agent.ErrorStorageFailure, "open transcript database", fmt.Errorf("transcript database is unavailable: %w", err))
 	}
 	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()

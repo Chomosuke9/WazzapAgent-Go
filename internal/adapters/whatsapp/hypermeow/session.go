@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -14,7 +15,6 @@ import (
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types/events"
-	waLog "github.com/polymorfa/hypermeow/util/log"
 	"rsc.io/qr"
 )
 
@@ -31,16 +31,16 @@ func (factory *SessionFactory) OpenSession(ctx context.Context, snapshot config.
 	if factory == nil || snapshot.WhatsAppDatabasePath() == "" || snapshot.ConnectTimeout() <= 0 {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "open WhatsApp session", errors.New("session database path and connection timeout are required"))
 	}
-	container, err := openDeviceStore(ctx, snapshot.WhatsAppDatabasePath(), waLog.Noop)
+	container, err := openDeviceStore(ctx, snapshot.WhatsAppDatabasePath(), newLibraryLogger(nil).Sub("store"))
 	if err != nil {
-		return nil, agent.NewError(agent.ErrorStorageFailure, "open WhatsApp session store", errors.New("WhatsApp device store could not be opened"))
+		return nil, agent.NewError(agent.ErrorStorageFailure, "open WhatsApp session store", fmt.Errorf("WhatsApp device store could not be opened: %w", err))
 	}
 	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		_ = container.Close()
-		return nil, agent.NewError(agent.ErrorStorageFailure, "load WhatsApp session", errors.New("WhatsApp device record could not be loaded"))
+		return nil, agent.NewError(agent.ErrorStorageFailure, "load WhatsApp session", fmt.Errorf("WhatsApp device record could not be loaded: %w", err))
 	}
-	client := whatsmeow.NewClient(device, waLog.Noop)
+	client := whatsmeow.NewClient(device, newLibraryLogger(nil))
 	client.EnableAutoReconnect = true
 	runtime := &SessionRuntime{container: container, client: client, connectTimeout: snapshot.ConnectTimeout(), events: make(chan any, 32), connected: make(chan struct{}, 1), reconnect: make(chan struct{}, 1)}
 	runtime.eventHandlerID = client.AddEventHandler(runtime.handleEvent)
@@ -106,7 +106,7 @@ func (runtime *SessionRuntime) Run(ctx context.Context, request control.SessionR
 		var err error
 		qrEvents, err = runtime.client.GetQRChannel(ctx)
 		if err != nil {
-			return agent.NewError(agent.ErrorProviderFailure, "prepare WhatsApp pairing", errors.New("WhatsApp pairing could not be prepared"))
+			return agent.NewError(agent.ErrorProviderFailure, "prepare WhatsApp pairing", fmt.Errorf("WhatsApp pairing could not be prepared: %w", err))
 		}
 	} else if !runtime.HasSession() {
 		return agent.NewError(agent.ErrorIntegrityFailure, "resume WhatsApp session", errors.New("saved WhatsApp device is missing"))
@@ -165,13 +165,13 @@ func (runtime *SessionRuntime) Run(ctx context.Context, request control.SessionR
 					phoneCodeRequested = true
 					code, err := runtime.client.PairPhone(ctx, request.Phone, true, whatsmeow.PairClientChrome, pairingClientDisplayName())
 					if err != nil {
-						return agent.NewError(agent.ErrorProviderFailure, "request WhatsApp phone pairing code", errors.New("WhatsApp phone pairing code could not be requested"))
+						return agent.NewError(agent.ErrorProviderFailure, "request WhatsApp phone pairing code", fmt.Errorf("WhatsApp phone pairing code could not be requested: %w", err))
 					}
 					emit(control.SessionRuntimeEvent{State: control.RuntimePairing, Pairing: &control.SessionPairing{Method: control.PairingPhoneCode, Code: code, Generation: 1, ExpiresAt: time.Now().Add(phonePairingCodeLifetime)}})
 				} else if request.Method == control.PairingQR {
 					dataURL, err := encodeQRDataURL(item.Code)
 					if err != nil {
-						return agent.NewError(agent.ErrorInternal, "render WhatsApp pairing QR", errors.New("WhatsApp QR could not be rendered"))
+						return agent.NewError(agent.ErrorInternal, "render WhatsApp pairing QR", fmt.Errorf("WhatsApp QR could not be rendered: %w", err))
 					}
 					emit(control.SessionRuntimeEvent{State: control.RuntimePairing, Pairing: &control.SessionPairing{Method: control.PairingQR, QRCodeDataURL: dataURL, ExpiresAt: time.Now().Add(item.Timeout)}})
 				}
@@ -203,7 +203,7 @@ func (runtime *SessionRuntime) Logout(ctx context.Context) error {
 		}
 	}
 	if err := runtime.client.Logout(ctx); err != nil {
-		return agent.NewError(agent.ErrorProviderFailure, "logout WhatsApp session", errors.New("WhatsApp did not confirm logout"))
+		return agent.NewError(agent.ErrorProviderFailure, "logout WhatsApp session", fmt.Errorf("WhatsApp did not confirm logout: %w", err))
 	}
 	return nil
 }
@@ -242,7 +242,7 @@ func (runtime *SessionRuntime) Close(context.Context) error {
 	runtime.client.Disconnect()
 	runtime.client.RemoveEventHandler(runtime.eventHandlerID)
 	if err := runtime.container.Close(); err != nil {
-		runtime.closeErr = agent.NewError(agent.ErrorStorageFailure, "close WhatsApp session store", errors.New("WhatsApp device store could not be closed"))
+		runtime.closeErr = agent.NewError(agent.ErrorStorageFailure, "close WhatsApp session store", fmt.Errorf("WhatsApp device store could not be closed: %w", err))
 	}
 	return runtime.closeErr
 }

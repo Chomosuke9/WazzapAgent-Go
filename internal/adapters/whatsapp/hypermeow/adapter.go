@@ -18,7 +18,6 @@ import (
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
-	waLog "github.com/polymorfa/hypermeow/util/log"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
@@ -144,7 +143,11 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 	if err := config.Targets.ReconcileAccountPolicy(ctx, config.TenantID, config.AccountID, owner, gate.Allowlist()); err != nil {
 		return nil, err
 	}
-	container, err := openDeviceStore(ctx, config.DeviceStorePath, waLog.Noop)
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	container, err := openDeviceStore(ctx, config.DeviceStorePath, newLibraryLogger(logger).Sub("store"))
 	if err != nil {
 		return nil, err
 	}
@@ -153,11 +156,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		_ = container.Close()
 		return nil, agent.NewError(agent.ErrorStorageFailure, "load WhatsApp device", err)
 	}
-	logger := config.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	client := whatsmeow.NewClient(device, waLog.Noop)
+	client := whatsmeow.NewClient(device, newLibraryLogger(logger))
 	adapter := &Adapter{
 		tenantID:       config.TenantID,
 		accountID:      config.AccountID,
