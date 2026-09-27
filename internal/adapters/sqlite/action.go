@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
@@ -67,13 +68,14 @@ func (store *ActionStore) Start(ctx context.Context, ref agent.DispatchRef, now 
 }
 
 // ListPending returns replies that are planned but not yet sent, oldest first.
-func (store *ActionStore) ListPending(ctx context.Context, tenantID identity.TenantID) ([]agent.DispatchRef, error) {
+// A non-zero plannedBefore skips replies planned at or after it.
+func (store *ActionStore) ListPending(ctx context.Context, tenantID identity.TenantID, plannedBefore time.Time) ([]agent.DispatchRef, error) {
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending actions", errors.New("tenant is required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, action_id FROM outbound_actions
-      WHERE tenant_id = ? AND state = ? ORDER BY created_at_ms, action_id`,
-		tenantID.String(), uint8(action.StatePending),
+      WHERE tenant_id = ? AND state = ? AND created_at_ms < ? ORDER BY created_at_ms, action_id`,
+		tenantID.String(), uint8(action.StatePending), cutoffMillis(plannedBefore),
 	)
 	if err != nil {
 		return nil, storageError("list pending actions", err)
@@ -336,4 +338,13 @@ func nullableErrorCode(value agent.ErrorCode) any {
 		return nil
 	}
 	return string(value)
+}
+
+// cutoffMillis turns a plannedBefore bound into a created_at_ms bound; the
+// zero time means no bound.
+func cutoffMillis(before time.Time) int64 {
+	if before.IsZero() {
+		return math.MaxInt64
+	}
+	return before.UnixMilli()
 }

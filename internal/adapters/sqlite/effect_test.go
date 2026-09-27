@@ -93,14 +93,14 @@ func TestTypedEffectOutboxListsPendingAndResolvesInterrupted(t *testing.T) {
 	if _, err := store.Effects().Plan(context.Background(), request, now); err != nil {
 		t.Fatalf("plan effect: %v", err)
 	}
-	refs, err := store.Effects().ListPending(context.Background(), key.TenantID)
+	refs, err := store.Effects().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(refs) != 1 || refs[0] != request.Ref {
 		t.Fatalf("pending refs = %#v, %v", refs, err)
 	}
 	if err := store.Effects().Start(context.Background(), request.Ref, now); err != nil {
 		t.Fatalf("start effect: %v", err)
 	}
-	refs, err = store.Effects().ListPending(context.Background(), key.TenantID)
+	refs, err = store.Effects().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(refs) != 0 {
 		t.Fatalf("executing effect was listed as pending: %#v, %v", refs, err)
 	}

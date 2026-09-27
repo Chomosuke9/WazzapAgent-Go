@@ -807,7 +807,7 @@ func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	}
 	actions := store.Actions()
 	clock.now = clock.now.Add(3 * time.Second)
-	pending, err := actions.ListPending(context.Background(), key.TenantID)
+	pending, err := actions.ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil {
 		t.Fatalf("list pending action: %v", err)
 	}
@@ -1075,7 +1075,7 @@ func TestInterruptedActionBecomesUnknownAndIsNeverResent(t *testing.T) {
 	if err != nil || observed.State != action.StateUnknownOutcome {
 		t.Fatalf("interrupted action = %#v, err=%v", observed, err)
 	}
-	pending, err := store.Actions().ListPending(context.Background(), key.TenantID)
+	pending, err := store.Actions().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("unknown action was listed for resend: %#v, err=%v", pending, err)
 	}

@@ -111,13 +111,14 @@ func (store *EffectStore) Start(ctx context.Context, ref effect.Ref, now time.Ti
 }
 
 // ListPending returns effects that are ready to run, oldest first: model
-// effects only once the reply they follow has been sent.
-func (store *EffectStore) ListPending(ctx context.Context, tenantID identity.TenantID) ([]effect.Ref, error) {
+// effects only once the reply they follow has been sent. A non-zero
+// plannedBefore skips effects planned at or after it.
+func (store *EffectStore) ListPending(ctx context.Context, tenantID identity.TenantID, plannedBefore time.Time) ([]effect.Ref, error) {
 	if tenantID.IsZero() {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "list pending effects", errors.New("tenant is required"))
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT account_id, chat_id, effect_id FROM typed_effects
-      WHERE tenant_id = ? AND state = ?
+      WHERE tenant_id = ? AND state = ? AND created_at_ms < ?
 		AND (
 			model_call_id IS NULL OR EXISTS (
 				SELECT 1 FROM outbound_actions
@@ -138,7 +139,7 @@ func (store *EffectStore) ListPending(ctx context.Context, tenantID identity.Ten
 			)
 		)
       ORDER BY created_at_ms, effect_id`,
-		tenantID.String(), uint8(effect.StatePending), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded),
+		tenantID.String(), uint8(effect.StatePending), cutoffMillis(plannedBefore), uint8(action.StateSucceeded), uint8(agent.TurnSucceeded),
 	)
 	if err != nil {
 		return nil, storageError("list pending effects", err)

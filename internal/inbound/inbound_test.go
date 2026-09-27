@@ -345,6 +345,39 @@ func TestMessagesBeyondTheMemoryBoundAreReadBackFromTheInbox(t *testing.T) {
 	}
 }
 
+type flakyClaimStore struct {
+	inbound.Store
+	failures atomic.Int32
+}
+
+func (store *flakyClaimStore) ClaimBatch(ctx context.Context, batch []conversation.IncomingMessage) ([]conversation.IncomingMessage, []conversation.IncomingMessage, error) {
+	if store.failures.Add(-1) >= 0 {
+		return nil, nil, agent.NewError(agent.ErrorUnavailable, "claim batch", errors.New("database is busy"))
+	}
+	return store.Store.ClaimBatch(ctx, batch)
+}
+
+func TestAFailedClaimIsTriedAgain(t *testing.T) {
+	fixture := newFixture(t)
+	store := &flakyClaimStore{Store: fixture.store.Inbound()}
+	store.failures.Store(1)
+	dispatcher, err := inbound.NewDispatcher(
+		store, fixture.registry, fixture.gate, fixture.responder, inbound.DiscardObserver{},
+		command.Platform{Text: fixture.sender}, inbound.Options{BurstCap: 1, Report: fixture.handler.report},
+	)
+	if err != nil {
+		t.Fatalf("create inbound dispatcher: %v", err)
+	}
+	fixture.handler.dispatcher = dispatcher
+	candidate := fixture.candidate("flaky-claim", "15550000016@s.whatsapp.net", conversation.ChatDirect, "hello")
+	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
+		t.Fatalf("handle after a failed claim: %v", err)
+	}
+	if fixture.model.calls.Load() != 1 || fixture.sender.count() != 1 {
+		t.Fatalf("model calls=%d replies=%d, want 1/1", fixture.model.calls.Load(), fixture.sender.count())
+	}
+}
+
 func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
 	fixture := newFixture(t)
 	chat := "120363000000000012@g.us"

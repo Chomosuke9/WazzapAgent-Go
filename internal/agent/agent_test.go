@@ -114,7 +114,7 @@ func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
 	if err != nil || record.Plan == nil || record.State != agent.TurnSucceeded || len(record.Plan.Effects) != 1 {
 		t.Fatalf("durable reaction-only plan = %#v, err=%v", record, err)
 	}
-	actions, err := store.Actions().ListPending(context.Background(), key.TenantID)
+	actions, err := store.Actions().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(actions) != 0 {
 		t.Fatalf("reaction-only outbound text actions = %#v, err=%v", actions, err)
 	}
@@ -122,7 +122,7 @@ func TestAgentReactionOnlyHasNoTextActionAndReplaysDurably(t *testing.T) {
 	if err != nil || len(history.Entries) != 1 || history.Entries[0].Role != agent.HistoryUser {
 		t.Fatalf("reaction-only history = %#v, err=%v", history, err)
 	}
-	recoverable, err := store.Effects().ListPending(context.Background(), key.TenantID)
+	recoverable, err := store.Effects().ListPending(context.Background(), key.TenantID, time.Time{})
 	if err != nil || len(recoverable) != 1 || recoverable[0].EffectID != record.Plan.Effects[0].EffectID {
 		t.Fatalf("recoverable reaction = %#v, err=%v", recoverable, err)
 	}
