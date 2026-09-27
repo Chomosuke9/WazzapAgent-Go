@@ -161,25 +161,25 @@ func messageContent(message *waE2E.Message) (string, *waE2E.ContextInfo) {
 	}
 	// Protobuf getters are nil-safe, so each branch runs only when present.
 	if image := message.GetImageMessage(); image != nil {
-		return media("【image】", image.GetCaption(), image.GetContextInfo())
+		return media(conversation.PlaceholderImage, image.GetCaption(), image.GetContextInfo())
 	}
 	if video := message.GetVideoMessage(); video != nil {
 		if video.GetGifPlayback() {
-			return media("【gif】", video.GetCaption(), video.GetContextInfo())
+			return media(conversation.PlaceholderGIF, video.GetCaption(), video.GetContextInfo())
 		}
-		return media("【video】", video.GetCaption(), video.GetContextInfo())
+		return media(conversation.PlaceholderVideo, video.GetCaption(), video.GetContextInfo())
 	}
 	if document := message.GetDocumentMessage(); document != nil {
-		return media("【document】", document.GetCaption(), document.GetContextInfo())
+		return media(conversation.PlaceholderDocument, document.GetCaption(), document.GetContextInfo())
 	}
 	if audio := message.GetAudioMessage(); audio != nil {
 		if audio.GetPTT() {
-			return media("【voice note】", "", audio.GetContextInfo())
+			return media(conversation.PlaceholderVoiceNote, "", audio.GetContextInfo())
 		}
-		return media("【audio】", "", audio.GetContextInfo())
+		return media(conversation.PlaceholderAudio, "", audio.GetContextInfo())
 	}
 	if sticker := message.GetStickerMessage(); sticker != nil {
-		return media("【sticker】", "", sticker.GetContextInfo())
+		return media(conversation.PlaceholderSticker, "", sticker.GetContextInfo())
 	}
 	return "", nil
 }

@@ -45,7 +45,7 @@ func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
 func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) error {
 	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
-		(message.ChatKind == conversation.ChatGroup && !snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, message.Text, gate.assistantName)) {
+		(message.ChatKind == conversation.ChatGroup && !snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, conversation.AuthoredText(message.Text), gate.assistantName)) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", errors.New("message is not eligible"))
 	}
 	principal, err := HumanPrincipal(message)
