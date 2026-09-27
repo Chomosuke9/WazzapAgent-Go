@@ -3,22 +3,18 @@ package app
 import (
 	_ "embed"
 	"strings"
-	"time"
 )
 
 //go:embed systemprompt.txt
 var systemPolicySource string
 
-// RenderSystemPolicy renders assistant and date placeholders for one
-// invocation. The additional prompt placeholder is reserved for per-request
-// substitution by the model adapter; literal braces in examples remain unchanged.
-func RenderSystemPolicy(assistantName string, now time.Time) string {
-	return renderSystemPolicy(systemPolicySource, assistantName, now)
+// RenderSystemPolicy renders the assistant name once per runtime. The date and
+// additional prompt placeholders change per request, so the model adapter fills
+// them in; literal braces in examples remain unchanged.
+func RenderSystemPolicy(assistantName string) string {
+	return renderSystemPolicy(systemPolicySource, assistantName)
 }
 
-func renderSystemPolicy(source, assistantName string, now time.Time) string {
-	return strings.NewReplacer(
-		"{{assistant_name}}", assistantName,
-		"{{current_date}}", now.Format("02 Jan 2006"),
-	).Replace(source)
+func renderSystemPolicy(source, assistantName string) string {
+	return strings.ReplaceAll(source, "{{assistant_name}}", assistantName)
 }

@@ -77,32 +77,17 @@ type AgentChatSettingsUpdate struct {
 	Triggers           agent.TriggerConfig
 }
 
-// ManagedAgentChatActions is an optional extension implemented by desktop
-// Agent runtimes. Session-only clients intentionally do not implement it.
+// ManagedAgentChatActions are the operator actions the UI runs against the
+// live bot runtime.
 type ManagedAgentChatActions interface {
 	SendChatMessage(context.Context, string, string) (BotMessage, error)
+	SendChatReply(context.Context, string, string, string) (BotMessage, error)
 	DeleteChatMessage(context.Context, string, string) error
 	ListGroupMembers(context.Context, string) (AgentGroupMembers, error)
 	KickGroupMember(context.Context, string, string) error
 	GetChatSettings(context.Context, string) (AgentChatSettings, error)
 	SaveChatSettings(context.Context, string, AgentChatSettingsUpdate) (AgentChatSettings, error)
-}
-
-// ManagedAgentChatReplyActions is implemented by runtimes that can send a
-// manually composed message as a native reply to a saved chat message.
-type ManagedAgentChatReplyActions interface {
-	SendChatReply(context.Context, string, string, string) (BotMessage, error)
-}
-
-// ManagedAgentChatSettingsReset is available on runtimes that can atomically
-// reset saved chat-specific overrides to the current account defaults.
-type ManagedAgentChatSettingsReset interface {
 	ResetChatSettings(context.Context, ChatSettingsResetCategory, config.ChatDefaults) (int64, error)
-}
-
-// ManagedAgentBroadcastActions exposes joined WhatsApp groups through
-// short-lived handles and sends one manually selected payload to those groups.
-type ManagedAgentBroadcastActions interface {
 	ListBroadcastGroups(context.Context) ([]AgentBroadcastGroup, error)
 	BroadcastWhatsAppGroups(context.Context, []string, string, string, int, int) ([]AgentBroadcastGroupResult, error)
 	ScheduleWhatsAppBroadcast(context.Context, []string, string, string, int, int, time.Time) (AgentBroadcastSchedule, error)
@@ -110,16 +95,17 @@ type ManagedAgentBroadcastActions interface {
 	CancelWhatsAppBroadcastSchedule(context.Context, string) error
 }
 
-// WithChatActions holds the lifecycle operation lock while a bounded UI action
-// uses the active runtime. This prevents Stop or settings apply from closing
-// the WhatsApp client or SQLite store underneath the action.
-func (controller *AgentController) WithChatActions(ctx context.Context, action func(ManagedAgentChatActions) error) error {
+// WithChatActions runs a UI action against the running bot. Actions do not
+// block each other or start/stop; the context handed to action is cancelled
+// when the bot stops, and stop waits for the action to return before it
+// closes the runtime.
+func (controller *AgentController) WithChatActions(ctx context.Context, action func(context.Context, ManagedAgentChatActions) error) error {
 	if controller == nil || action == nil {
 		return agent.NewError(agent.ErrorUnavailable, "use Agent chat actions", errors.New("Agent chat actions are unavailable"))
 	}
 	ctx = nonNilContext(ctx)
-	controller.operations.Lock()
-	defer controller.operations.Unlock()
+	controller.actions.RLock()
+	defer controller.actions.RUnlock()
 
 	controller.mu.RLock()
 	run, state, closed := controller.run, controller.state, controller.closed
@@ -130,12 +116,11 @@ func (controller *AgentController) WithChatActions(ctx context.Context, action f
 	if run == nil || state != BotRunning {
 		return agent.NewError(agent.ErrorNotReady, "use Agent chat actions", errors.New("start the Agent before managing WhatsApp chats"))
 	}
-	chatActions, ok := run.runtime.(ManagedAgentChatActions)
-	if !ok || chatActions == nil {
-		return agent.NewError(agent.ErrorUnsupported, "use Agent chat actions", errors.New("active runtime does not support chat actions"))
-	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(run.actionsCtx, cancel)()
 	if err := ctx.Err(); err != nil {
 		return agent.NewError(agent.ErrorCancelled, "use Agent chat actions", err)
 	}
-	return action(chatActions)
+	return action(ctx, run.runtime)
 }

@@ -60,23 +60,26 @@ func (factory *agentTestRuntimeFactory) OpenAgentRuntime(_ context.Context, snap
 	if factory.openErr != nil {
 		return nil, factory.openErr
 	}
-	runtime := &agentTestManagedRuntime{done: make(chan struct{}), closeErr: nil}
+	runtime := &agentTestManagedRuntime{done: make(chan struct{}), startedCh: make(chan struct{})}
 	factory.runtimes = append(factory.runtimes, runtime)
 	factory.snapshots = append(factory.snapshots, snapshot)
 	return runtime, nil
 }
 
 type agentTestManagedRuntime struct {
-	started   atomic.Bool
-	runOnce   sync.Once
-	done      chan struct{}
-	closeErr  error
-	runErr    error
-	closeCall atomic.Int32
+	ManagedAgentChatActions // nil: chat actions are not exercised through this fake
+	started                 atomic.Bool
+	startedCh               chan struct{}
+	runOnce                 sync.Once
+	done                    chan struct{}
+	closeErr                error
+	runErr                  error
+	closeCall               atomic.Int32
 }
 
 func (runtime *agentTestManagedRuntime) Run(ctx context.Context) error {
 	runtime.started.Store(true)
+	close(runtime.startedCh)
 	<-ctx.Done()
 	runtime.runOnce.Do(func() { close(runtime.done) })
 	return runtime.runErr
@@ -90,12 +93,13 @@ func (runtime *agentTestManagedRuntime) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+func (runtime *agentTestManagedRuntime) Started() <-chan struct{} { return runtime.startedCh }
 func (runtime *agentTestManagedRuntime) Snapshot() AgentRuntimeSnapshot {
 	state := "stopped"
 	if runtime.started.Load() {
 		state = "open"
 	}
-	return AgentRuntimeSnapshot{Started: runtime.started.Load(), WhatsAppState: state}
+	return AgentRuntimeSnapshot{WhatsAppState: state}
 }
 
 func validAgentSettings() config.Settings {
@@ -310,5 +314,44 @@ func TestAgentControllerSerializesSessionMutationsWithRuntimeOwnership(t *testin
 	}
 	if err := controller.WithSessionControl(func() error { called = true; return nil }); err != nil || !called {
 		t.Fatalf("session mutation after Agent stopped: called=%t err=%v", called, err)
+	}
+}
+
+func TestAgentControllerStopCancelsLongChatActionInsteadOfWaitingForIt(t *testing.T) {
+	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	if _, err := controller.Start(context.Background()); err != nil {
+		t.Fatalf("start Agent: %v", err)
+	}
+	entered := make(chan struct{})
+	actionDone := make(chan error, 1)
+	go func() {
+		actionDone <- controller.WithChatActions(context.Background(), func(ctx context.Context, _ ManagedAgentChatActions) error {
+			close(entered)
+			<-ctx.Done() // stands in for a broadcast sleeping between batches
+			if factory.runtimes[0].closeCall.Load() != 0 {
+				t.Error("runtime was closed while a chat action was still running")
+			}
+			return ctx.Err()
+		})
+	}()
+	<-entered
+
+	// A second action is not blocked by the first one.
+	if err := controller.WithChatActions(context.Background(), func(context.Context, ManagedAgentChatActions) error { return nil }); err != nil {
+		t.Fatalf("concurrent chat action: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := controller.Stop(ctx); err != nil {
+		t.Fatalf("stop Agent during chat action: %v", err)
+	}
+	select {
+	case err := <-actionDone:
+		if err == nil {
+			t.Fatal("long chat action was not cancelled by stop")
+		}
+	default:
+		t.Fatal("stop returned before the chat action finished")
 	}
 }

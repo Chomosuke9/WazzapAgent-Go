@@ -16,8 +16,6 @@ type memorySettingsRepository struct {
 	mu       sync.Mutex
 	snapshot SettingsSnapshot
 	saves    int
-	inflight int
-	maxIn    int
 	saveErr  error
 }
 
@@ -37,13 +35,8 @@ func (repository *memorySettingsRepository) Save(_ context.Context, expected uin
 		repository.mu.Unlock()
 		return SettingsSnapshot{}, agent.NewError(agent.ErrorConflict, "save", errors.New("revision conflict"))
 	}
-	repository.inflight++
-	if repository.inflight > repository.maxIn {
-		repository.maxIn = repository.inflight
-	}
 	repository.saves++
 	err := repository.saveErr
-	repository.inflight--
 	if err != nil {
 		repository.mu.Unlock()
 		return SettingsSnapshot{}, err
@@ -116,14 +109,11 @@ func TestSaveSettingsSecretKeepReplaceAndClear(t *testing.T) {
 	ctx := context.Background()
 
 	settings.AssistantName = "keep"
-	saved, err := controller.SaveSettings(ctx, SaveSettingsRequest{
-		ExpectedRevision: 1,
-		Patch: SettingsPatch{Draft: settings, Secrets: SecretPatch{
-			LLMAPIKey:       SecretUpdate{Action: SecretKeep},
-			FallbackAPIKey:  SecretUpdate{Action: SecretReplace, Value: "new-fallback"},
-			LangSmithAPIKey: SecretUpdate{Action: SecretClear},
-		}},
-	})
+	saved, err := controller.Save(ctx, 1, SettingsPatch{Draft: settings, Secrets: SecretPatch{
+		LLMAPIKey:       SecretUpdate{Action: SecretKeep},
+		FallbackAPIKey:  SecretUpdate{Action: SecretReplace, Value: "new-fallback"},
+		LangSmithAPIKey: SecretUpdate{Action: SecretClear},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +125,7 @@ func TestSaveSettingsSecretKeepReplaceAndClear(t *testing.T) {
 	}
 }
 
-func TestSaveSettingsUsesExpectedRevisionAndSerializesMutation(t *testing.T) {
+func TestConcurrentSavesOfOneRevisionLetExactlyOneWin(t *testing.T) {
 	repository := newMemorySettingsRepository(config.DefaultSettings())
 	controller, err := NewController(repository)
 	if err != nil {
@@ -166,8 +156,8 @@ func TestSaveSettingsUsesExpectedRevisionAndSerializesMutation(t *testing.T) {
 			t.Fatalf("unexpected concurrent save error: %v", saveErr)
 		}
 	}
-	if success != 1 || conflicts != 1 || repository.maxIn != 1 {
-		t.Fatalf("success=%d conflicts=%d max concurrent writes=%d", success, conflicts, repository.maxIn)
+	if success != 1 || conflicts != 1 {
+		t.Fatalf("success=%d conflicts=%d", success, conflicts)
 	}
 }
 

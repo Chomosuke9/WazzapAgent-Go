@@ -52,6 +52,7 @@ type Client struct {
 	maxResponseBytes uint32
 	observer         Observer
 	commands         *command.Registry
+	now              func() time.Time
 }
 
 func New(config Config) (*Client, error) {
@@ -96,6 +97,7 @@ func New(config Config) (*Client, error) {
 		maxResponseBytes: config.MaxResponseBytes,
 		observer:         observer,
 		commands:         config.Commands,
+		now:              time.Now,
 	}, nil
 }
 
@@ -186,7 +188,9 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 	if err != nil {
 		return nil, nil, err
 	}
-	systemContent := client.systemPolicy
+	// The date is filled in per request so a long-running bot never tells the
+	// model the day it was started.
+	systemContent := strings.ReplaceAll(client.systemPolicy, "{{current_date}}", client.now().Format("02 Jan 2006"))
 	additionalPromptCount := strings.Count(systemContent, "{{additional_prompt}}")
 	if additionalPromptCount > 1 {
 		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "build model request", fmt.Errorf("system policy has duplicate additional prompt placeholders"))

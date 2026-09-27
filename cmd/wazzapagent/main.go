@@ -62,7 +62,7 @@ func run() int {
 		pairing = &whatsapp.TerminalPairingSink{Writer: os.Stdout}
 	}
 	application := app.New(cfg, logger, app.Options{
-		SystemPolicy: app.RenderSystemPolicy(cfg.AssistantName(), time.Now()),
+		SystemPolicy: app.RenderSystemPolicy(cfg.AssistantName()),
 		Pairing:      pairing,
 	})
 	if err := application.RunCLI(ctx); err != nil {

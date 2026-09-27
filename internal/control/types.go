@@ -39,24 +39,10 @@ type SecretPatch struct {
 	LangSmithAPIKey SecretUpdate
 }
 
-// SecretActions is retained as a descriptive alias for callers that use the
-// terminology from the UI contract.
-type SecretActions = SecretPatch
-
-// SettingsPatch is a complete public draft plus secret actions. Draft is the
-// canonical field. Settings and Values are accepted aliases for composition
-// code that uses those names; when set, they are selected in that order.
+// SettingsPatch is a complete public draft plus secret actions.
 type SettingsPatch struct {
-	Draft    config.Settings
-	Settings config.Settings
-	Values   config.Settings
-	Secrets  SecretPatch
-}
-
-// SaveSettingsRequest carries the revision the editor read and its typed patch.
-type SaveSettingsRequest struct {
-	ExpectedRevision uint64
-	Patch            SettingsPatch
+	Draft   config.Settings
+	Secrets SecretPatch
 }
 
 // SettingsView is safe to cross a UI boundary. It contains configured flags,
@@ -69,9 +55,6 @@ type SettingsView struct {
 	SessionReadiness []config.ReadinessIssue
 	AgentReadiness   []config.ReadinessIssue
 }
-
-// PublicSettingsView is a readable alias used by adapters.
-type PublicSettingsView = SettingsView
 
 type ValidationResult struct {
 	Valid            bool
