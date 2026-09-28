@@ -176,6 +176,9 @@ const (
 	// complete compact transcript, including the current invocation. Keeping
 	// the transcript in one block is part of the provider prompt contract.
 	ProvenanceHistoryTranscript
+	// ProvenanceChatState is the <chat_state> block: this chat's settings
+	// and scheduled tasks, each with the command that changes it.
+	ProvenanceChatState
 )
 
 type ModelMessage struct {

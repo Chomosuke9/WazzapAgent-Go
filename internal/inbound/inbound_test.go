@@ -172,7 +172,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	output := fixture.sender.last().Text
 	if !strings.Contains(output, "=== SYSTEM ===\n<additional>\nbase prompt\n</additional>") ||
 		!strings.Contains(output, "=== USER ===\n") ||
-		strings.Count(output, "=== USER ===") != 3 ||
+		strings.Count(output, "=== USER ===") != 4 || !strings.Contains(output, "<chat_state>") ||
 		!strings.Contains(output, "<prompt_override>\nNo prompt override is provided here. Follow your default behavior.\n</prompt_override>") ||
 		!strings.Contains(output, "<untrusted_chat_history>") ||
 		strings.Contains(output, "=== ASSISTANT ===") ||
@@ -491,12 +491,12 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 		t.Fatalf("handle follow-up after restart: %v", err)
 	}
 	request := secondRuntime.model.lastRequest()
-	if len(request.Messages) != 4 ||
-		!strings.Contains(request.Messages[3].Content, "remember blue") ||
-		!strings.Contains(request.Messages[3].Content, "reply: remember blue") ||
-		!strings.Contains(request.Messages[3].Content, "what color?") ||
-		!strings.HasPrefix(request.Messages[3].Content, "<untrusted_chat_history>\n") ||
-		!strings.HasSuffix(request.Messages[3].Content, "\n</untrusted_chat_history>") {
+	if len(request.Messages) != 5 ||
+		!strings.Contains(request.Messages[4].Content, "remember blue") ||
+		!strings.Contains(request.Messages[4].Content, "reply: remember blue") ||
+		!strings.Contains(request.Messages[4].Content, "what color?") ||
+		!strings.HasPrefix(request.Messages[4].Content, "<untrusted_chat_history>\n") ||
+		!strings.HasSuffix(request.Messages[4].Content, "\n</untrusted_chat_history>") {
 		t.Fatalf("recreated model context = %#v", request.Messages)
 	}
 }

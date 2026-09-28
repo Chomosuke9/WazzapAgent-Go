@@ -48,7 +48,7 @@ func TestScheduledTaskRunsOnceAsASystemTurn(t *testing.T) {
 	if fixture.model.calls.Load() != 2 || fixture.sender.count() != 2 {
 		t.Fatalf("model/sender calls = %d/%d, want 2/2", fixture.model.calls.Load(), fixture.sender.count())
 	}
-	transcript := fixture.model.lastRequest().Messages[3].Content
+	transcript := fixture.model.lastRequest().Messages[4].Content
 	if !strings.Contains(transcript, "reply: hello") ||
 		!strings.Contains(transcript, "SYSTEM: Scheduled task firing now.") ||
 		!strings.Contains(transcript, "Task: remind (everyone) about the meeting") {

@@ -105,7 +105,7 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 	}
 }
 
-func TestTriggerPermissionAllowsOwnerOrGroupAdminButNeverBot(t *testing.T) {
+func TestTriggerPermissionAllowsOwnerOrGroupAdmin(t *testing.T) {
 	_, trigger, _ := builtinRegistry(t).Parse("/trigger")
 	tests := []struct {
 		name  string

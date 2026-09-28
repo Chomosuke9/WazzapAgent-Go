@@ -1421,3 +1421,37 @@ func isUniqueConstraint(err error) bool {
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "unique constraint") || strings.Contains(text, "constraint failed")
 }
+
+// ReadRequester returns the human who sent the message that started the turn
+// with invocationID. Turns without such a message (scheduled tasks, the
+// bot's own messages) report ok=false.
+func (store *InboundStore) ReadRequester(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (policy.Principal, bool, error) {
+	if err := key.Validate(); err != nil || invocationID.IsZero() {
+		return policy.Principal{}, false, agent.NewError(agent.ErrorInvalidArgument, "read requester", errors.New("key and invocation ID are required"))
+	}
+	var participant, lid sql.NullString
+	err := store.read.QueryRowContext(ctx, `SELECT e.participant_id, p.lid FROM inbound_events e
+	  JOIN participants p ON p.tenant_id = e.tenant_id AND p.account_id = e.account_id AND p.id = e.participant_id
+	  WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.invocation_id = ? AND e.from_me = 0`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(),
+	).Scan(&participant, &lid)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (!participant.Valid || !lid.Valid) {
+		return policy.Principal{}, false, nil
+	}
+	if err != nil {
+		return policy.Principal{}, false, storageError("read requester", err)
+	}
+	participantID, err := identity.ParseParticipantID(participant.String)
+	if err != nil {
+		return policy.Principal{}, false, agent.NewError(agent.ErrorIntegrityFailure, "read requester", err)
+	}
+	senderLID, err := identity.ParseLID(lid.String)
+	if err != nil {
+		return policy.Principal{}, false, agent.NewError(agent.ErrorIntegrityFailure, "read requester", err)
+	}
+	principal := policy.Principal{
+		Kind: policy.PrincipalHuman, TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
+		ParticipantID: participantID, LID: senderLID,
+	}
+	return principal, true, principal.Validate()
+}

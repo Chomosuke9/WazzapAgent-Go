@@ -14,7 +14,7 @@ import (
 func init() {
 	register(command.Command{
 		Name:        "trigger",
-		Permission:  "(owner or isAdmin) and !fromMe and isGroup",
+		Permission:  "((owner or isAdmin) and !fromMe or fromMe and (requesterOwner or requesterAdmin)) and isGroup",
 		Description: "Configures Agent triggers per chat. Only the owner or a group admin can use it in a group.",
 		DeniedReply: "The /trigger command can only be used by the owner or an admin in a group.",
 		Run:         runTrigger,

@@ -12,7 +12,7 @@ func init() {
 	register(command.Command{
 		Name:        "permission",
 		Aliases:     []string{"permissions"},
-		Permission:  "(owner or (admin and group)) and !fromMe",
+		Permission:  "(owner or (admin and group)) and !fromMe or fromMe and (requesterOwner or (requesterAdmin and group))",
 		Description: "Sets the moderation permission level from 0 to 3.",
 		DeniedReply: "The /permission command can only be used by group admins or the owner.",
 		Run:         runPermission,

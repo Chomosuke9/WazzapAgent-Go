@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -38,6 +39,15 @@ type ChatContext struct {
 	Name        string
 	Description string
 	BotIsAdmin  bool
+	// Tasks are the chat's pending scheduled tasks, soonest first.
+	Tasks []ScheduledTaskSummary
+}
+
+// ScheduledTaskSummary is one pending /schedule-task entry as the model
+// sees it in <chat_state>.
+type ScheduledTaskSummary struct {
+	FireAt time.Time
+	Prompt string
 }
 
 func (chat ChatContext) Validate() error {
@@ -108,7 +118,11 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenanceChatInformation,
-		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel, request.Config.Triggers),
+		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel),
+	})
+	messages = append(messages, ModelMessage{
+		Role: ModelUser, Provenance: ProvenanceChatState,
+		Content: formatChatState(request.Chat, request.Config),
 	})
 	type builtHistoryEntry struct {
 		rendered     string
@@ -201,7 +215,7 @@ func wrapUntrustedChatHistory(transcript string) string {
 	return "<untrusted_chat_history>\n" + transcript + "\n</untrusted_chat_history>"
 }
 
-func formatChatInformation(chat ChatContext, level ModerationLevel, triggers TriggerConfig) string {
+func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 	name := sanitizeContextMetadata(chat.Name)
 	description := sanitizeContextMetadata(chat.Description)
 	if name == "" {
@@ -239,13 +253,69 @@ func formatChatInformation(chat ChatContext, level ModerationLevel, triggers Tri
 		fmt.Sprintf("- Bot moderation permission: %d", effectiveLevel),
 		"- Bot moderation capabilities: "+capabilities+" (configured maximum; command permissions apply separately)",
 	)
-	if rules := triggers.SmartRuleList(); chat.Kind == "group" && triggers.Smart && len(rules) > 0 {
-		lines = append(lines, "- Group admin rules (you are also woken when a message matches one; follow them):")
-		for index, rule := range rules {
-			lines = append(lines, fmt.Sprintf("  %d. %s", index+1, sanitizeContextMetadata(rule)))
+	return strings.Join(lines, "\n")
+}
+
+// formatChatState describes this chat's settings and scheduled tasks, each
+// with the command that changes it, so the model can explain them and change
+// them when asked.
+func formatChatState(chat ChatContext, config ConfigSnapshot) string {
+	lines := []string{"<chat_state>", "Settings of this chat (the command in brackets changes it):"}
+	if chat.Kind == "group" {
+		triggers := config.Triggers
+		lines = append(lines, fmt.Sprintf("- Triggers [/trigger]: mention %s, name %s, reply to bot %s, smart %s",
+			onOff(triggers.Mention), onOff(triggers.Name), onOff(triggers.Reply), onOff(triggers.Smart)))
+		if triggers.Name && triggers.NameRegex {
+			lines = append(lines, "  Name regex: "+sanitizeContextMetadata(triggers.NamePattern))
+		}
+		if rules := triggers.SmartRuleList(); len(rules) > 0 {
+			state := "active"
+			if !triggers.Smart {
+				state = "inactive while smart is off"
+			}
+			lines = append(lines, "  Group admin rules ("+state+"; when active, a message matching one wakes you, and you follow it):")
+			for index, rule := range rules {
+				lines = append(lines, fmt.Sprintf("  %d. %s", index+1, sanitizeContextMetadata(rule)))
+			}
+		}
+		lines = append(lines, fmt.Sprintf("- Moderation level [/permission]: %d (%s)", config.Permission.ModerationLevel, moderationCapabilities(config.Permission.ModerationLevel)))
+	}
+	custom := "none"
+	if config.PromptOverride != nil {
+		custom = "set, appended to the chat prompt"
+		if config.PromptOverride.Mode == PromptReplace {
+			custom = "set, replacing the chat prompt"
 		}
 	}
+	lines = append(lines, "- Custom instructions [/prompt]: "+custom+" (the text is in <prompt_override>)")
+	lines = append(lines, "Scheduled tasks [/schedule-task]:")
+	if len(chat.Tasks) == 0 {
+		lines = append(lines, "- none")
+	}
+	for _, task := range chat.Tasks {
+		lines = append(lines, "- "+task.FireAt.UTC().Format("2006-01-02 15:04 UTC")+": "+sanitizeContextMetadata(task.Prompt))
+	}
+	lines = append(lines, "</chat_state>")
 	return strings.Join(lines, "\n")
+}
+
+func moderationCapabilities(level ModerationLevel) string {
+	switch level {
+	case ModerationDelete:
+		return "delete messages"
+	case ModerationDeleteMute:
+		return "delete messages, mute members"
+	case ModerationDeleteMuteKick:
+		return "delete messages, mute members, kick members"
+	}
+	return "none"
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
@@ -462,6 +532,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	basePromptCount := 0
 	overrideCount := 0
 	chatInformationCount := 0
+	chatStateCount := 0
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
@@ -496,6 +567,11 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			chatInformationCount++
 			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0
 			promptPhase = false
+		case ProvenanceChatState:
+			chatStateCount++
+			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0 &&
+				strings.HasPrefix(message.Content, "<chat_state>\n") && strings.HasSuffix(message.Content, "\n</chat_state>")
+			promptPhase = false
 		case ProvenanceHistorySystem:
 			promptPhase = false
 			valid = message.Role == ModelSystem
@@ -528,7 +604,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	} else if currentCount != 1 || last != ProvenanceCurrentUser {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("current user message must be last"))
 	}
-	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 {
+	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 || chatStateCount > 1 {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model prompts must not be duplicated"))
 	}
 	return nil
