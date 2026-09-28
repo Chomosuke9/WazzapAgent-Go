@@ -10,4 +10,5 @@ export interface ChatDefaults {
     "triggerReply": boolean;
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
+    "triggerSmart": boolean;
 }

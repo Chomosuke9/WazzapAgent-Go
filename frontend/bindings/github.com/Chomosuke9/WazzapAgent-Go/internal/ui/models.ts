@@ -89,6 +89,7 @@ export interface SaveWhatsAppChatSettingsRequestDTO {
     "triggerReply": boolean;
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
+    "triggerSmart": boolean;
 }
 
 export interface ScheduleWhatsAppBroadcastRequestDTO {
@@ -104,6 +105,7 @@ export interface SecretPatchDTO {
     "llmAPIKey": SecretUpdateDTO;
     "fallbackAPIKey": SecretUpdateDTO;
     "langSmithAPIKey": SecretUpdateDTO;
+    "typeSafeAPIKey": SecretUpdateDTO;
 }
 
 export interface SecretUpdateDTO {
@@ -184,6 +186,7 @@ export interface SettingsValuesDTO {
     "llmAPIKeyConfigured": boolean;
     "fallbackAPIKeyConfigured": boolean;
     "langSmithAPIKeyConfigured": boolean;
+    "typeSafeAPIKeyConfigured": boolean;
 }
 
 export interface SettingsViewDTO {
@@ -240,6 +243,7 @@ export interface WhatsAppChatSettingsDTO {
     "triggerReply": boolean;
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
+    "triggerSmart": boolean;
 }
 
 export interface WhatsAppConversationDTO {

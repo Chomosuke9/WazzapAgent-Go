@@ -121,7 +121,7 @@ func TestChatTriggerSettingsPersistAcrossStoreRestart(t *testing.T) {
 		t.Fatalf("create config: %v", err)
 	}
 	values := initial.Values()
-	values.Triggers = agent.TriggerConfig{Mention: false, Name: true, Reply: false, NameRegex: true, NamePattern: `(?i)\bvivy\b`}
+	values.Triggers = agent.TriggerConfig{Mention: false, Name: true, Reply: false, NameRegex: true, NamePattern: `(?i)\bvivy\b`, Smart: true}
 	updated, err := store.Configs().CompareAndSwap(ctx, key, initial.Version, values)
 	if err != nil {
 		t.Fatalf("save triggers: %v", err)

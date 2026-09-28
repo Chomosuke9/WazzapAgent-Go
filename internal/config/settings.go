@@ -19,6 +19,7 @@ type ChatDefaults struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+	TriggerSmart       bool   `json:"triggerSmart"`
 }
 
 func DefaultChatDefaults() ChatDefaults {
@@ -26,7 +27,7 @@ func DefaultChatDefaults() ChatDefaults {
 }
 
 func (defaults ChatDefaults) Triggers() agent.TriggerConfig {
-	return agent.TriggerConfig{Mention: defaults.TriggerMention, Name: defaults.TriggerName, Reply: defaults.TriggerReply, NameRegex: defaults.TriggerNameRegex, NamePattern: defaults.TriggerNamePattern}
+	return agent.TriggerConfig{Mention: defaults.TriggerMention, Name: defaults.TriggerName, Reply: defaults.TriggerReply, NameRegex: defaults.TriggerNameRegex, NamePattern: defaults.TriggerNamePattern, Smart: defaults.TriggerSmart}
 }
 
 func (defaults ChatDefaults) PromptOverride() *agent.PromptOverride {
@@ -100,6 +101,7 @@ type Settings struct {
 	LogLevel        string
 	LogFormat       string
 	LangSmithAPIKey string
+	TypeSafeAPIKey  string
 
 	DataDir       string
 	EnvFile       string
@@ -120,6 +122,7 @@ type PublicSettings struct {
 	LLMAPIKeyConfigured       bool
 	FallbackAPIKeyConfigured  bool
 	LangSmithAPIKeyConfigured bool
+	TypeSafeAPIKeyConfigured  bool
 }
 
 // Public returns settings with all secret values removed.
@@ -129,10 +132,12 @@ func (settings Settings) Public() PublicSettings {
 		LLMAPIKeyConfigured:       strings.TrimSpace(settings.LLMAPIKey) != "",
 		FallbackAPIKeyConfigured:  strings.TrimSpace(settings.FallbackAPIKey) != "",
 		LangSmithAPIKeyConfigured: strings.TrimSpace(settings.LangSmithAPIKey) != "",
+		TypeSafeAPIKeyConfigured:  strings.TrimSpace(settings.TypeSafeAPIKey) != "",
 	}
 	public.LLMAPIKey = ""
 	public.FallbackAPIKey = ""
 	public.LangSmithAPIKey = ""
+	public.TypeSafeAPIKey = ""
 	return public
 }
 
@@ -308,7 +313,7 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		ownerAddress: strings.TrimSpace(settings.OwnerJID), allowlist: cloneStrings(settings.ChatAllowlist),
 		llmEndpoint: strings.TrimSpace(settings.LLMEndpoint), llmAPIKey: settings.LLMAPIKey,
 		llmFallbackEndpoint: strings.TrimSpace(settings.FallbackEndpoint), llmFallbackAPIKey: settings.FallbackAPIKey,
-		langsmithAPIKey: settings.LangSmithAPIKey, llmModel: strings.TrimSpace(settings.LLMModel),
+		langsmithAPIKey: settings.LangSmithAPIKey, typesafeAPIKey: strings.TrimSpace(settings.TypeSafeAPIKey), llmModel: strings.TrimSpace(settings.LLMModel),
 		llmProviderID: providerID, llmTimeout: settings.LLMTimeout, llmConcurrency: settings.LLMConcurrency,
 		maxOutputTokens: settings.MaxOutputTokens, maxResponseBytes: settings.MaxResponseBytes,
 		basePrompt: settings.BasePrompt, policyID: policyID, policyRevision: settings.PolicyRevision,
@@ -392,6 +397,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
 		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
 		{Key: "WAZZAP_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "WAZZAP_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
+		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true},
 		{Key: "WAZZAP_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "WAZZAP_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "WAZZAP_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "WAZZAP_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
 		{Key: "WAZZAP_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "WAZZAP_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
 		{Key: "startOnLaunch", Group: "application", Kind: FieldBool, Default: "false"},

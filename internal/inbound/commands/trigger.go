@@ -57,6 +57,7 @@ func replyTriggers(ctx context.Context, c *command.Context, prefix string, trigg
 		toggle("Mention", "mention", triggers.Mention),
 		toggle("Name", "name", triggers.Name),
 		toggle("Reply", "reply", triggers.Reply),
+		toggle("Smart", "smart", triggers.Smart),
 	)
 }
 
@@ -87,6 +88,8 @@ func parseTriggerArgs(args string) (func(*agent.TriggerConfig), bool) {
 		return func(triggers *agent.TriggerConfig) { triggers.Name = enabled }, true
 	case "reply":
 		return func(triggers *agent.TriggerConfig) { triggers.Reply = enabled }, true
+	case "smart":
+		return func(triggers *agent.TriggerConfig) { triggers.Smart = enabled }, true
 	case "regex":
 		return func(triggers *agent.TriggerConfig) {
 			triggers.NameRegex = enabled
@@ -104,8 +107,8 @@ func formatTriggers(triggers agent.TriggerConfig) string {
 	if triggers.NameRegex {
 		nameDetail = "regex: " + strconv.Quote(triggers.NamePattern)
 	}
-	return fmt.Sprintf("Group triggers:\n• mention: %s\n• name: %s (%s)\n• reply to bot: %s",
-		onOff(triggers.Mention), onOff(triggers.Name), nameDetail, onOff(triggers.Reply))
+	return fmt.Sprintf("Group triggers:\n• mention: %s\n• name: %s (%s)\n• reply to bot: %s\n• smart (TypeSafe judges if a message is for the bot): %s",
+		onOff(triggers.Mention), onOff(triggers.Name), nameDetail, onOff(triggers.Reply), onOff(triggers.Smart))
 }
 
 func onOff(enabled bool) string {
@@ -116,5 +119,5 @@ func onOff(enabled bool) string {
 }
 
 func triggerUsage() string {
-	return fmt.Sprintf("Usage: /trigger view, /trigger mention on|off, /trigger name on|off, /trigger reply on|off, /trigger regex on|off, or /trigger pattern <regex>. The pattern uses Go regex syntax and automatically enables the name trigger and regex mode; maximum length is %d bytes.", agent.MaxTriggerPatternBytes)
+	return fmt.Sprintf("Usage: /trigger view, /trigger mention on|off, /trigger name on|off, /trigger reply on|off, /trigger smart on|off, /trigger regex on|off, or /trigger pattern <regex>. The pattern uses Go regex syntax and automatically enables the name trigger and regex mode; maximum length is %d bytes.", agent.MaxTriggerPatternBytes)
 }

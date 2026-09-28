@@ -180,6 +180,7 @@ export function ChatPage() {
   const [triggerReply, setTriggerReply] = useState(true);
   const [triggerNameRegex, setTriggerNameRegex] = useState(false);
   const [triggerNamePattern, setTriggerNamePattern] = useState("");
+  const [triggerSmart, setTriggerSmart] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -338,6 +339,7 @@ export function ChatPage() {
         setTriggerReply(settings.triggerReply);
         setTriggerNameRegex(settings.triggerNameRegex);
         setTriggerNamePattern(settings.triggerNamePattern);
+        setTriggerSmart(settings.triggerSmart);
       })
       .catch((error) => {
         if (mounted) setSettingsError(actionErrorMessage(error, "Could not load chat settings."));
@@ -427,6 +429,7 @@ export function ChatPage() {
         triggerReply,
         triggerNameRegex,
         triggerNamePattern,
+        triggerSmart,
       });
       setChatSettings(updated);
       setSettingsSaved(true);
@@ -543,6 +546,7 @@ export function ChatPage() {
                         <label><input type="checkbox" checked={triggerMention} onChange={(event) => { setTriggerMention(event.target.checked); setSettingsSaved(false); }} /> Mention the bot account</label>
                         <label><input type="checkbox" checked={triggerName} onChange={(event) => { setTriggerName(event.target.checked); setSettingsSaved(false); }} /> Agent name</label>
                         <label><input type="checkbox" checked={triggerReply} onChange={(event) => { setTriggerReply(event.target.checked); setSettingsSaved(false); }} /> Reply to a bot message</label>
+                        <label><input type="checkbox" checked={triggerSmart} onChange={(event) => { setTriggerSmart(event.target.checked); setSettingsSaved(false); }} /> Smart: TypeSafe decides if a message is meant for the bot</label>
                       </div>
                       {triggerName && <>
                         <label className="trigger-regex-toggle"><input type="checkbox" checked={triggerNameRegex} onChange={(event) => { setTriggerNameRegex(event.target.checked); setSettingsSaved(false); }} /> Use a custom regex for the name trigger</label>

@@ -72,6 +72,7 @@ type SettingsValuesDTO struct {
 	LLMAPIKeyConfigured       bool `json:"llmAPIKeyConfigured"`
 	FallbackAPIKeyConfigured  bool `json:"fallbackAPIKeyConfigured"`
 	LangSmithAPIKeyConfigured bool `json:"langSmithAPIKeyConfigured"`
+	TypeSafeAPIKeyConfigured  bool `json:"typeSafeAPIKeyConfigured"`
 }
 
 // PublicSettingsDTO and SettingsDTO are descriptive aliases for generated
@@ -126,6 +127,7 @@ type SecretPatchDTO struct {
 	LLMAPIKey       SecretUpdateDTO `json:"llmAPIKey"`
 	FallbackAPIKey  SecretUpdateDTO `json:"fallbackAPIKey"`
 	LangSmithAPIKey SecretUpdateDTO `json:"langSmithAPIKey"`
+	TypeSafeAPIKey  SecretUpdateDTO `json:"typeSafeAPIKey"`
 }
 
 // SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
@@ -269,7 +271,7 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		PairingOutput: settings.PairingOutput, NoColor: settings.NoColor, ForceColor: settings.ForceColor,
 		StartOnLaunch: settings.StartOnLaunch, TenantID: settings.TenantID.String(), AccountID: settings.AccountID.String(),
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
-		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured,
+		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
 	}
 }
 
@@ -381,6 +383,7 @@ func patchFromDTO(patch SettingsPatchDTO) (control.SettingsPatch, error) {
 		LLMAPIKey:       control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LLMAPIKey.Action), Value: patch.Secrets.LLMAPIKey.Value},
 		FallbackAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.FallbackAPIKey.Action), Value: patch.Secrets.FallbackAPIKey.Value},
 		LangSmithAPIKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LangSmithAPIKey.Action), Value: patch.Secrets.LangSmithAPIKey.Value},
+		TypeSafeAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.TypeSafeAPIKey.Action), Value: patch.Secrets.TypeSafeAPIKey.Value},
 	}}, nil
 }
 

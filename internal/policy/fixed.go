@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -29,7 +30,24 @@ type FixedGate struct {
 	authority     ChatAuthorityReader
 	assistantName string
 	enabled       atomic.Bool
+
+	// judge backs the smart trigger. It only stands in for a mention: the
+	// sender's permission is still checked as for any other message.
+	judge   AddressJudge
+	judgeMu sync.Mutex
+	judged  map[identity.InvocationID]bool
 }
+
+// AddressJudge decides whether a group message that matched no other trigger
+// is still meant for the assistant.
+type AddressJudge interface {
+	AddressedToAssistant(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error)
+}
+
+// maxJudged bounds the remembered judgments. A message is checked again when
+// its batch starts, a few seconds after it was queued, so only recent ones
+// need to be kept.
+const maxJudged = 1024
 
 func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigReader, chats ChatAccess, authority ChatAuthorityReader, assistantName string, enabled bool) (*FixedGate, error) {
 	if policyID.IsZero() || revision == 0 || configs == nil || chats == nil || authority == nil {
@@ -40,12 +58,16 @@ func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigRea
 	return gate, nil
 }
 
+// SetAddressJudge enables the smart trigger for chats that turn it on. With
+// no judge the trigger never matches.
+func (gate *FixedGate) SetAddressJudge(judge AddressJudge) { gate.judge = judge }
+
 func (gate *FixedGate) SetEnabled(enabled bool) { gate.enabled.Store(enabled) }
 func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
 func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) error {
 	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
-		(message.ChatKind == conversation.ChatGroup && !snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, conversation.AuthoredText(message.Text), gate.assistantName)) {
+		(message.ChatKind == conversation.ChatGroup && !gate.triggered(ctx, message, snapshot)) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", errors.New("message is not eligible"))
 	}
 	principal, err := HumanPrincipal(message)
@@ -53,6 +75,34 @@ func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversa
 		return err
 	}
 	return gate.authorizeHuman(ctx, principal, snapshot.Permission, false)
+}
+
+func (gate *FixedGate) triggered(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) bool {
+	if snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, conversation.AuthoredText(message.Text), gate.assistantName) {
+		return true
+	}
+	if !snapshot.Triggers.Smart || gate.judge == nil {
+		return false
+	}
+	gate.judgeMu.Lock()
+	addressed, seen := gate.judged[message.InvocationID]
+	gate.judgeMu.Unlock()
+	if seen {
+		return addressed
+	}
+	// A failed judgment counts as "not addressed": the message is left alone,
+	// as it would be without the smart trigger.
+	addressed, err := gate.judge.AddressedToAssistant(ctx, message, snapshot)
+	if err != nil {
+		return false
+	}
+	gate.judgeMu.Lock()
+	if gate.judged == nil || len(gate.judged) >= maxJudged {
+		gate.judged = make(map[identity.InvocationID]bool)
+	}
+	gate.judged[message.InvocationID] = addressed
+	gate.judgeMu.Unlock()
+	return addressed
 }
 
 // CommandPermissionFacts resolves the facts consumed by a command's

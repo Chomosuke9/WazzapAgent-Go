@@ -55,6 +55,10 @@ type TriggerConfig struct {
 	Reply       bool
 	NameRegex   bool
 	NamePattern string
+	// Smart asks a TypeSafe judgment whether a group message nobody
+	// mentioned, replied or named the assistant in is still meant for it.
+	// Matches ignores it; the policy gate runs the judgment.
+	Smart bool
 }
 
 func DefaultTriggerConfig() TriggerConfig {

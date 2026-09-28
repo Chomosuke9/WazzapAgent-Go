@@ -176,6 +176,7 @@ type WhatsAppChatSettingsDTO struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+	TriggerSmart       bool   `json:"triggerSmart"`
 }
 
 type SaveWhatsAppChatSettingsRequestDTO struct {
@@ -189,6 +190,7 @@ type SaveWhatsAppChatSettingsRequestDTO struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+	TriggerSmart       bool   `json:"triggerSmart"`
 }
 
 type ResetWhatsAppChatSettingsRequestDTO struct {
@@ -605,7 +607,7 @@ func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRe
 		settings, actionErr = runtime.SaveChatSettings(ctx, request.ChatID, control.AgentChatSettingsUpdate{
 			ExpectedVersion: agent.ConfigVersion(expectedVersion), ModerationLevel: agent.ModerationLevel(request.ModerationLevel),
 			PromptOverrideMode: mode, PromptOverrideText: request.PromptOverrideText,
-			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern},
+			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern, Smart: request.TriggerSmart},
 		})
 		return actionErr
 	})
@@ -629,6 +631,7 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 		PromptOverrideMode: mode, PromptOverrideText: settings.PromptOverrideText,
 		TriggerMention: settings.Triggers.Mention, TriggerName: settings.Triggers.Name, TriggerReply: settings.Triggers.Reply,
 		TriggerNameRegex: settings.Triggers.NameRegex, TriggerNamePattern: settings.Triggers.NamePattern,
+		TriggerSmart: settings.Triggers.Smart,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	llmopenai "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/llm/openai"
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/typesafe"
 	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -158,6 +159,13 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	gate, err := policy.NewFixedGate(application.config.PolicyID(), application.config.PolicyRevision(), store.Configs(), store.Inbound(), waAdapter, application.config.AssistantName(), application.config.AgentEnabled())
 	if err != nil {
 		return nil, err
+	}
+	if apiKey := application.config.TypeSafeAPIKey(); apiKey != "" {
+		client, err := typesafe.New(apiKey, nil)
+		if err != nil {
+			return nil, err
+		}
+		gate.SetAddressJudge(typesafe.NewAddressJudge(client, store.History(), application.config.AssistantName(), application.logger))
 	}
 	dispatcher, err := action.NewDispatcher(store.Actions(), gate, waAdapter, agent.SystemClock{}, application.metrics)
 	if err != nil {

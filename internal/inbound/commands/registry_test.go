@@ -129,7 +129,7 @@ func TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger(t *testing.T) {
 		t.Fatalf("button messages = %d, want 1", len(buttons.sent))
 	}
 	got := buttons.sent[0].Buttons
-	if len(got) != 3 || got[0].ID != "/trigger mention off" || got[1].ID != "/trigger name on" || got[2].ID != "/trigger reply on" {
+	if len(got) != 4 || got[0].ID != "/trigger mention off" || got[1].ID != "/trigger name on" || got[2].ID != "/trigger reply on" || got[3].ID != "/trigger smart on" {
 		t.Fatalf("buttons = %#v", got)
 	}
 	for _, button := range got {
