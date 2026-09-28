@@ -17,13 +17,6 @@ type PermissionFacts struct {
 	IsGroup    bool
 	IsPrivate  bool
 	FromMe     bool
-	// HasRequester, RequesterIsOwner and RequesterIsAdmin describe the person
-	// whose message started the model's turn. They are only set for model
-	// principals, so a command can let the model act for someone who asked.
-	// A scheduled task firing has no requester.
-	HasRequester     bool
-	RequesterIsOwner bool
-	RequesterIsAdmin bool
 }
 
 type permissionTokenKind uint8
@@ -245,12 +238,6 @@ func resolvePermissionAtom(name string, facts PermissionFacts) (bool, error) {
 		return facts.IsPrivate, nil
 	case "from_me", "fromme", "from-me":
 		return facts.FromMe, nil
-	case "requester":
-		return facts.HasRequester, nil
-	case "requesterowner":
-		return facts.RequesterIsOwner, nil
-	case "requesteradmin":
-		return facts.RequesterIsAdmin, nil
 	default:
 		return false, fmt.Errorf("unknown permission atom %q", name)
 	}

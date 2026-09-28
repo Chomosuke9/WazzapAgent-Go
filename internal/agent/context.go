@@ -269,7 +269,7 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 // them when asked.
 func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	lines := []string{"<chat_state>",
-		"Sensitive settings (all but one-off tasks): change them only when the owner or a group admin asks.",
+		"Sensitive: change settings and daily tasks only for the people <chat_settings> allows.",
 		"Settings of this chat (the command in brackets changes it):"}
 	if chat.Kind == "group" {
 		triggers := config.Triggers

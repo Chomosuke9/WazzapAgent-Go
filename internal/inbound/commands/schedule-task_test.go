@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,13 +102,13 @@ func dispatchTaskCommand(t *testing.T, tasks *recordingTasks, text string, facts
 	return tasks, sent, err
 }
 
-func TestScheduleTaskSchedulesForTheOwner(t *testing.T) {
+func TestScheduleTaskSchedulesForTheBot(t *testing.T) {
 	ref, _ := identity.NewSenderRef()
 	message := conversation.IncomingMessage{
 		Mentions: []conversation.MentionBinding{{Token: "@15550000001", SenderRef: ref}},
 	}
 	before := time.Now()
-	tasks, sent, err := dispatchScheduleTask(t, "/schedule-task 1H30M remind @15550000001 to pay", command.PermissionFacts{IsOwner: true, IsGroup: true}, message)
+	tasks, sent, err := dispatchScheduleTask(t, "/schedule-task 1H30M remind @15550000001 to pay", command.PermissionFacts{FromMe: true, IsGroup: true}, message)
 	if err != nil || tasks.calls != 1 || len(sent.sent) != 1 || sent.sent[0] != "Task scheduled in 1h 30m. ID: a1b2c3 (/schedule-task delete a1b2c3 cancels it)." {
 		t.Fatalf("err=%v calls=%d sent=%q", err, tasks.calls, sent.sent)
 	}
@@ -120,49 +121,43 @@ func TestScheduleTaskSchedulesForTheOwner(t *testing.T) {
 }
 
 func TestScheduleTaskRefusesMoreThanADay(t *testing.T) {
-	tasks, sent, err := dispatchScheduleTask(t, "/schedule-task 24H1M too late", command.PermissionFacts{IsOwner: true}, conversation.IncomingMessage{})
+	tasks, sent, err := dispatchScheduleTask(t, "/schedule-task 24H1M too late", command.PermissionFacts{FromMe: true}, conversation.IncomingMessage{})
 	if err != nil || tasks.calls != 0 || len(sent.sent) != 1 || sent.sent[0] != "A task can be scheduled at most 24 hours ahead." {
 		t.Fatalf("err=%v calls=%d sent=%q", err, tasks.calls, sent.sent)
 	}
-	tasks, _, err = dispatchScheduleTask(t, "/schedule-task 24H just in time", command.PermissionFacts{IsOwner: true}, conversation.IncomingMessage{})
+	tasks, _, err = dispatchScheduleTask(t, "/schedule-task 24H just in time", command.PermissionFacts{FromMe: true}, conversation.IncomingMessage{})
 	if err != nil || tasks.calls != 1 {
 		t.Fatalf("24H: err=%v calls=%d", err, tasks.calls)
 	}
 }
 
-func TestTaskCommandPermissions(t *testing.T) {
-	people := []struct {
-		who   string
-		facts command.PermissionFacts
-	}{
-		{"owner", command.PermissionFacts{IsOwner: true, IsPrivate: true}},
-		{"group admin", command.PermissionFacts{IsAdmin: true, IsGroup: true}},
-		{"member", command.PermissionFacts{IsGroup: true}},
-		{"stranger in private", command.PermissionFacts{IsPrivate: true}},
-		{"bot for a member", command.PermissionFacts{FromMe: true, IsGroup: true, HasRequester: true}},
-		{"bot for an admin", command.PermissionFacts{FromMe: true, IsGroup: true, HasRequester: true, RequesterIsAdmin: true}},
-		{"bot for the owner", command.PermissionFacts{FromMe: true, IsPrivate: true, HasRequester: true, RequesterIsOwner: true}},
-		{"bot in a firing task", command.PermissionFacts{FromMe: true, IsGroup: true}},
-	}
-	// Reminders are for everyone; daily tasks only for the owner and admins.
-	// A firing task, which nobody asked for, may create neither.
-	want := map[string][]bool{
-		"/schedule-task 1H hi": {true, true, true, true, true, true, true, false},
-		"/daily-task 07:00 hi": {true, true, false, false, false, true, true, false},
-	}
-	for text, allowed := range want {
-		for index, person := range people {
-			tasks, _, err := dispatchTaskCommand(t, &recordingTasks{}, text, person.facts, conversation.IncomingMessage{})
-			got := !errors.Is(err, command.ErrDenied)
-			if got != allowed[index] || (got && (err != nil || tasks.calls != 1)) {
-				t.Errorf("%s by %s: err=%v calls=%d, want allowed=%v", text, person.who, err, tasks.calls, allowed[index])
+func TestTaskCommandsAreBotOnly(t *testing.T) {
+	for _, text := range []string{"/schedule-task 1H hi", "/daily-task 07:00 hi"} {
+		// The inbound handler sends DeniedReply to a person who types it.
+		if _, cmd, _ := builtinRegistry(t).Parse(text); !strings.HasPrefix(cmd.DeniedReply, "Just ask me") {
+			t.Errorf("%s denied reply = %q", text, cmd.DeniedReply)
+		}
+		for _, test := range []struct {
+			who   string
+			facts command.PermissionFacts
+			want  bool
+		}{
+			{"owner", command.PermissionFacts{IsOwner: true, IsPrivate: true}, false},
+			{"group admin", command.PermissionFacts{IsAdmin: true, IsGroup: true}, false},
+			{"member", command.PermissionFacts{IsGroup: true}, false},
+			{"bot", command.PermissionFacts{FromMe: true, IsGroup: true}, true},
+		} {
+			tasks, sent, err := dispatchTaskCommand(t, &recordingTasks{}, text, test.facts, conversation.IncomingMessage{})
+			allowed := !errors.Is(err, command.ErrDenied)
+			if allowed != test.want || (allowed && (err != nil || tasks.calls != 1)) || (!allowed && tasks.calls != 0) {
+				t.Errorf("%s by %s: err=%v calls=%d sent=%q, want allowed=%v", text, test.who, err, tasks.calls, sent.sent, test.want)
 			}
 		}
 	}
 }
 
 func TestTaskCommandsListAndDeleteTheirOwnKind(t *testing.T) {
-	owner := command.PermissionFacts{IsOwner: true, IsGroup: true}
+	owner := command.PermissionFacts{FromMe: true, IsGroup: true}
 	zone := time.FixedZone("", 7*60*60)
 	saved := []command.Task{
 		{Code: "a1b2c3", Prompt: "remind about the meeting", FireAt: time.Date(2026, 9, 28, 20, 30, 0, 0, zone)},
@@ -192,7 +187,7 @@ func TestTaskCommandsListAndDeleteTheirOwnKind(t *testing.T) {
 }
 
 func TestDailyTaskSchedulesAtTheGivenTime(t *testing.T) {
-	tasks, sent, err := dispatchTaskCommand(t, &recordingTasks{}, "/daily-task 7.05 say good morning", command.PermissionFacts{IsOwner: true, IsGroup: true}, conversation.IncomingMessage{})
+	tasks, sent, err := dispatchTaskCommand(t, &recordingTasks{}, "/daily-task 7.05 say good morning", command.PermissionFacts{FromMe: true, IsGroup: true}, conversation.IncomingMessage{})
 	if err != nil || tasks.minute != 7*60+5 || tasks.prompt != "say good morning" {
 		t.Fatalf("err=%v minute=%d prompt=%q", err, tasks.minute, tasks.prompt)
 	}
@@ -226,7 +221,7 @@ func TestParseDailyTaskArgs(t *testing.T) {
 
 func TestScheduleTaskCountsFromWhenTheMessageArrived(t *testing.T) {
 	received := time.Now().Add(-2 * time.Hour)
-	tasks, _, err := dispatchScheduleTask(t, "/schedule-task 1H late", command.PermissionFacts{IsOwner: true}, conversation.IncomingMessage{ReceivedAt: received})
+	tasks, _, err := dispatchScheduleTask(t, "/schedule-task 1H late", command.PermissionFacts{FromMe: true}, conversation.IncomingMessage{ReceivedAt: received})
 	if err != nil || !tasks.fireAt.Equal(received.Add(time.Hour)) {
 		t.Fatalf("err=%v fireAt=%v, want %v", err, tasks.fireAt, received.Add(time.Hour))
 	}

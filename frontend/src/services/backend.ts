@@ -63,6 +63,9 @@ export const sendWhatsAppBroadcast = (...args: Parameters<Service["SendWhatsAppB
 export const getWhatsAppChatSettings = (chatID: string) => call("GetWhatsAppChatSettings", chatID);
 export const saveWhatsAppChatSettings = (...args: Parameters<Service["SaveWhatsAppChatSettings"]>) => call("SaveWhatsAppChatSettings", ...args);
 export const resetWhatsAppChatSettings = (...args: Parameters<Service["ResetWhatsAppChatSettings"]>) => call("ResetWhatsAppChatSettings", ...args);
-export const sendWhatsAppMessage = (chatID: string, text: string, replyToMessageID = "") => call("SendWhatsAppMessage", chatID, text, replyToMessageID);
+export const getWhatsAppChatTasks = (chatID: string) => call("GetWhatsAppChatTasks", chatID).then(list);
+export const addWhatsAppChatTask = (...args: Parameters<Service["AddWhatsAppChatTask"]>) => call("AddWhatsAppChatTask", ...args);
+export const deleteWhatsAppChatTask = (chatID: string, taskID: string, daily: boolean) => call("DeleteWhatsAppChatTask", chatID, taskID, daily);
+export const sendWhatsAppMessage =(chatID: string, text: string, replyToMessageID = "") => call("SendWhatsAppMessage", chatID, text, replyToMessageID);
 export const deleteWhatsAppMessage = (chatID: string, messageID: string) => call("DeleteWhatsAppMessage", chatID, messageID);
 export const kickWhatsAppGroupMember = (chatID: string, memberID: string) => call("KickWhatsAppGroupMember", chatID, memberID);

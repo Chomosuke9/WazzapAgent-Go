@@ -17,9 +17,6 @@ type ConfigReader interface {
 
 type ChatAccess interface {
 	IsChatAllowlisted(context.Context, agent.Key) (bool, error)
-	// ReadRequester returns the human whose message started the turn with
-	// this invocation ID; ok is false for turns no human started.
-	ReadRequester(context.Context, agent.Key, identity.InvocationID) (principal Principal, ok bool, err error)
 	HumanAccessReader
 }
 
@@ -108,28 +105,6 @@ func (gate *FixedGate) triggered(ctx context.Context, message conversation.Incom
 	return respond
 }
 
-// requesterRole reads, from current records, whether a human who is still
-// current started the model's turn, and whether they are the owner or a
-// group admin. A turn no human started (a scheduled task) has no requester.
-func (gate *FixedGate) requesterRole(ctx context.Context, model Principal) (requested, owner, admin bool, err error) {
-	requester, ok, err := gate.chats.ReadRequester(ctx, model.Key(), model.InvocationID)
-	if err != nil || !ok {
-		return false, false, false, err
-	}
-	access, err := gate.chats.ReadHumanAccess(ctx, requester)
-	if agent.IsCode(err, agent.ErrorNotFound) {
-		return false, false, false, nil
-	}
-	if err != nil {
-		return false, false, false, err
-	}
-	authority, err := gate.authority.ReadChatAuthority(ctx, requester)
-	if err != nil {
-		return false, false, false, err
-	}
-	return true, access.ConfiguredOwner, authority.ActorIsAdmin, nil
-}
-
 // CommandPermissionFacts resolves the facts consumed by a command's
 // declarative permission expression. Human facts come from the current
 // durable participant/chat record plus the latest synchronized group snapshot. A
@@ -214,16 +189,14 @@ func (gate *FixedGate) CommandPermissionFacts(
 		if err := authority.Validate(); err != nil {
 			return PermissionFacts{}, err
 		}
-		facts := PermissionFacts{
+		return PermissionFacts{
 			IsOwner:    false,
 			IsAdmin:    authority.BotIsAdmin,
 			BotIsAdmin: authority.BotIsAdmin,
 			IsGroup:    authority.ChatKind == conversation.ChatGroup,
 			IsPrivate:  authority.ChatKind == conversation.ChatDirect,
 			FromMe:     true,
-		}
-		facts.HasRequester, facts.RequesterIsOwner, facts.RequesterIsAdmin, err = gate.requesterRole(ctx, principal)
-		return facts, err
+		}, nil
 	default:
 		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("only human or model principals may dispatch commands"))
 	}

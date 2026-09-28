@@ -16,6 +16,7 @@ import {
   type WhatsAppMessageDTO,
   type WhatsAppQuoteDTO,
 } from "../services/backend";
+import { ChatTasks } from "./ChatTasks";
 
 function conversationKind(kind: string): string {
   if (kind === "group") return "Group";
@@ -594,6 +595,7 @@ export function ChatPage() {
                           placeholder="Example: Keep replies concise and use English." />
                       </label>
                     </section>
+                    <ChatTasks chatID={selectedChatID} />
                     {selectedConversation?.kind === "group" && <section className="chat-settings-section group-settings-section">
                       <header><span><h2>Group members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot account is an admin" : " · bot account is not an admin"}</p></span>
                         <button type="button" className="secondary-button" disabled={loadingMembers} onClick={() => setMemberRefresh((value) => value + 1)}>

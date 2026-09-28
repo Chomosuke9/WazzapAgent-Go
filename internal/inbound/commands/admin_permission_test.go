@@ -6,29 +6,23 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 )
 
-func TestChatConfigCommandsAllowGroupAdminsAndTheBotOnlyForThem(t *testing.T) {
+func TestChatConfigCommandsAllowOwnerGroupAdminsAndTheBot(t *testing.T) {
 	registry := builtinRegistry(t)
 	owner := command.PermissionFacts{IsOwner: true, IsGroup: true}
 	admin := command.PermissionFacts{IsGroup: true, IsAdmin: true}
 	member := command.PermissionFacts{IsGroup: true}
 	private := command.PermissionFacts{IsPrivate: true}
-	bot := command.PermissionFacts{IsGroup: true, IsAdmin: true, IsOwner: true, FromMe: true}
-	botForAdmin := command.PermissionFacts{IsGroup: true, FromMe: true, RequesterIsAdmin: true}
-	botForOwner := command.PermissionFacts{IsPrivate: true, FromMe: true, RequesterIsOwner: true}
-	botForAdminInPrivate := command.PermissionFacts{IsPrivate: true, FromMe: true, RequesterIsAdmin: true}
+	bot := command.PermissionFacts{IsGroup: true, IsAdmin: true, FromMe: true}
+	botInPrivate := command.PermissionFacts{IsPrivate: true, FromMe: true}
 	tests := []struct {
 		command string
 		facts   command.PermissionFacts
 		want    bool
 	}{
-		{"/prompt", owner, true}, {"/prompt", admin, true}, {"/prompt", member, false}, {"/prompt", private, false}, {"/prompt", bot, false},
+		{"/prompt", owner, true}, {"/prompt", admin, true}, {"/prompt", member, false}, {"/prompt", private, false}, {"/prompt", bot, true}, {"/prompt", botInPrivate, true},
 		{"/reset", owner, true}, {"/reset", admin, true}, {"/reset", member, false}, {"/reset", private, false}, {"/reset", bot, false},
-		{"/permission", owner, true}, {"/permission", admin, true}, {"/permission", member, false}, {"/permission", private, false}, {"/permission", bot, false},
-		{"/prompt", botForAdmin, true}, {"/prompt", botForOwner, true}, {"/prompt", botForAdminInPrivate, false},
-		{"/permission", botForAdmin, true}, {"/permission", botForOwner, true},
-		{"/reset", botForAdmin, false}, {"/reset", botForOwner, false},
-		{"/trigger", botForAdmin, true}, {"/trigger", botForOwner, false}, {"/trigger", bot, false},
-		{"/trigger", command.PermissionFacts{IsGroup: true, FromMe: true, RequesterIsOwner: true}, true},
+		{"/permission", owner, true}, {"/permission", admin, true}, {"/permission", member, false}, {"/permission", private, false}, {"/permission", bot, true},
+		{"/trigger", owner, true}, {"/trigger", admin, true}, {"/trigger", member, false}, {"/trigger", bot, true}, {"/trigger", botInPrivate, false},
 	}
 	for _, test := range tests {
 		_, cmd, recognized := registry.Parse(test.command)

@@ -20,10 +20,9 @@ const maxScheduleTaskDelay = 24 * time.Hour
 func init() {
 	register(command.Command{
 		Name: "schedule-task",
-		// Anyone may set a reminder, and the bot may for anyone who asked. A
-		// firing task has no requester, so it cannot schedule another task.
-		// A task's turn can only reply, react and send stickers.
-		Permission: "!fromMe or requester",
+		// Only the bot runs it: people ask the bot, and the bot decides.
+		Permission:  "fromMe",
+		DeniedReply: "Just ask me, for example: remind me in 30 minutes to check the oven.",
 		Description: "Runs a task once, later, in this chat. Format: /schedule-task <duration> <task>. " +
 			"The duration combines hours (H) and minutes (M), for example 2H30M, 2H, or 45M, up to 24H. " +
 			"Example: /schedule-task 1H30M Remind @Budi (a1b2c3) about the meeting. " +

@@ -125,7 +125,7 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 	}
 }
 
-func TestTriggerPermissionAllowsOwnerOrGroupAdmin(t *testing.T) {
+func TestTriggerPermissionAllowsOwnerGroupAdminOrTheBotInGroups(t *testing.T) {
 	_, trigger, _ := builtinRegistry(t).Parse("/trigger")
 	tests := []struct {
 		name  string
@@ -138,8 +138,8 @@ func TestTriggerPermissionAllowsOwnerOrGroupAdmin(t *testing.T) {
 		{name: "admin in private chat", facts: command.PermissionFacts{IsAdmin: true, IsPrivate: true}, want: false},
 		{name: "owner without group fact", facts: command.PermissionFacts{IsOwner: true}, want: false},
 		{name: "ordinary group member", facts: command.PermissionFacts{IsGroup: true}, want: false},
-		{name: "bot group admin", facts: command.PermissionFacts{IsGroup: true, IsAdmin: true, FromMe: true}, want: false},
-		{name: "bot owner", facts: command.PermissionFacts{IsOwner: true, FromMe: true}, want: false},
+		{name: "bot in group", facts: command.PermissionFacts{IsGroup: true, FromMe: true}, want: true},
+		{name: "bot in private chat", facts: command.PermissionFacts{IsPrivate: true, FromMe: true}, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

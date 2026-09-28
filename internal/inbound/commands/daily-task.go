@@ -18,12 +18,12 @@ import (
 func init() {
 	register(command.Command{
 		Name: "daily-task",
-		// Like /schedule-task, the task runs as a trusted system turn.
-		Permission: "(owner or (admin and group)) and !fromMe or fromMe and (requesterOwner or (requesterAdmin and group))",
+		// Only the bot runs it: people ask the bot, and the bot decides.
+		Permission: "fromMe",
 		Description: "Runs a task in this chat every day at a set time. Format: /daily-task <HH:MM> <task>, " +
 			"with a 24-hour time in the bot's time zone. Example: /daily-task 07:00 Say good morning to everyone. " +
 			"/daily-task list shows the daily tasks; /daily-task delete <ID> deletes one.",
-		DeniedReply: "The /daily-task command can only be used by group admins or the owner.",
+		DeniedReply: "Just ask me, for example: every day at 07:00, say good morning.",
 		Run:         runDailyTask,
 	})
 }

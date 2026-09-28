@@ -162,9 +162,6 @@ func (fixedGroupChatAccess) ReadHumanAccess(context.Context, policy.Principal) (
 }
 
 func (fixedChatAccess) IsChatAllowlisted(context.Context, agent.Key) (bool, error) { return true, nil }
-func (fixedChatAccess) ReadRequester(context.Context, agent.Key, identity.InvocationID) (policy.Principal, bool, error) {
-	return policy.Principal{}, false, nil
-}
 func (fixedChatAccess) ReadHumanAccess(context.Context, policy.Principal) (policy.HumanAccess, error) {
 	return policy.HumanAccess{ChatKind: conversation.ChatDirect, Allowlisted: true}, nil
 }
@@ -185,59 +182,4 @@ func fixedEffectKey(t *testing.T) agent.Key {
 	accountID, _ := identity.NewAccountID()
 	chatID, _ := identity.NewChatID()
 	return agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}
-}
-
-type requesterChatAccess struct {
-	fixedGroupChatAccess
-	requester policy.Principal
-	found     bool
-}
-
-func (access requesterChatAccess) ReadRequester(context.Context, agent.Key, identity.InvocationID) (policy.Principal, bool, error) {
-	return access.requester, access.found, nil
-}
-
-type roleAuthority struct{ humanIsAdmin bool }
-
-func (authority roleAuthority) ReadChatAuthority(_ context.Context, principal policy.Principal) (policy.ChatAuthority, error) {
-	return policy.ChatAuthority{
-		ChatKind: conversation.ChatGroup, ObservedAt: time.Now().UnixMilli(),
-		ActorIsAdmin: principal.Kind == policy.PrincipalHuman && authority.humanIsAdmin,
-	}, nil
-}
-
-func TestModelCommandFactsCarryTheRequesterRole(t *testing.T) {
-	key := fixedEffectKey(t)
-	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
-	permission := agent.PermissionConfig{PolicyID: policyID, Revision: 1}
-	configs := &fixedConfigReader{snapshot: agent.ConfigSnapshot{Version: 1, Permission: permission}}
-	human, err := policy.HumanPrincipal(fixedInvocationMessage(t, key, conversation.ChatGroup, "bot, turn smart on"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	invocationID, _ := identity.NewInvocationID()
-	model, _ := policy.ModelPrincipal(key, invocationID)
-	for _, test := range []struct {
-		name      string
-		found     bool
-		admin     bool
-		wantAdmin bool
-	}{
-		{"admin asked", true, true, true},
-		{"member asked", true, false, false},
-		{"no human asked", false, true, false},
-	} {
-		chats := requesterChatAccess{requester: human, found: test.found}
-		gate, err := policy.NewFixedGate(policyID, 1, configs, chats, roleAuthority{humanIsAdmin: test.admin}, "", true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		facts, err := gate.CommandPermissionFacts(context.Background(), model, permission, true)
-		if err != nil {
-			t.Fatalf("%s: %v", test.name, err)
-		}
-		if facts.HasRequester != test.found || facts.RequesterIsAdmin != test.wantAdmin || facts.RequesterIsOwner || facts.IsAdmin || !facts.FromMe {
-			t.Fatalf("%s: facts = %+v", test.name, facts)
-		}
-	}
 }

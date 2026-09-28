@@ -7,6 +7,7 @@ export {
 };
 
 export type {
+    AddWhatsAppChatTaskRequestDTO,
     AgentRuntimeStatusDTO,
     AppInfo,
     ApplyAgentSettingsRequestDTO,
@@ -32,6 +33,7 @@ export type {
     WhatsAppBroadcastScheduleDTO,
     WhatsAppBroadcastScheduleResultDTO,
     WhatsAppChatSettingsDTO,
+    WhatsAppChatTaskDTO,
     WhatsAppConversationDTO,
     WhatsAppDailyUsageDTO,
     WhatsAppGroupMemberDTO,

@@ -14,7 +14,7 @@ import (
 func init() {
 	register(command.Command{
 		Name:       "trigger",
-		Permission: "((owner or isAdmin) and !fromMe or fromMe and (requesterOwner or requesterAdmin)) and isGroup",
+		Permission: "(owner or isAdmin or fromMe) and isGroup",
 		Description: "Configures when the Agent responds in this group: /trigger view, /trigger mention|name|reply|smart on|off, " +
 			"/trigger smart add <rule>, /trigger smart remove <number>, /trigger smart set <rules, one per line>, /trigger smart clear, " +
 			"/trigger regex on|off, /trigger pattern <regex>. Only the owner or a group admin can use it in a group.",

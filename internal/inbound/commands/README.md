@@ -118,17 +118,12 @@ button tap:
 - Operators, highest precedence first: `!`, `and`, `or`. Use parentheses.
 - Commands the AI model issues inside its reply run with `fromMe=true`. Add
   `and !fromMe` when the bot must not run the command itself.
-- For the bot, `requester` is true when a person's message woke it (a firing
-  scheduled task has none), and `requesterOwner` / `requesterAdmin` say
-  whether that person is the owner or a group admin. Use them to let the bot
-  act for someone who asked.
 
 ```go
 Permission: "public"                                      // anyone, including the bot
 Permission: "owner and !fromMe"                           // configured owner only
 Permission: "(owner or isAdmin) and isGroup and !fromMe"  // owner or admin, in groups
-Permission: "!fromMe or requester"                        // anyone, or the bot for anyone who asked
-Permission: "(owner or (admin and group)) and !fromMe or fromMe and (requesterOwner or (requesterAdmin and group))" // owner or admin, typed or asked for
+Permission: "fromMe"                                      // only the bot; people ask it
 ```
 
 Never check permissions inside `Run`. The registry has already done it.

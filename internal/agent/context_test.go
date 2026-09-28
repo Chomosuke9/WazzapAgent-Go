@@ -74,7 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
-		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive settings (all but one-off tasks): change them only when the owner or a group admin asks.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time in the bot's time zone (UTC):\n- none\n</chat_state>"},
+		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time in the bot's time zone (UTC):\n- none\n</chat_state>"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
@@ -344,7 +344,7 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 		Permission:     PermissionConfig{ModerationLevel: ModerationDelete},
 		PromptOverride: &PromptOverride{Mode: PromptReplace, Text: "x"},
 	}
-	want := "<chat_state>\nSensitive settings (all but one-off tasks): change them only when the owner or a group admin asks.\n" +
+	want := "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\n" +
 		"Settings of this chat (the command in brackets changes it):\n" +
 		"- Triggers [/trigger]: mention on, name off, reply to bot on, smart off\n" +
 		"  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
