@@ -29,9 +29,9 @@ func (adapter *Adapter) broadcastForGroup(ctx context.Context, format string, me
 
 // renderBroadcastMentions turns typed mentions into WhatsApp wire mentions.
 // "@all" is WhatsApp's own everyone mention, "@admin" tags every admin, and a
-// phone number tags that member under the address the group uses (LID or
-// phone). Only "@admin" needs the member list; a number that can't be looked
-// up is still mentioned by phone number.
+// phone number tags that member by LID when the group knows one. Only
+// "@admin" needs the member list; a number that can't be looked up is still
+// mentioned by phone number.
 func renderBroadcastMentions(text string, group types.JID, info types.GroupInfo, infoErr error) (*waE2E.Message, error) {
 	contextInfo := &waE2E.ContextInfo{}
 	seen := map[string]struct{}{}
@@ -64,14 +64,14 @@ func renderBroadcastMentions(text string, group types.JID, info types.GroupInfo,
 			}
 			for _, participant := range info.Participants {
 				if participant.IsAdmin || participant.IsSuperAdmin {
-					addMention(participant.JID)
+					addMention(mentionAddress(participant))
 				}
 			}
 		default:
 			member := types.NewJID(strings.TrimPrefix(token, "+"), types.DefaultUserServer)
 			for _, participant := range info.Participants {
 				if participant.PhoneNumber.User == member.User || participant.JID.User == member.User {
-					member = participant.JID
+					member = mentionAddress(participant)
 					break
 				}
 			}
@@ -86,4 +86,13 @@ func renderBroadcastMentions(text string, group types.JID, info types.GroupInfo,
 	return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 		Text: proto.String(rendered.String()), ContextInfo: contextInfo,
 	}}, nil
+}
+
+// mentionAddress is the JID a mention of participant must carry: its LID
+// when known, as in groupAdmins, else its primary JID.
+func mentionAddress(participant types.GroupParticipant) types.JID {
+	if !participant.LID.IsEmpty() {
+		return participant.LID
+	}
+	return participant.JID
 }

@@ -12,7 +12,7 @@ func TestRenderBroadcastMentions(t *testing.T) {
 	group := types.NewJID("120363000000000000", types.GroupServer)
 	lid := types.NewJID("111222333444555", types.HiddenUserServer)
 	info := types.GroupInfo{Participants: []types.GroupParticipant{
-		{JID: lid, LID: lid, PhoneNumber: types.NewJID("628111", types.DefaultUserServer), IsAdmin: true},
+		{JID: types.NewJID("628111", types.DefaultUserServer), LID: lid, PhoneNumber: types.NewJID("628111", types.DefaultUserServer), IsAdmin: true},
 		{JID: types.NewJID("628222", types.DefaultUserServer)},
 	}}
 
