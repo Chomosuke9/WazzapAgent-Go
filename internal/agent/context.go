@@ -41,9 +41,24 @@ type ChatContext struct {
 	BotIsAdmin  bool
 	// Tasks are the chat's pending one-off and daily tasks, soonest first.
 	Tasks []ScheduledTaskSummary
-	// TimeZone is the bot's time zone, which daily tasks follow, as a UTC
-	// offset such as "UTC+07:00".
-	TimeZone string
+	// Location is the bot's time zone. Message times, task times and daily
+	// tasks all use it; nil means UTC.
+	Location *time.Location
+}
+
+func (chat ChatContext) location() *time.Location {
+	if chat.Location == nil {
+		return time.UTC
+	}
+	return chat.Location
+}
+
+// utcOffset writes the offset of t's zone as "UTC+07:00", or "UTC".
+func utcOffset(t time.Time) string {
+	if _, offset := t.Zone(); offset == 0 {
+		return "UTC"
+	}
+	return "UTC" + t.Format("-07:00")
 }
 
 // ScheduledTaskSummary is one /schedule-task or /daily-task entry as the
@@ -51,8 +66,7 @@ type ChatContext struct {
 type ScheduledTaskSummary struct {
 	// Code is the short ID the delete commands take.
 	Code string
-	// FireAt is the next run. A daily task shows its time of day as read in
-	// FireAt's location, the bot's time zone.
+	// FireAt is the next run, shown in the bot's time zone.
 	FireAt time.Time
 	Daily  bool
 	Prompt string
@@ -156,7 +170,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 			}
 			currentFound = true
 		}
-		rendered, err := serializeHistoryEntry(entry, mentionNames, builder.assistantName)
+		rendered, err := serializeHistoryEntry(entry, mentionNames, builder.assistantName, request.Chat.location())
 		if err != nil {
 			return nil, err
 		}
@@ -299,21 +313,19 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	}
 	lines = append(lines, "- Custom instructions [/prompt]: "+custom+" (the text is in <prompt_override>)")
 	var once, daily []string
+	location := chat.location()
 	for _, task := range chat.Tasks {
 		prompt := sanitizeContextMetadata(task.Prompt)
 		if task.Daily {
-			daily = append(daily, "- ["+task.Code+"] every day at "+task.FireAt.Format("15:04")+": "+prompt)
+			daily = append(daily, "- ["+task.Code+"] every day at "+task.FireAt.In(location).Format("15:04")+": "+prompt)
 		} else {
-			once = append(once, "- ["+task.Code+"] "+task.FireAt.UTC().Format("2006-01-02 15:04 UTC")+": "+prompt)
+			once = append(once, "- ["+task.Code+"] "+task.FireAt.In(location).Format("2006-01-02 15:04")+": "+prompt)
 		}
 	}
-	zone := chat.TimeZone
-	if zone == "" {
-		zone = "UTC"
-	}
+	lines = append(lines, "Times here and in the chat transcript are in the bot's time zone, "+utcOffset(time.Now().In(location))+".")
 	lines = append(lines, "One-off tasks [/schedule-task], open to everyone; [ID] then time:")
 	lines = append(lines, orNone(once)...)
-	lines = append(lines, "Daily tasks [/daily-task], [ID] then time in the bot's time zone ("+zone+"):")
+	lines = append(lines, "Daily tasks [/daily-task], [ID] then time:")
 	lines = append(lines, orNone(daily)...)
 	lines = append(lines, "</chat_state>")
 	return strings.Join(lines, "\n")
@@ -345,7 +357,7 @@ func onOff(enabled bool) string {
 	return "off"
 }
 
-func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
+func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string, location *time.Location) (string, error) {
 	text := flattenContent(entry.Content)
 	if entry.Role != HistoryAssistant {
 		// System entries carry task text someone in the chat wrote.
@@ -358,12 +370,8 @@ func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, a
 		entry.Quote.Text = renderMentionView(entry.Quote.Text, entry.Quote.Mentions, mentionNames, assistantName)
 	}
 	switch entry.Role {
-	case HistoryUser:
-		return formatCompactHistoryEntry(entry, text, assistantName), nil
-	case HistoryAssistant:
-		return formatCompactHistoryEntry(entry, text, assistantName), nil
-	case HistorySystem:
-		return formatCompactHistoryEntry(entry, text, assistantName), nil
+	case HistoryUser, HistoryAssistant, HistorySystem:
+		return formatCompactHistoryEntry(entry, text, assistantName, location), nil
 	default:
 		return "", NewError(ErrorIntegrityFailure, "serialize model context", fmt.Errorf("unsupported history role"))
 	}
@@ -428,8 +436,8 @@ func cleanMentionName(name string) string {
 //	Alice 【012345】: lanjutkan
 //
 // The bot's own messages, and quotes of them, use "<assistant name> 【Bot】".
-func formatCompactHistoryEntry(entry HistoryEntry, text, assistantName string) string {
-	timestamp := entry.CreatedAt.UTC().Format("15:04")
+func formatCompactHistoryEntry(entry HistoryEntry, text, assistantName string, location *time.Location) string {
+	timestamp := entry.CreatedAt.In(location).Format("15:04")
 	if entry.Role == HistorySystem {
 		return fmt.Sprintf("【#system】 %s\nSYSTEM: %s", timestamp, text)
 	}
