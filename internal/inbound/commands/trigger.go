@@ -69,6 +69,19 @@ func parseTriggerArgs(args string) (func(*agent.TriggerConfig), bool) {
 	if !hasValue {
 		return nil, false
 	}
+	if field == "smart" {
+		// Rules may start on the next line: "/trigger smart set\nrule 1\nrule 2".
+		if rules, ok := strings.CutPrefix(value, "set"); ok && rules != "" && strings.TrimLeft(rules, " \t\r\n") != rules {
+			rules = strings.TrimSpace(rules)
+			if rules == "" {
+				return nil, false
+			}
+			return func(triggers *agent.TriggerConfig) { triggers.Smart, triggers.SmartRules = true, rules }, true
+		}
+		if value == "clear" {
+			return func(triggers *agent.TriggerConfig) { triggers.SmartRules = "" }, true
+		}
+	}
 	if field == "pattern" {
 		if value == "" || !utf8.ValidString(value) || len(value) > agent.MaxTriggerPatternBytes {
 			return nil, false
@@ -107,8 +120,12 @@ func formatTriggers(triggers agent.TriggerConfig) string {
 	if triggers.NameRegex {
 		nameDetail = "regex: " + strconv.Quote(triggers.NamePattern)
 	}
-	return fmt.Sprintf("Group triggers:\n• mention: %s\n• name: %s (%s)\n• reply to bot: %s\n• smart (TypeSafe judges if a message is for the bot): %s",
+	text := fmt.Sprintf("Group triggers:\n• mention: %s\n• name: %s (%s)\n• reply to bot: %s\n• smart (TypeSafe judges if a message is worth a response): %s",
 		onOff(triggers.Mention), onOff(triggers.Name), nameDetail, onOff(triggers.Reply), onOff(triggers.Smart))
+	for index, rule := range triggers.SmartRuleList() {
+		text += fmt.Sprintf("\n   rule %d: %s", index+1, rule)
+	}
+	return text
 }
 
 func onOff(enabled bool) string {
@@ -119,5 +136,5 @@ func onOff(enabled bool) string {
 }
 
 func triggerUsage() string {
-	return fmt.Sprintf("Usage: /trigger view, /trigger mention on|off, /trigger name on|off, /trigger reply on|off, /trigger smart on|off, /trigger regex on|off, or /trigger pattern <regex>. The pattern uses Go regex syntax and automatically enables the name trigger and regex mode; maximum length is %d bytes.", agent.MaxTriggerPatternBytes)
+	return fmt.Sprintf("Usage: /trigger view, /trigger mention on|off, /trigger name on|off, /trigger reply on|off, /trigger smart on|off, /trigger smart set <rules>, /trigger smart clear, /trigger regex on|off, or /trigger pattern <regex>. The pattern uses Go regex syntax and automatically enables the name trigger and regex mode; maximum length is %d bytes. Smart rules are one per line (at most %d), for example \"someone sends a scam link\"; a message matching one wakes the Agent, and the Agent sees the rules.", agent.MaxTriggerPatternBytes, agent.MaxSmartRules)
 }

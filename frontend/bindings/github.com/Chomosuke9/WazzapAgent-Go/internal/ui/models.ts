@@ -90,6 +90,7 @@ export interface SaveWhatsAppChatSettingsRequestDTO {
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
     "triggerSmart": boolean;
+    "triggerSmartRules": string;
 }
 
 export interface ScheduleWhatsAppBroadcastRequestDTO {
@@ -244,6 +245,7 @@ export interface WhatsAppChatSettingsDTO {
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
     "triggerSmart": boolean;
+    "triggerSmartRules": string;
 }
 
 export interface WhatsAppConversationDTO {

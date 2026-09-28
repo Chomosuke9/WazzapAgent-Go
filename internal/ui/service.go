@@ -177,6 +177,7 @@ type WhatsAppChatSettingsDTO struct {
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
 	TriggerSmart       bool   `json:"triggerSmart"`
+	TriggerSmartRules  string `json:"triggerSmartRules"`
 }
 
 type SaveWhatsAppChatSettingsRequestDTO struct {
@@ -191,6 +192,7 @@ type SaveWhatsAppChatSettingsRequestDTO struct {
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
 	TriggerSmart       bool   `json:"triggerSmart"`
+	TriggerSmartRules  string `json:"triggerSmartRules"`
 }
 
 type ResetWhatsAppChatSettingsRequestDTO struct {
@@ -607,7 +609,7 @@ func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRe
 		settings, actionErr = runtime.SaveChatSettings(ctx, request.ChatID, control.AgentChatSettingsUpdate{
 			ExpectedVersion: agent.ConfigVersion(expectedVersion), ModerationLevel: agent.ModerationLevel(request.ModerationLevel),
 			PromptOverrideMode: mode, PromptOverrideText: request.PromptOverrideText,
-			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern, Smart: request.TriggerSmart},
+			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern, Smart: request.TriggerSmart, SmartRules: request.TriggerSmartRules},
 		})
 		return actionErr
 	})
@@ -631,7 +633,7 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 		PromptOverrideMode: mode, PromptOverrideText: settings.PromptOverrideText,
 		TriggerMention: settings.Triggers.Mention, TriggerName: settings.Triggers.Name, TriggerReply: settings.Triggers.Reply,
 		TriggerNameRegex: settings.Triggers.NameRegex, TriggerNamePattern: settings.Triggers.NamePattern,
-		TriggerSmart: settings.Triggers.Smart,
+		TriggerSmart: settings.Triggers.Smart, TriggerSmartRules: settings.Triggers.SmartRules,
 	}
 }
 

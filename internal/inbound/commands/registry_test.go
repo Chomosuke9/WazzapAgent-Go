@@ -79,11 +79,29 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 		{args: "name maybe", ok: false},
 		{args: "pattern ", ok: false},
 		{args: "mention", ok: false},
+		{args: "smart on", ok: true},
+		{args: "smart clear", ok: true},
+		{args: "smart set ", ok: false},
+		{args: "smart settings", ok: false},
 	}
 	for _, test := range triggerTests {
 		if _, ok := parseTriggerArgs(test.args); ok != test.ok {
 			t.Fatalf("trigger %q ok = %v, want %v", test.args, ok, test.ok)
 		}
+	}
+	change, ok := parseTriggerArgs("smart set\nsomeone sends a scam link\nsomeone asks about prices")
+	if !ok {
+		t.Fatal("multi-line smart rules were rejected")
+	}
+	triggers := agent.TriggerConfig{}
+	change(&triggers)
+	if !triggers.Smart || triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices" {
+		t.Fatalf("smart set = %#v", triggers)
+	}
+	clear, _ := parseTriggerArgs("smart clear")
+	clear(&triggers)
+	if !triggers.Smart || triggers.SmartRules != "" {
+		t.Fatalf("smart clear = %#v", triggers)
 	}
 }
 

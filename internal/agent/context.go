@@ -108,7 +108,7 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	})
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenanceChatInformation,
-		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel),
+		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel, request.Config.Triggers),
 	})
 	type builtHistoryEntry struct {
 		rendered     string
@@ -201,7 +201,7 @@ func wrapUntrustedChatHistory(transcript string) string {
 	return "<untrusted_chat_history>\n" + transcript + "\n</untrusted_chat_history>"
 }
 
-func formatChatInformation(chat ChatContext, level ModerationLevel) string {
+func formatChatInformation(chat ChatContext, level ModerationLevel, triggers TriggerConfig) string {
 	name := sanitizeContextMetadata(chat.Name)
 	description := sanitizeContextMetadata(chat.Description)
 	if name == "" {
@@ -239,6 +239,12 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 		fmt.Sprintf("- Bot moderation permission: %d", effectiveLevel),
 		"- Bot moderation capabilities: "+capabilities+" (configured maximum; command permissions apply separately)",
 	)
+	if rules := triggers.SmartRuleList(); chat.Kind == "group" && triggers.Smart && len(rules) > 0 {
+		lines = append(lines, "- Group admin rules (you are also woken when a message matches one; follow them):")
+		for index, rule := range rules {
+			lines = append(lines, fmt.Sprintf("  %d. %s", index+1, sanitizeContextMetadata(rule)))
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

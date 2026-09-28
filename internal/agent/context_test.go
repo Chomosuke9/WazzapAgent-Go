@@ -331,3 +331,16 @@ func TestValidateModelMessagesRejectsDuplicateCurrentProvenance(t *testing.T) {
 		t.Fatalf("duplicate current provenance error = %v, want invalid_argument", err)
 	}
 }
+
+func TestChatInformationListsSmartRulesOnlyWhenSmartIsOn(t *testing.T) {
+	chat := ChatContext{Kind: "group", Name: "Tim"}
+	triggers := TriggerConfig{SmartRules: "delete scam links\n\n  no 【spam】 "}
+	if got := formatChatInformation(chat, ModerationNone, triggers); strings.Contains(got, "admin rules") {
+		t.Fatalf("rules shown with smart off:\n%s", got)
+	}
+	triggers.Smart = true
+	got := formatChatInformation(chat, ModerationNone, triggers)
+	if !strings.HasSuffix(got, "- Group admin rules (you are also woken when a message matches one; follow them):\n  1. delete scam links\n  2. no (spam)") {
+		t.Fatalf("chat information:\n%s", got)
+	}
+}

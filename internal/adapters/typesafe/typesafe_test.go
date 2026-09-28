@@ -33,13 +33,13 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	return client
 }
 
-func TestJudgeSendsTranscriptAndAppliesThreshold(t *testing.T) {
+func TestJudgeAsksEachQuestionAndSendsTranscript(t *testing.T) {
 	var body struct {
 		Model     string              `json:"model"`
 		State     map[string]any      `json:"state"`
 		Questions map[string]Question `json:"questions"`
 	}
-	probability := 0.8
+	yes := map[string]float64{"followup": 0.9}
 	client := testClient(t, func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/systemone" || request.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("request = %s %s auth %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
@@ -48,8 +48,11 @@ func TestJudgeSendsTranscriptAndAppliesThreshold(t *testing.T) {
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"model":"jev-1","answers":{"addressed":{"type":"noul","noul":`+jsonNumber(probability)+`}},"usage":{"input_tokens":120,"output_tokens":1}}`)
+		answers := map[string]Answer{}
+		for name := range body.Questions {
+			answers[name] = Answer{Type: "noul", Noul: yes[name]}
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"model": "jev-1", "answers": answers})
 	})
 	current, _ := identity.NewMessageID()
 	history := fakeHistory{entries: []agent.HistoryEntry{
@@ -57,24 +60,52 @@ func TestJudgeSendsTranscriptAndAppliesThreshold(t *testing.T) {
 		{Sequence: 3, MessageID: current, Role: agent.HistoryUser, Content: []agent.ContentPart{agent.TextPart{Text: "yang besar"}}},
 		{Sequence: 1, Role: agent.HistoryUser, Sender: &agent.SenderContext{DisplayName: "Budi"}, Content: []agent.ContentPart{agent.TextPart{Text: "Vivy, pesan kopi"}}},
 	}}
-	judge := NewAddressJudge(client, history, "Vivy", slog.New(slog.DiscardHandler))
+	judge := NewResponseJudge(client, history, "Vivy", slog.New(slog.DiscardHandler))
 	message := conversation.IncomingMessage{ID: current, SenderName: "Budi", Text: "yang besar", ChatKind: conversation.ChatGroup}
+	snapshot := agent.ConfigSnapshot{Version: 1, Triggers: agent.TriggerConfig{Smart: true, SmartRules: "someone sends a scam link\n\n  someone asks about prices  "}}
 
-	addressed, err := judge.AddressedToAssistant(t.Context(), message, agent.ConfigSnapshot{Version: 1})
-	if err != nil || !addressed {
-		t.Fatalf("addressed = %v, %v; want true", addressed, err)
+	respond, err := judge.ShouldRespond(t.Context(), message, snapshot)
+	if err != nil || !respond {
+		t.Fatalf("respond = %v, %v; want true for a follow-up", respond, err)
 	}
-	if body.Model != DefaultModel || body.Questions["addressed"].Type != "noul" {
+	if body.Model != DefaultModel || len(body.Questions) != 6 || body.Questions["rule_2"].Type != "noul" {
 		t.Fatalf("request model/questions = %q %#v", body.Model, body.Questions)
+	}
+	if rule, _ := json.Marshal(body.Questions["rule_2"].Instructions); !strings.Contains(string(rule), `"rule":"someone asks about prices"`) {
+		t.Fatalf("rule_2 instructions = %s", rule)
 	}
 	recent, _ := json.Marshal(body.State["recent_messages"])
 	if got := string(recent); got != `[{"from":"Budi","text":"Vivy, pesan kopi"},{"from":"Vivy (the assistant)","text":"Mau ukuran berapa?"}]` {
 		t.Fatalf("recent_messages = %s (want oldest first, current message excluded)", got)
 	}
 
-	probability = 0.3
-	if addressed, err := judge.AddressedToAssistant(t.Context(), message, agent.ConfigSnapshot{Version: 1}); err != nil || addressed {
-		t.Fatalf("addressed at 0.3 = %v, %v; want false", addressed, err)
+	yes = map[string]float64{"followup": 0.9, "chatter": 0.8}
+	if respond, err := judge.ShouldRespond(t.Context(), message, snapshot); err != nil || respond {
+		t.Fatalf("respond to chatter = %v, %v; want false", respond, err)
+	}
+	yes = map[string]float64{"to_someone_else": 0.9, "rule_1": 0.7}
+	if respond, err := judge.ShouldRespond(t.Context(), message, snapshot); err != nil || !respond {
+		t.Fatalf("respond to a rule match = %v, %v; want true", respond, err)
+	}
+}
+
+func TestDecide(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		in   Probabilities
+		want bool
+	}{
+		{"nothing", Probabilities{}, false},
+		{"follow-up", Probabilities{FollowUp: 0.8}, true},
+		{"addressed", Probabilities{Addressed: 0.8}, true},
+		{"addressed but to someone else", Probabilities{Addressed: 0.8, ToSomeoneElse: 0.6}, false},
+		{"follow-up but chatter", Probabilities{FollowUp: 0.8, Chatter: 0.9}, false},
+		{"rule beats exclusions", Probabilities{ToSomeoneElse: 0.9, Chatter: 0.9, Rules: []float64{0.2, 0.6}}, true},
+		{"exactly the threshold is no", Probabilities{FollowUp: Threshold}, false},
+	} {
+		if got, reason := Decide(test.in); got != test.want {
+			t.Errorf("%s: Decide = %v (%s), want %v", test.name, got, reason, test.want)
+		}
 	}
 }
 
@@ -103,9 +134,4 @@ func TestTruncateKeepsRunesWhole(t *testing.T) {
 	if got := truncate("aé", 2); got != "a…" {
 		t.Fatalf("truncate = %q", got)
 	}
-}
-
-func jsonNumber(value float64) string {
-	raw, _ := json.Marshal(value)
-	return string(raw)
 }

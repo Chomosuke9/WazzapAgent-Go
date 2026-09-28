@@ -84,7 +84,7 @@ type fakeJudge struct {
 	calls     int
 }
 
-func (judge *fakeJudge) AddressedToAssistant(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error) {
+func (judge *fakeJudge) ShouldRespond(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error) {
 	judge.calls++
 	return judge.addressed, nil
 }
@@ -104,7 +104,7 @@ func TestFixedGateSmartTriggerAsksJudgeOnceForUnmatchedGroupMessages(t *testing.
 		t.Fatal("smart trigger matched without a judge")
 	}
 	judge := &fakeJudge{addressed: true}
-	gate.SetAddressJudge(judge)
+	gate.SetResponseJudge(judge)
 	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission}); err == nil || judge.calls != 0 {
 		t.Fatalf("judge ran with the smart trigger off: err=%v calls=%d", err, judge.calls)
 	}

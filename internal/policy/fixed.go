@@ -33,15 +33,15 @@ type FixedGate struct {
 
 	// judge backs the smart trigger. It only stands in for a mention: the
 	// sender's permission is still checked as for any other message.
-	judge   AddressJudge
+	judge   ResponseJudge
 	judgeMu sync.Mutex
 	judged  map[identity.InvocationID]bool
 }
 
-// AddressJudge decides whether a group message that matched no other trigger
-// is still meant for the assistant.
-type AddressJudge interface {
-	AddressedToAssistant(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error)
+// ResponseJudge decides whether a group message that matched no other
+// trigger is still worth a response.
+type ResponseJudge interface {
+	ShouldRespond(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error)
 }
 
 // maxJudged bounds the remembered judgments. A message is checked again when
@@ -58,9 +58,9 @@ func NewFixedGate(policyID identity.PolicyID, revision uint64, configs ConfigRea
 	return gate, nil
 }
 
-// SetAddressJudge enables the smart trigger for chats that turn it on. With
+// SetResponseJudge enables the smart trigger for chats that turn it on. With
 // no judge the trigger never matches.
-func (gate *FixedGate) SetAddressJudge(judge AddressJudge) { gate.judge = judge }
+func (gate *FixedGate) SetResponseJudge(judge ResponseJudge) { gate.judge = judge }
 
 func (gate *FixedGate) SetEnabled(enabled bool) { gate.enabled.Store(enabled) }
 func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
@@ -85,14 +85,14 @@ func (gate *FixedGate) triggered(ctx context.Context, message conversation.Incom
 		return false
 	}
 	gate.judgeMu.Lock()
-	addressed, seen := gate.judged[message.InvocationID]
+	respond, seen := gate.judged[message.InvocationID]
 	gate.judgeMu.Unlock()
 	if seen {
-		return addressed
+		return respond
 	}
-	// A failed judgment counts as "not addressed": the message is left alone,
+	// A failed judgment counts as "no response": the message is left alone,
 	// as it would be without the smart trigger.
-	addressed, err := gate.judge.AddressedToAssistant(ctx, message, snapshot)
+	respond, err := gate.judge.ShouldRespond(ctx, message, snapshot)
 	if err != nil {
 		return false
 	}
@@ -100,9 +100,9 @@ func (gate *FixedGate) triggered(ctx context.Context, message conversation.Incom
 	if gate.judged == nil || len(gate.judged) >= maxJudged {
 		gate.judged = make(map[identity.InvocationID]bool)
 	}
-	gate.judged[message.InvocationID] = addressed
+	gate.judged[message.InvocationID] = respond
 	gate.judgeMu.Unlock()
-	return addressed
+	return respond
 }
 
 // CommandPermissionFacts resolves the facts consumed by a command's

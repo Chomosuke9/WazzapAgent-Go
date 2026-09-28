@@ -165,7 +165,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		if err != nil {
 			return nil, err
 		}
-		gate.SetAddressJudge(typesafe.NewAddressJudge(client, store.History(), application.config.AssistantName(), application.logger))
+		gate.SetResponseJudge(typesafe.NewResponseJudge(client, store.History(), application.config.AssistantName(), application.logger))
 	}
 	dispatcher, err := action.NewDispatcher(store.Actions(), gate, waAdapter, agent.SystemClock{}, application.metrics)
 	if err != nil {
