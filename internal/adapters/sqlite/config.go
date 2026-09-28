@@ -41,12 +41,12 @@ func (store *ConfigStore) LoadOrCreate(ctx context.Context, key agent.Key, defau
         tenant_id, account_id, chat_id, version, provider_id, model,
         max_output_tokens, prompt, prompt_override_mode, prompt_override_text,
 		policy_id, policy_revision, model_capabilities, moderation_level,
-		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern, updated_at_ms
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern, trigger_smart, trigger_smart_rules, updated_at_ms
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(agent.InitialConfigVersion),
 		defaults.Model.ProviderID.String(), defaults.Model.Model, defaults.Model.MaxOutputTokens, defaults.Prompt,
 		mode, text, defaults.Permission.PolicyID.String(), defaults.Permission.Revision, "[]", uint8(defaults.Permission.ModerationLevel),
-		boolInt(defaults.Triggers.Mention), boolInt(defaults.Triggers.Name), boolInt(defaults.Triggers.Reply), boolInt(defaults.Triggers.NameRegex), defaults.Triggers.NamePattern,
+		boolInt(defaults.Triggers.Mention), boolInt(defaults.Triggers.Name), boolInt(defaults.Triggers.Reply), boolInt(defaults.Triggers.NameRegex), defaults.Triggers.NamePattern, boolInt(defaults.Triggers.Smart), defaults.Triggers.SmartRules,
 		store.clock.Now().UnixMilli(),
 	)
 	if err != nil {
@@ -98,11 +98,11 @@ func (store *ConfigStore) CompareAndSwap(
         provider_id = ?, model = ?, max_output_tokens = ?, prompt = ?,
         prompt_override_mode = ?, prompt_override_text = ?,
 		policy_id = ?, policy_revision = ?, model_capabilities = '[]', moderation_level = ?,
-		trigger_mention = ?, trigger_name = ?, trigger_reply = ?, trigger_name_regex = ?, trigger_name_pattern = ?, updated_at_ms = ?
+		trigger_mention = ?, trigger_name = ?, trigger_reply = ?, trigger_name_regex = ?, trigger_name_pattern = ?, trigger_smart = ?, trigger_smart_rules = ?, updated_at_ms = ?
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND version = ?`,
 		values.Model.ProviderID.String(), values.Model.Model, values.Model.MaxOutputTokens, values.Prompt,
 		mode, text, values.Permission.PolicyID.String(), values.Permission.Revision, uint8(values.Permission.ModerationLevel),
-		boolInt(values.Triggers.Mention), boolInt(values.Triggers.Name), boolInt(values.Triggers.Reply), boolInt(values.Triggers.NameRegex), values.Triggers.NamePattern, store.clock.Now().UnixMilli(),
+		boolInt(values.Triggers.Mention), boolInt(values.Triggers.Name), boolInt(values.Triggers.Reply), boolInt(values.Triggers.NameRegex), values.Triggers.NamePattern, boolInt(values.Triggers.Smart), values.Triggers.SmartRules, store.clock.Now().UnixMilli(),
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), uint64(expected),
 	)
 	if err != nil {
@@ -252,6 +252,8 @@ func (store *ConfigStore) ResetAccountChatSettings(
 			{"trigger_reply", boolInt(defaults.Triggers.Reply)},
 			{"trigger_name_regex", boolInt(defaults.Triggers.NameRegex)},
 			{"trigger_name_pattern", defaults.Triggers.NamePattern},
+			{"trigger_smart", boolInt(defaults.Triggers.Smart)},
+			{"trigger_smart_rules", defaults.Triggers.SmartRules},
 		}
 		changed := make([]string, 0, len(triggerValues))
 		for _, item := range triggerValues {
@@ -325,14 +327,16 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 		triggerReply    int
 		triggerRegex    int
 		triggerPattern  string
+		triggerSmart    int
+		smartRules      string
 	)
 	err := query.QueryRowContext(ctx, `SELECT version, provider_id, model, max_output_tokens,
         prompt, prompt_override_mode, prompt_override_text, policy_id, policy_revision, moderation_level,
-		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern
+		trigger_mention, trigger_name, trigger_reply, trigger_name_regex, trigger_name_pattern, trigger_smart, trigger_smart_rules
       FROM agent_configs WHERE tenant_id = ? AND account_id = ? AND chat_id = ?`,
 		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(),
 	).Scan(&version, &providerValue, &model, &maxOutputTokens, &prompt, &overrideMode, &overrideText, &policyValue, &policyRevision, &moderationLevel,
-		&triggerMention, &triggerName, &triggerReply, &triggerRegex, &triggerPattern)
+		&triggerMention, &triggerName, &triggerReply, &triggerRegex, &triggerPattern, &triggerSmart, &smartRules)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agent.ConfigSnapshot{}, agent.NewError(agent.ErrorNotFound, "load agent config", errors.New("config does not exist"))
 	}
@@ -370,7 +374,7 @@ func loadConfig(ctx context.Context, query configQuerier, key agent.Key) (agent.
 		},
 		Triggers: agent.TriggerConfig{
 			Mention: triggerMention != 0, Name: triggerName != 0, Reply: triggerReply != 0,
-			NameRegex: triggerRegex != 0, NamePattern: triggerPattern,
+			NameRegex: triggerRegex != 0, NamePattern: triggerPattern, Smart: triggerSmart != 0, SmartRules: smartRules,
 		},
 	}, nil
 }

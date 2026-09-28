@@ -20,18 +20,25 @@ const maxScheduleTaskDelay = 24 * time.Hour
 func init() {
 	register(command.Command{
 		Name: "schedule-task",
-		// Only the owner or the bot itself: the task later runs as a trusted
-		// system turn, so anyone else could plant instructions in it.
-		Permission: "fromMe or owner",
-		Description: "Runs a task later in this chat. Format: /schedule-task <duration> <task>. " +
+		// Only the bot runs it: people ask the bot, and the bot decides.
+		Permission:  "fromMe",
+		DeniedReply: "Just ask me, for example: remind me in 30 minutes to check the oven.",
+		Description: "Runs a task once, later, in this chat. Format: /schedule-task <duration> <task>. " +
 			"The duration combines hours (H) and minutes (M), for example 2H30M, 2H, or 45M, up to 24H. " +
-			"Example: /schedule-task 1H30M Remind @Budi (a1b2c3) about the meeting.",
-		DeniedReply: "The /schedule-task command can only be used by the owner.",
-		Run:         runScheduleTask,
+			"Example: /schedule-task 1H30M Remind @Budi (a1b2c3) about the meeting. " +
+			"/schedule-task list shows the pending tasks; /schedule-task delete <ID> deletes one.",
+		Run: runScheduleTask,
 	})
 }
 
 func runScheduleTask(ctx context.Context, c *command.Context) error {
+	verb, rest, _ := strings.Cut(strings.TrimSpace(c.Args), " ")
+	switch strings.ToLower(verb) {
+	case "list":
+		return replyScheduledTasks(ctx, c)
+	case "delete":
+		return deleteScheduledTask(ctx, c, strings.TrimSpace(rest))
+	}
 	delay, prompt, ok := parseScheduleTaskArgs(c.Args)
 	if !ok {
 		return c.Reply(ctx, scheduleTaskUsage())
@@ -45,14 +52,57 @@ func runScheduleTask(ctx context.Context, c *command.Context) error {
 	if requested.IsZero() {
 		requested = time.Now()
 	}
-	err := c.ScheduleTask(ctx, requested.Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions, c.AssistantName()))
+	task, err := c.ScheduleTask(ctx, requested.Add(delay), scheduleTaskMentions(prompt, c.Message.Mentions, c.AssistantName()))
 	if agent.IsCode(err, agent.ErrorInvalidArgument) {
 		return c.Reply(ctx, "The task is too long. Keep it under 4,000 characters.")
 	}
 	if err != nil {
 		return err
 	}
-	return c.Reply(ctx, "Task scheduled in "+formatScheduleTaskDelay(delay)+".")
+	reply := "Task scheduled in " + formatScheduleTaskDelay(delay) + "."
+	if task.Code != "" {
+		reply += " ID: " + task.Code + " (/schedule-task delete " + task.Code + " cancels it)."
+	}
+	return c.Reply(ctx, reply)
+}
+
+func replyScheduledTasks(ctx context.Context, c *command.Context) error {
+	tasks, err := c.Tasks(ctx)
+	if err != nil {
+		return err
+	}
+	lines := []string{"Scheduled tasks:"}
+	for _, task := range tasks {
+		if !task.Daily {
+			lines = append(lines, "• "+task.Code+", "+task.FireAt.Format("2 Jan 15:04")+": "+scheduleTaskPreview(task.Prompt))
+		}
+	}
+	if len(lines) == 1 {
+		return c.Reply(ctx, "No scheduled tasks in this chat.")
+	}
+	return c.Reply(ctx, strings.Join(append(lines, "", "Delete one with /schedule-task delete <ID>."), "\n"))
+}
+
+func deleteScheduledTask(ctx context.Context, c *command.Context, code string) error {
+	if code == "" {
+		return c.Reply(ctx, "Usage: /schedule-task delete <ID>. /schedule-task list shows the IDs.")
+	}
+	deleted, err := c.CancelTask(ctx, code, false)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return c.Reply(ctx, "No scheduled task has the ID "+code+". /schedule-task list shows the IDs.")
+	}
+	return c.Reply(ctx, "Scheduled task "+code+" deleted.")
+}
+
+// scheduleTaskPreview shortens a task's prompt for a list.
+func scheduleTaskPreview(prompt string) string {
+	if runes := []rune(prompt); len(runes) > 80 {
+		return string(runes[:79]) + "…"
+	}
+	return prompt
 }
 
 var scheduleTaskDurationPattern = regexp.MustCompile(`^(?i)(?:(\d{1,4})h)?(?:(\d{1,5})m)?$`)
@@ -107,5 +157,6 @@ func formatScheduleTaskDelay(delay time.Duration) string {
 func scheduleTaskUsage() string {
 	return "Usage: /schedule-task <duration> <task>\n" +
 		"Duration: hours (H) and minutes (M), for example 2H30M, 2H, or 45M. At most 24H.\n" +
-		"Example: /schedule-task 1H30M Remind everyone about the meeting."
+		"Example: /schedule-task 1H30M Remind everyone about the meeting.\n" +
+		"/schedule-task list shows the pending tasks; /schedule-task delete <ID> deletes one."
 }

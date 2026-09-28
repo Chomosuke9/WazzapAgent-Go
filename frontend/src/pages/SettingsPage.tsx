@@ -22,6 +22,7 @@ const agentFieldLabels: Record<string, string> = {
   WAZZAP_LLM_ENDPOINT: "LLM API base URL",
   WAZZAP_LLM_API_KEY: "LLM API key",
   WAZZAP_LLM_MODEL: "LLM model",
+  TYPESAFE_ENDPOINT: "TypeSafe endpoint",
 };
 
 function readinessMessage(field: string, message: string): string {
@@ -36,6 +37,7 @@ export function SettingsPage() {
   const [primarySecret, setPrimarySecret] = useState("");
   const [fallbackSecret, setFallbackSecret] = useState("");
   const [langSmithSecret, setLangSmithSecret] = useState("");
+  const [typeSafeSecret, setTypeSafeSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -91,6 +93,7 @@ export function SettingsPage() {
             llmAPIKey: primarySecret ? { action: "replace", value: primarySecret } : secretKeep(),
             fallbackAPIKey: fallbackSecret ? { action: "replace", value: fallbackSecret } : secretKeep(),
             langSmithAPIKey: langSmithSecret ? { action: "replace", value: langSmithSecret } : secretKeep(),
+            typeSafeAPIKey: typeSafeSecret ? { action: "replace", value: typeSafeSecret } : secretKeep(),
           },
         },
       });
@@ -99,6 +102,7 @@ export function SettingsPage() {
       setPrimarySecret("");
       setFallbackSecret("");
       setLangSmithSecret("");
+      setTypeSafeSecret("");
       setSaved(true);
       await refreshRuntime();
     } catch (reason: unknown) {
@@ -195,6 +199,7 @@ export function SettingsPage() {
           <label><input type="checkbox" checked={draft.chatDefaults.triggerMention} onChange={(event) => updateChatDefault("triggerMention", event.target.checked)} /> Mention the bot account</label>
           <label><input type="checkbox" checked={draft.chatDefaults.triggerName} onChange={(event) => updateChatDefault("triggerName", event.target.checked)} /> Agent name</label>
           <label><input type="checkbox" checked={draft.chatDefaults.triggerReply} onChange={(event) => updateChatDefault("triggerReply", event.target.checked)} /> Reply to a bot message</label>
+          <label><input type="checkbox" checked={draft.chatDefaults.triggerSmart} onChange={(event) => updateChatDefault("triggerSmart", event.target.checked)} /> Smart (needs a TypeSafe API key)</label>
         </div></div>
         {draft.chatDefaults.triggerName && <label className="wide"><input type="checkbox" checked={draft.chatDefaults.triggerNameRegex} onChange={(event) => updateChatDefault("triggerNameRegex", event.target.checked)} /> Use a custom regex for the name trigger</label>}
         {draft.chatDefaults.triggerName && draft.chatDefaults.triggerNameRegex && <label className="wide"><span>Regex pattern</span><input value={draft.chatDefaults.triggerNamePattern} maxLength={512} onChange={(event) => updateChatDefault("triggerNamePattern", event.target.value)} /></label>}
@@ -214,6 +219,9 @@ export function SettingsPage() {
         <label><span>Primary API key {draft.llmAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={primarySecret} onChange={(event) => { setPrimarySecret(event.target.value); setSaved(false); }} /></label>
         <label><span>Fallback API key {draft.fallbackAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={fallbackSecret} onChange={(event) => { setFallbackSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>LangSmith API key {draft.langSmithAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={langSmithSecret} onChange={(event) => { setLangSmithSecret(event.target.value); setSaved(false); }} /></label>
+        <label><span>TypeSafe API key {draft.typeSafeAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={typeSafeSecret} onChange={(event) => { setTypeSafeSecret(event.target.value); setSaved(false); }} /></label>
+        <label><span>TypeSafe endpoint</span><input value={draft.typeSafeEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" onChange={(event) => update("typeSafeEndpoint", event.target.value)} /></label>
+        <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint (Jev on System One by default). Leave the endpoint blank for the default.</p>
       </div>
 
       </section>

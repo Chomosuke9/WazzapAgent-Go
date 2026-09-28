@@ -15,6 +15,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function AddWhatsAppChatTask(request: $models.AddWhatsAppChatTaskRequestDTO): $CancellablePromise<$models.WhatsAppChatTaskDTO> {
+    return $Call.ByID(2468465970, request);
+}
+
 export function ApplyAgentSettings(request: $models.ApplyAgentSettingsRequestDTO): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
     return $Call.ByID(509027352, request);
 }
@@ -29,6 +33,10 @@ export function CancelWhatsAppBroadcastSchedule(id: string): $CancellablePromise
 
 export function CancelWhatsAppPairing(operationID: string): $CancellablePromise<$models.WhatsAppSessionStatusDTO> {
     return $Call.ByID(2195800292, operationID);
+}
+
+export function DeleteWhatsAppChatTask(chatID: string, taskID: string, daily: boolean): $CancellablePromise<void> {
+    return $Call.ByID(758351354, chatID, taskID, daily);
 }
 
 export function DeleteWhatsAppMessage(chatID: string, messageID: string): $CancellablePromise<void> {
@@ -85,6 +93,10 @@ export function GetWhatsAppBroadcastSchedules(): $CancellablePromise<$models.Wha
 
 export function GetWhatsAppChatSettings(chatID: string): $CancellablePromise<$models.WhatsAppChatSettingsDTO> {
     return $Call.ByID(4054277929, chatID);
+}
+
+export function GetWhatsAppChatTasks(chatID: string): $CancellablePromise<$models.WhatsAppChatTaskDTO[] | null> {
+    return $Call.ByID(481462102, chatID);
 }
 
 export function GetWhatsAppConversations(): $CancellablePromise<$models.WhatsAppConversationDTO[] | null> {

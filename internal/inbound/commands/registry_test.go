@@ -79,15 +79,53 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 		{args: "name maybe", ok: false},
 		{args: "pattern ", ok: false},
 		{args: "mention", ok: false},
+		{args: "smart on", ok: true},
+		{args: "smart clear", ok: true},
+		{args: "smart set ", ok: false},
+		{args: "smart settings", ok: false},
+		{args: "smart add scam links", ok: true},
+		{args: "smart add ", ok: false},
+		{args: "smart remove 2", ok: true},
+		{args: "smart remove 0", ok: false},
+		{args: "smart remove two", ok: false},
 	}
 	for _, test := range triggerTests {
 		if _, ok := parseTriggerArgs(test.args); ok != test.ok {
 			t.Fatalf("trigger %q ok = %v, want %v", test.args, ok, test.ok)
 		}
 	}
+	change, ok := parseTriggerArgs("smart set\nsomeone sends a scam link\nsomeone asks about prices")
+	if !ok {
+		t.Fatal("multi-line smart rules were rejected")
+	}
+	triggers := agent.TriggerConfig{}
+	change(&triggers)
+	if !triggers.Smart || triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices" {
+		t.Fatalf("smart set = %#v", triggers)
+	}
+	add, _ := parseTriggerArgs("smart add someone spams\n stickers")
+	add(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices\nsomeone spams stickers" {
+		t.Fatalf("smart add = %q", triggers.SmartRules)
+	}
+	remove, _ := parseTriggerArgs("smart remove 2")
+	remove(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
+		t.Fatalf("smart remove 2 = %q", triggers.SmartRules)
+	}
+	removeMissing, _ := parseTriggerArgs("smart remove 5")
+	removeMissing(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
+		t.Fatalf("smart remove 5 changed the rules: %q", triggers.SmartRules)
+	}
+	clear, _ := parseTriggerArgs("smart clear")
+	clear(&triggers)
+	if !triggers.Smart || triggers.SmartRules != "" {
+		t.Fatalf("smart clear = %#v", triggers)
+	}
 }
 
-func TestTriggerPermissionAllowsOwnerOrGroupAdminButNeverBot(t *testing.T) {
+func TestTriggerPermissionAllowsOwnerGroupAdminOrTheBotInGroups(t *testing.T) {
 	_, trigger, _ := builtinRegistry(t).Parse("/trigger")
 	tests := []struct {
 		name  string
@@ -100,8 +138,8 @@ func TestTriggerPermissionAllowsOwnerOrGroupAdminButNeverBot(t *testing.T) {
 		{name: "admin in private chat", facts: command.PermissionFacts{IsAdmin: true, IsPrivate: true}, want: false},
 		{name: "owner without group fact", facts: command.PermissionFacts{IsOwner: true}, want: false},
 		{name: "ordinary group member", facts: command.PermissionFacts{IsGroup: true}, want: false},
-		{name: "bot group admin", facts: command.PermissionFacts{IsGroup: true, IsAdmin: true, FromMe: true}, want: false},
-		{name: "bot owner", facts: command.PermissionFacts{IsOwner: true, FromMe: true}, want: false},
+		{name: "bot in group", facts: command.PermissionFacts{IsGroup: true, FromMe: true}, want: true},
+		{name: "bot in private chat", facts: command.PermissionFacts{IsPrivate: true, FromMe: true}, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -129,7 +167,7 @@ func TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger(t *testing.T) {
 		t.Fatalf("button messages = %d, want 1", len(buttons.sent))
 	}
 	got := buttons.sent[0].Buttons
-	if len(got) != 3 || got[0].ID != "/trigger mention off" || got[1].ID != "/trigger name on" || got[2].ID != "/trigger reply on" {
+	if len(got) != 4 || got[0].ID != "/trigger mention off" || got[1].ID != "/trigger name on" || got[2].ID != "/trigger reply on" || got[3].ID != "/trigger smart on" {
 		t.Fatalf("buttons = %#v", got)
 	}
 	for _, button := range got {

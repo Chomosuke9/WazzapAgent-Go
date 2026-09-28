@@ -30,6 +30,9 @@ type Options struct {
 	// Stickers, when set, lists the chat's sticker catalog for send_sticker.
 	Stickers StickerLister
 	Clock    agent.Clock
+	// Location is the time zone daily tasks follow. Nil means the
+	// computer's own (time.Local, which the TZ variable can set).
+	Location *time.Location
 	// Report receives errors from turns that run after Handle returned.
 	Report func(error)
 }
@@ -59,6 +62,9 @@ type Dispatcher struct {
 	chats map[agent.Key]*chatQueue
 	// tasks holds the timer of every scheduled task armed in this process.
 	tasks map[identity.CausationID]*time.Timer
+	// taskEdits serializes deleting a task with moving a daily task to its
+	// next day, so a deleted task is never armed again.
+	taskEdits sync.Mutex
 }
 
 type chatQueue struct {
@@ -112,6 +118,9 @@ func NewDispatcher(
 	}
 	if options.Clock == nil {
 		options.Clock = agent.SystemClock{}
+	}
+	if options.Location == nil {
+		options.Location = time.Local
 	}
 	if options.Report == nil {
 		options.Report = func(error) {}

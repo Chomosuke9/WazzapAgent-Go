@@ -37,6 +37,7 @@ type SecretPatch struct {
 	LLMAPIKey       SecretUpdate
 	FallbackAPIKey  SecretUpdate
 	LangSmithAPIKey SecretUpdate
+	TypeSafeAPIKey  SecretUpdate
 }
 
 // SettingsPatch is a complete public draft plus secret actions.

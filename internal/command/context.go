@@ -115,11 +115,37 @@ func (c *Context) Group() (GroupModerator, error) {
 
 // ScheduleTask makes the bot run prompt in this chat at fireAt, as if asked
 // then. It returns an error if the host cannot schedule tasks.
-func (c *Context) ScheduleTask(ctx context.Context, fireAt time.Time, prompt string) error {
+func (c *Context) ScheduleTask(ctx context.Context, fireAt time.Time, prompt string) (Task, error) {
 	if c.invocation.Platform.Tasks == nil {
-		return c.unavailable("scheduled tasks")
+		return Task{}, c.unavailable("scheduled tasks")
 	}
 	return c.invocation.Platform.Tasks.ScheduleTask(ctx, c.Key(), c.invocation.Message.ID, fireAt, prompt)
+}
+
+// ScheduleDailyTask makes the bot run prompt in this chat every day at
+// minute (minutes after midnight, in the bot's time zone).
+func (c *Context) ScheduleDailyTask(ctx context.Context, minute int, prompt string) (Task, error) {
+	if c.invocation.Platform.Tasks == nil {
+		return Task{}, c.unavailable("scheduled tasks")
+	}
+	return c.invocation.Platform.Tasks.ScheduleDailyTask(ctx, c.Key(), c.invocation.Message.ID, minute, prompt)
+}
+
+// Tasks lists this chat's scheduled and daily tasks, soonest first.
+func (c *Context) Tasks(ctx context.Context) ([]Task, error) {
+	if c.invocation.Platform.Tasks == nil {
+		return nil, c.unavailable("scheduled tasks")
+	}
+	return c.invocation.Platform.Tasks.Tasks(ctx, c.Key())
+}
+
+// CancelTask deletes this chat's one-off or daily task with this code. It
+// reports false when there is none.
+func (c *Context) CancelTask(ctx context.Context, code string, daily bool) (bool, error) {
+	if c.invocation.Platform.Tasks == nil {
+		return false, c.unavailable("scheduled tasks")
+	}
+	return c.invocation.Platform.Tasks.CancelTask(ctx, c.Key(), code, daily)
 }
 
 // QuotedRaw returns the raw provider payload of the message this command

@@ -16,6 +16,8 @@ const (
 	MaxPromptBytes                       = 16 * 1024
 	MaxModelNameBytes                    = 256
 	MaxTriggerPatternBytes               = 512
+	MaxSmartRulesBytes                   = 2000
+	MaxSmartRules                        = 10
 	MaxOutputTokens                      = 65_536
 )
 
@@ -55,6 +57,25 @@ type TriggerConfig struct {
 	Reply       bool
 	NameRegex   bool
 	NamePattern string
+	// Smart asks TypeSafe whether a group message that matched no other
+	// trigger is worth a response. Matches ignores it; the policy gate runs
+	// the judgment.
+	Smart bool
+	// SmartRules are group-admin rules, one per line, such as "someone
+	// sends a scam link". A message matching one wakes the Agent, and the
+	// Agent sees the rules in its chat information.
+	SmartRules string
+}
+
+// SmartRuleList returns the non-empty smart rules in order.
+func (triggers TriggerConfig) SmartRuleList() []string {
+	var rules []string
+	for _, line := range strings.Split(triggers.SmartRules, "\n") {
+		if rule := strings.TrimSpace(line); rule != "" {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
 }
 
 func DefaultTriggerConfig() TriggerConfig {
@@ -64,6 +85,9 @@ func DefaultTriggerConfig() TriggerConfig {
 func (triggers TriggerConfig) Validate() error {
 	if !utf8.ValidString(triggers.NamePattern) || len(triggers.NamePattern) > MaxTriggerPatternBytes {
 		return Errorf(ErrorInvalidArgument, "validate trigger config", "name trigger pattern must be valid UTF-8 and at most %d bytes", MaxTriggerPatternBytes)
+	}
+	if !utf8.ValidString(triggers.SmartRules) || len(triggers.SmartRules) > MaxSmartRulesBytes || len(triggers.SmartRuleList()) > MaxSmartRules {
+		return Errorf(ErrorInvalidArgument, "validate trigger config", "smart rules must be valid UTF-8, at most %d rules and %d bytes", MaxSmartRules, MaxSmartRulesBytes)
 	}
 	if triggers.NameRegex {
 		if triggers.Name && strings.TrimSpace(triggers.NamePattern) == "" {

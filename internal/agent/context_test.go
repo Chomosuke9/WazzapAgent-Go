@@ -74,6 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
+		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time in the bot's time zone (UTC):\n- none\n</chat_state>"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
@@ -98,7 +99,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build replacement context: %v", err)
 	}
-	if len(replaced) != 4 || replaced[0].Role != ModelSystem || replaced[0].Content != "" ||
+	if len(replaced) != 5 || replaced[0].Role != ModelSystem || replaced[0].Content != "" ||
 		replaced[0].AdditionalPrompt != "" ||
 		replaced[1].Content != "<prompt_override>\nreplacement\n</prompt_override>" {
 		t.Fatalf("replace mode did not drop the chat prompt and send the override: %#v", replaced)
@@ -140,7 +141,7 @@ func TestContextBuilderBlocksTranscriptSpoofAndDropsUndeliveredAssistant(t *test
 		t.Fatalf("build context: %v", err)
 	}
 	historyMessage := messages[len(messages)-1]
-	if len(messages) != 4 || messages[0].Content != "" || messages[0].AdditionalPrompt != "trusted" ||
+	if len(messages) != 5 || messages[0].Content != "" || messages[0].AdditionalPrompt != "trusted" ||
 		historyMessage.Role != ModelUser || historyMessage.Provenance != ProvenanceHistoryTranscript ||
 		!strings.HasPrefix(historyMessage.Content, "<untrusted_chat_history>\n") ||
 		!strings.HasSuffix(historyMessage.Content, "\n</untrusted_chat_history>") ||
@@ -252,7 +253,7 @@ func TestContextBuilderTrimsWholeLogicalInvocation(t *testing.T) {
 	}
 	unbounded, _ := NewDeterministicContextBuilder(MaxContextBytes, "Vivy")
 	full, err := unbounded.Build(request)
-	if err != nil || len(full) != 4 {
+	if err != nil || len(full) != 5 {
 		t.Fatalf("build full context = %#v, err=%v", full, err)
 	}
 	// This bound would fit if only the old user message were removed. The
@@ -266,8 +267,8 @@ func TestContextBuilderTrimsWholeLogicalInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build trimmed context: %v", err)
 	}
-	if len(trimmed) != 4 || trimmed[0].Provenance != ProvenanceBasePrompt || trimmed[3].Provenance != ProvenanceHistoryTranscript ||
-		strings.Contains(trimmed[3].Content, "old-user") || !strings.Contains(trimmed[3].Content, "current") {
+	if len(trimmed) != 5 || trimmed[0].Provenance != ProvenanceBasePrompt || trimmed[4].Provenance != ProvenanceHistoryTranscript ||
+		strings.Contains(trimmed[4].Content, "old-user") || !strings.Contains(trimmed[4].Content, "current") {
 		t.Fatalf("logical invocation was trimmed partially: %#v", trimmed)
 	}
 }
@@ -329,5 +330,35 @@ func TestValidateModelMessagesRejectsDuplicateCurrentProvenance(t *testing.T) {
 	})
 	if !IsCode(err, ErrorInvalidArgument) {
 		t.Fatalf("duplicate current provenance error = %v, want invalid_argument", err)
+	}
+}
+
+func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
+	wib := time.FixedZone("WIB", 7*60*60)
+	chat := ChatContext{Kind: "group", Name: "Tim", TimeZone: "UTC+07:00", Tasks: []ScheduledTaskSummary{
+		{Code: "a1b2c3", FireAt: time.Date(2026, 9, 28, 14, 0, 0, 0, time.UTC), Prompt: "remind 【everyone】 about the meeting"},
+		{Code: "d4e5f6", FireAt: time.Date(2026, 9, 29, 7, 0, 0, 0, wib), Daily: true, Prompt: "say good morning"},
+	}}
+	config := ConfigSnapshot{
+		Triggers:       TriggerConfig{Mention: true, Reply: true, SmartRules: "delete scam links\n\n  no spam "},
+		Permission:     PermissionConfig{ModerationLevel: ModerationDelete},
+		PromptOverride: &PromptOverride{Mode: PromptReplace, Text: "x"},
+	}
+	want := "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\n" +
+		"Settings of this chat (the command in brackets changes it):\n" +
+		"- Triggers [/trigger]: mention on, name off, reply to bot on, smart off\n" +
+		"  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
+		"  1. delete scam links\n  2. no spam\n" +
+		"- Moderation level [/permission]: 1 (delete messages)\n" +
+		"- Custom instructions [/prompt]: set, replacing the chat prompt (the text is in <prompt_override>)\n" +
+		"One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- [a1b2c3] 2026-09-28 14:00 UTC: remind (everyone) about the meeting\n" +
+		"Daily tasks [/daily-task], [ID] then time in the bot's time zone (UTC+07:00):\n- [d4e5f6] every day at 07:00: say good morning\n" +
+		"</chat_state>"
+	if got := formatChatState(chat, config); got != want {
+		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
+	}
+	private := formatChatState(ChatContext{Kind: "private"}, ConfigSnapshot{})
+	if strings.Contains(private, "/trigger") || !strings.Contains(private, "One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none") {
+		t.Fatalf("private chat state:\n%s", private)
 	}
 }

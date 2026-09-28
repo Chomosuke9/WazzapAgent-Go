@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -38,6 +39,23 @@ type ChatContext struct {
 	Name        string
 	Description string
 	BotIsAdmin  bool
+	// Tasks are the chat's pending one-off and daily tasks, soonest first.
+	Tasks []ScheduledTaskSummary
+	// TimeZone is the bot's time zone, which daily tasks follow, as a UTC
+	// offset such as "UTC+07:00".
+	TimeZone string
+}
+
+// ScheduledTaskSummary is one /schedule-task or /daily-task entry as the
+// model sees it in <chat_state>.
+type ScheduledTaskSummary struct {
+	// Code is the short ID the delete commands take.
+	Code string
+	// FireAt is the next run. A daily task shows its time of day as read in
+	// FireAt's location, the bot's time zone.
+	FireAt time.Time
+	Daily  bool
+	Prompt string
 }
 
 func (chat ChatContext) Validate() error {
@@ -109,6 +127,10 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 	messages = append(messages, ModelMessage{
 		Role: ModelUser, Provenance: ProvenanceChatInformation,
 		Content: formatChatInformation(request.Chat, request.Config.Permission.ModerationLevel),
+	})
+	messages = append(messages, ModelMessage{
+		Role: ModelUser, Provenance: ProvenanceChatState,
+		Content: formatChatState(request.Chat, request.Config),
 	})
 	type builtHistoryEntry struct {
 		rendered     string
@@ -240,6 +262,87 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 		"- Bot moderation capabilities: "+capabilities+" (configured maximum; command permissions apply separately)",
 	)
 	return strings.Join(lines, "\n")
+}
+
+// formatChatState describes this chat's settings and scheduled tasks, each
+// with the command that changes it, so the model can explain them and change
+// them when asked.
+func formatChatState(chat ChatContext, config ConfigSnapshot) string {
+	lines := []string{"<chat_state>",
+		"Sensitive: change settings and daily tasks only for the people <chat_settings> allows.",
+		"Settings of this chat (the command in brackets changes it):"}
+	if chat.Kind == "group" {
+		triggers := config.Triggers
+		lines = append(lines, fmt.Sprintf("- Triggers [/trigger]: mention %s, name %s, reply to bot %s, smart %s",
+			onOff(triggers.Mention), onOff(triggers.Name), onOff(triggers.Reply), onOff(triggers.Smart)))
+		if triggers.Name && triggers.NameRegex {
+			lines = append(lines, "  Name regex: "+sanitizeContextMetadata(triggers.NamePattern))
+		}
+		if rules := triggers.SmartRuleList(); len(rules) > 0 {
+			state := "active"
+			if !triggers.Smart {
+				state = "inactive while smart is off"
+			}
+			lines = append(lines, "  Group admin rules ("+state+"; when active, a message matching one wakes you, and you follow it):")
+			for index, rule := range rules {
+				lines = append(lines, fmt.Sprintf("  %d. %s", index+1, sanitizeContextMetadata(rule)))
+			}
+		}
+		lines = append(lines, fmt.Sprintf("- Moderation level [/permission]: %d (%s)", config.Permission.ModerationLevel, moderationCapabilities(config.Permission.ModerationLevel)))
+	}
+	custom := "none"
+	if config.PromptOverride != nil {
+		custom = "set, appended to the chat prompt"
+		if config.PromptOverride.Mode == PromptReplace {
+			custom = "set, replacing the chat prompt"
+		}
+	}
+	lines = append(lines, "- Custom instructions [/prompt]: "+custom+" (the text is in <prompt_override>)")
+	var once, daily []string
+	for _, task := range chat.Tasks {
+		prompt := sanitizeContextMetadata(task.Prompt)
+		if task.Daily {
+			daily = append(daily, "- ["+task.Code+"] every day at "+task.FireAt.Format("15:04")+": "+prompt)
+		} else {
+			once = append(once, "- ["+task.Code+"] "+task.FireAt.UTC().Format("2006-01-02 15:04 UTC")+": "+prompt)
+		}
+	}
+	zone := chat.TimeZone
+	if zone == "" {
+		zone = "UTC"
+	}
+	lines = append(lines, "One-off tasks [/schedule-task], open to everyone; [ID] then time:")
+	lines = append(lines, orNone(once)...)
+	lines = append(lines, "Daily tasks [/daily-task], [ID] then time in the bot's time zone ("+zone+"):")
+	lines = append(lines, orNone(daily)...)
+	lines = append(lines, "</chat_state>")
+	return strings.Join(lines, "\n")
+}
+
+func orNone(lines []string) []string {
+	if len(lines) == 0 {
+		return []string{"- none"}
+	}
+	return lines
+}
+
+func moderationCapabilities(level ModerationLevel) string {
+	switch level {
+	case ModerationDelete:
+		return "delete messages"
+	case ModerationDeleteMute:
+		return "delete messages, mute members"
+	case ModerationDeleteMuteKick:
+		return "delete messages, mute members, kick members"
+	}
+	return "none"
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func serializeHistoryEntry(entry HistoryEntry, mentionNames map[string]string, assistantName string) (string, error) {
@@ -456,6 +559,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	basePromptCount := 0
 	overrideCount := 0
 	chatInformationCount := 0
+	chatStateCount := 0
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
@@ -490,6 +594,11 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			chatInformationCount++
 			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0
 			promptPhase = false
+		case ProvenanceChatState:
+			chatStateCount++
+			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0 &&
+				strings.HasPrefix(message.Content, "<chat_state>\n") && strings.HasSuffix(message.Content, "\n</chat_state>")
+			promptPhase = false
 		case ProvenanceHistorySystem:
 			promptPhase = false
 			valid = message.Role == ModelSystem
@@ -522,7 +631,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	} else if currentCount != 1 || last != ProvenanceCurrentUser {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("current user message must be last"))
 	}
-	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 {
+	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 || chatStateCount > 1 {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model prompts must not be duplicated"))
 	}
 	return nil

@@ -75,6 +75,7 @@ func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, 
 	merged.LLMAPIKey = current.LLMAPIKey
 	merged.FallbackAPIKey = current.FallbackAPIKey
 	merged.LangSmithAPIKey = current.LangSmithAPIKey
+	merged.TypeSafeAPIKey = current.TypeSafeAPIKey
 	if err := mergeSecret(&merged.LLMAPIKey, patch.Secrets.LLMAPIKey, "WAZZAP_LLM_API_KEY"); err != nil {
 		return config.Settings{}, err
 	}
@@ -82,6 +83,9 @@ func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, 
 		return config.Settings{}, err
 	}
 	if err := mergeSecret(&merged.LangSmithAPIKey, patch.Secrets.LangSmithAPIKey, "LANGSMITH_API_KEY"); err != nil {
+		return config.Settings{}, err
+	}
+	if err := mergeSecret(&merged.TypeSafeAPIKey, patch.Secrets.TypeSafeAPIKey, "TYPESAFE_API_KEY"); err != nil {
 		return config.Settings{}, err
 	}
 	return merged, nil

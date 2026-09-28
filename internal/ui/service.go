@@ -176,6 +176,28 @@ type WhatsAppChatSettingsDTO struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+	TriggerSmart       bool   `json:"triggerSmart"`
+	TriggerSmartRules  string `json:"triggerSmartRules"`
+}
+
+// WhatsAppChatTaskDTO is a chat's scheduled (one-off) or daily task.
+type WhatsAppChatTaskDTO struct {
+	ID     string `json:"id"`
+	Prompt string `json:"prompt"`
+	// NextRun is RFC 3339 with the bot's UTC offset.
+	NextRun string `json:"nextRun"`
+	Daily   bool   `json:"daily"`
+}
+
+// AddWhatsAppChatTaskRequestDTO adds a task that runs once at RunAt (RFC
+// 3339, within 24 hours) or, when Daily, every day at Time ("HH:MM" in the
+// bot's time zone).
+type AddWhatsAppChatTaskRequestDTO struct {
+	ChatID string `json:"chatID"`
+	Prompt string `json:"prompt"`
+	Daily  bool   `json:"daily"`
+	RunAt  string `json:"runAt"`
+	Time   string `json:"time"`
 }
 
 type SaveWhatsAppChatSettingsRequestDTO struct {
@@ -189,6 +211,8 @@ type SaveWhatsAppChatSettingsRequestDTO struct {
 	TriggerReply       bool   `json:"triggerReply"`
 	TriggerNameRegex   bool   `json:"triggerNameRegex"`
 	TriggerNamePattern string `json:"triggerNamePattern"`
+	TriggerSmart       bool   `json:"triggerSmart"`
+	TriggerSmartRules  string `json:"triggerSmartRules"`
 }
 
 type ResetWhatsAppChatSettingsRequestDTO struct {
@@ -605,7 +629,7 @@ func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRe
 		settings, actionErr = runtime.SaveChatSettings(ctx, request.ChatID, control.AgentChatSettingsUpdate{
 			ExpectedVersion: agent.ConfigVersion(expectedVersion), ModerationLevel: agent.ModerationLevel(request.ModerationLevel),
 			PromptOverrideMode: mode, PromptOverrideText: request.PromptOverrideText,
-			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern},
+			Triggers: agent.TriggerConfig{Mention: request.TriggerMention, Name: request.TriggerName, Reply: request.TriggerReply, NameRegex: request.TriggerNameRegex, NamePattern: request.TriggerNamePattern, Smart: request.TriggerSmart, SmartRules: request.TriggerSmartRules},
 		})
 		return actionErr
 	})
@@ -629,7 +653,68 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 		PromptOverrideMode: mode, PromptOverrideText: settings.PromptOverrideText,
 		TriggerMention: settings.Triggers.Mention, TriggerName: settings.Triggers.Name, TriggerReply: settings.Triggers.Reply,
 		TriggerNameRegex: settings.Triggers.NameRegex, TriggerNamePattern: settings.Triggers.NamePattern,
+		TriggerSmart: settings.Triggers.Smart, TriggerSmartRules: settings.Triggers.SmartRules,
 	}
+}
+
+func (s *AppService) GetWhatsAppChatTasks(chatID string) ([]WhatsAppChatTaskDTO, error) {
+	var tasks []control.AgentChatTask
+	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		var actionErr error
+		tasks, actionErr = runtime.ListChatTasks(ctx, chatID)
+		return actionErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WhatsAppChatTaskDTO, len(tasks))
+	for index, task := range tasks {
+		result[index] = chatTaskDTO(task)
+	}
+	return result, nil
+}
+
+func (s *AppService) AddWhatsAppChatTask(request AddWhatsAppChatTaskRequestDTO) (WhatsAppChatTaskDTO, error) {
+	input := control.AgentChatTaskInput{Prompt: request.Prompt, Daily: request.Daily}
+	if request.Daily {
+		clock, err := time.Parse("15:04", strings.TrimSpace(request.Time))
+		if err != nil {
+			return WhatsAppChatTaskDTO{}, errors.New("Choose a time of day, such as 07:00.")
+		}
+		input.DailyMinute = clock.Hour()*60 + clock.Minute()
+	} else {
+		runAt, err := time.Parse(time.RFC3339, request.RunAt)
+		if err != nil {
+			return WhatsAppChatTaskDTO{}, errors.New("Choose when the task should run.")
+		}
+		input.RunAt = runAt
+	}
+	var task control.AgentChatTask
+	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		var actionErr error
+		task, actionErr = runtime.AddChatTask(ctx, request.ChatID, input)
+		return actionErr
+	})
+	if err != nil {
+		return WhatsAppChatTaskDTO{}, err
+	}
+	s.recordChatAction("INFO", "Chat task added", nil)
+	return chatTaskDTO(task), nil
+}
+
+func (s *AppService) DeleteWhatsAppChatTask(chatID, taskID string, daily bool) error {
+	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
+		return runtime.DeleteChatTask(ctx, chatID, taskID, daily)
+	})
+	if err != nil {
+		return err
+	}
+	s.recordChatAction("INFO", "Chat task deleted", nil)
+	return nil
+}
+
+func chatTaskDTO(task control.AgentChatTask) WhatsAppChatTaskDTO {
+	return WhatsAppChatTaskDTO{ID: task.ID, Prompt: task.Prompt, NextRun: task.NextRun.Format(time.RFC3339), Daily: task.Daily}
 }
 
 func (s *AppService) SendWhatsAppMessage(chatID, text, replyToMessageID string) (WhatsAppMessageDTO, error) {
@@ -757,6 +842,8 @@ func safeChatActionError(err error) error {
 				return errors.New("This message is no longer available for that action. Reload the chat history.")
 			case "compare and swap config":
 				return errors.New("Chat settings are not available. Close and reopen the settings panel.")
+			case "delete chat task":
+				return errors.New("This task already ran or was deleted.")
 			}
 		}
 		return errors.New("Chat data is no longer available. Reload the chat list.")
@@ -770,9 +857,19 @@ func safeChatActionError(err error) error {
 				return errors.New("Batch size must be 1–100 and the pause must be 0–300 seconds.")
 			case "schedule WhatsApp broadcast":
 				return errors.New("Choose a future date within the next year.")
+			case "add chat task":
+				return errors.New("Choose a time in the future.")
+			case "schedule task":
+				return errors.New("Write the task in at most 4,000 characters, and choose a time within the next 24 hours.")
 			}
 		}
 		return errors.New("The action data is invalid.")
+	case agent.ErrorResourceExhausted:
+		var operation interface{ Operation() string }
+		if errors.As(err, &operation) && operation.Operation() == "schedule daily task" {
+			return errors.New("This chat already has 10 daily tasks. Delete one first.")
+		}
+		return errors.New("The action failed. Check the Logs page for details.")
 	case agent.ErrorTimeout:
 		return errors.New("WhatsApp did not respond before the timeout.")
 	case agent.ErrorConflict:

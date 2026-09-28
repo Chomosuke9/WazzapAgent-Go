@@ -34,3 +34,6 @@ func SetMaxPending(limit int) (restore func()) {
 	maxPending = limit
 	return func() { maxPending = previous }
 }
+
+// NextDailyRun exposes nextDailyRun to tests.
+var NextDailyRun = nextDailyRun

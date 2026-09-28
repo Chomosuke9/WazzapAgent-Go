@@ -123,6 +123,7 @@ button tap:
 Permission: "public"                                      // anyone, including the bot
 Permission: "owner and !fromMe"                           // configured owner only
 Permission: "(owner or isAdmin) and isGroup and !fromMe"  // owner or admin, in groups
+Permission: "fromMe"                                      // only the bot; people ask it
 ```
 
 Never check permissions inside `Run`. The registry has already done it.

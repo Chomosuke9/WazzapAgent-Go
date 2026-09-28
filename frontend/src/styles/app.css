@@ -92,13 +92,23 @@ code { padding: 2px 5px; border-radius: 4px; color: #406bd0; background: #eff4ff
 .chat-settings-section h2 { margin: 0; color: #3f4e63; font-size: 12px; }
 .chat-settings-section > p, .chat-settings-section header p { margin: 0; color: #8996a8; font-size: 10px; line-height: 1.5; }
 .settings-field { display: grid; gap: 5px; color: #66758a; font-size: 10px; font-weight: 600; }
-.settings-field select, .settings-field textarea, .settings-field input[type="text"] { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #dfe5ed; border-radius: 7px; outline: none; color: #405169; background: #fff; font: inherit; font-size: 10px; font-weight: 400; }
+.settings-field select, .settings-field textarea, .settings-field input[type="text"], .settings-field input[type="time"], .settings-field input[type="datetime-local"] { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #dfe5ed; border-radius: 7px; outline: none; color: #405169; background: #fff; font: inherit; font-size: 10px; font-weight: 400; }
 .settings-field textarea { resize: vertical; line-height: 1.45; }
-.settings-field select:focus, .settings-field textarea:focus, .settings-field input[type="text"]:focus { border-color: #91a8e9; box-shadow: 0 0 0 3px rgba(71,114,220,.09); }
+.settings-field select:focus, .settings-field textarea:focus, .settings-field input[type="text"]:focus, .settings-field input[type="time"]:focus, .settings-field input[type="datetime-local"]:focus { border-color: #91a8e9; box-shadow: 0 0 0 3px rgba(71,114,220,.09); }
 .settings-field small { color: #95a1b1; font-size: 9px; font-weight: 400; line-height: 1.45; }
 .trigger-options { display: grid; gap: 8px; }
 .trigger-options label, .trigger-regex-toggle { display: flex; align-items: center; gap: 8px; color: #596981; font-size: 10px; cursor: pointer; }
 .trigger-options input, .trigger-regex-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #416be0; }
+.chat-task-list { display: grid; gap: 1px; max-height: 220px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.chat-task-list li { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-radius: 7px; }
+.chat-task-list li:hover { background: #f5f7fa; }
+.chat-task-text { display: grid; min-width: 0; flex: 1; gap: 2px; color: #405169; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-task-text small { color: #8996a8; font-size: 9px; font-weight: 600; }
+.chat-task-add { display: grid; gap: 8px; padding-top: 4px; }
+.chat-task-when { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; }
+.chat-task-add .secondary-button { justify-self: end; padding: 6px 10px; border: 1px solid #e1e7ef; border-radius: 7px; color: #52647d; background: #fff; font-size: 10px; cursor: pointer; }
+.chat-task-add .secondary-button:disabled { opacity: .55; cursor: default; }
+.chat-tasks-section .error-text { margin: 0; font-size: 10px; }
 .group-settings-section { gap: 7px; }
 .group-settings-section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .group-settings-section > header > span { display: grid; gap: 3px; }
@@ -306,7 +316,11 @@ button.message-mention:hover { text-decoration: underline; }
 .chat-settings-header strong, .chat-settings-section h2, .member-name { color: var(--text); }
 .chat-settings-header small, .chat-settings-section > p, .chat-settings-section header p, .settings-field small, .member-name small, .member-hint { color: var(--muted); }
 .settings-field, .trigger-options label, .trigger-regex-toggle { color: var(--subtle); }
-.settings-field select, .settings-field textarea, .settings-field input[type="text"] { color: var(--text); border-color: var(--line); background: var(--input); }
+.settings-field select, .settings-field textarea, .settings-field input[type="text"], .settings-field input[type="time"], .settings-field input[type="datetime-local"] { color: var(--text); border-color: var(--line); background: var(--input); }
+.chat-task-text { color: var(--text); }
+.chat-task-text small { color: var(--muted); }
+.chat-task-list li:hover { background: var(--surface-soft); }
+.chat-task-add .secondary-button { color: var(--subtle); border-color: var(--line); background: var(--surface); }
 .group-settings-section li:hover { background: var(--surface-soft); }
 .group-settings-section .secondary-button, .chat-settings-footer .secondary-button { color: var(--subtle); border-color: var(--line); background: var(--surface); }
 .chat-settings-footer { background: var(--surface); }

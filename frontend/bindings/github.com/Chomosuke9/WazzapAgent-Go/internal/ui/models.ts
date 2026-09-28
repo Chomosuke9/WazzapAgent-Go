@@ -5,6 +5,19 @@
 // @ts-ignore: Unused imports
 import * as config$0 from "../config/models.js";
 
+/**
+ * AddWhatsAppChatTaskRequestDTO adds a task that runs once at RunAt (RFC
+ * 3339, within 24 hours) or, when Daily, every day at Time ("HH:MM" in the
+ * bot's time zone).
+ */
+export interface AddWhatsAppChatTaskRequestDTO {
+    "chatID": string;
+    "prompt": string;
+    "daily": boolean;
+    "runAt": string;
+    "time": string;
+}
+
 export interface AgentRuntimeStatusDTO {
     "state": string;
     "savedRevision": string;
@@ -89,6 +102,8 @@ export interface SaveWhatsAppChatSettingsRequestDTO {
     "triggerReply": boolean;
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
+    "triggerSmart": boolean;
+    "triggerSmartRules": string;
 }
 
 export interface ScheduleWhatsAppBroadcastRequestDTO {
@@ -104,6 +119,7 @@ export interface SecretPatchDTO {
     "llmAPIKey": SecretUpdateDTO;
     "fallbackAPIKey": SecretUpdateDTO;
     "langSmithAPIKey": SecretUpdateDTO;
+    "typeSafeAPIKey": SecretUpdateDTO;
 }
 
 export interface SecretUpdateDTO {
@@ -148,6 +164,7 @@ export interface SettingsValuesDTO {
     "llmModel": string;
     "llmProviderID": string;
     "fallbackEndpoint": string;
+    "typeSafeEndpoint": string;
     "llmTimeout": string;
     "llmConcurrency": number;
     "maxOutputTokens": number;
@@ -184,6 +201,7 @@ export interface SettingsValuesDTO {
     "llmAPIKeyConfigured": boolean;
     "fallbackAPIKeyConfigured": boolean;
     "langSmithAPIKeyConfigured": boolean;
+    "typeSafeAPIKeyConfigured": boolean;
 }
 
 export interface SettingsViewDTO {
@@ -240,6 +258,22 @@ export interface WhatsAppChatSettingsDTO {
     "triggerReply": boolean;
     "triggerNameRegex": boolean;
     "triggerNamePattern": string;
+    "triggerSmart": boolean;
+    "triggerSmartRules": string;
+}
+
+/**
+ * WhatsAppChatTaskDTO is a chat's scheduled (one-off) or daily task.
+ */
+export interface WhatsAppChatTaskDTO {
+    "id": string;
+    "prompt": string;
+
+    /**
+     * NextRun is RFC 3339 with the bot's UTC offset.
+     */
+    "nextRun": string;
+    "daily": boolean;
 }
 
 export interface WhatsAppConversationDTO {

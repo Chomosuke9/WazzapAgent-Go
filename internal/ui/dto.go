@@ -30,6 +30,7 @@ type SettingsValuesDTO struct {
 	LLMModel         string `json:"llmModel"`
 	LLMProviderID    string `json:"llmProviderID"`
 	FallbackEndpoint string `json:"fallbackEndpoint"`
+	TypeSafeEndpoint string `json:"typeSafeEndpoint"`
 
 	LLMTimeout       string `json:"llmTimeout"`
 	LLMConcurrency   uint32 `json:"llmConcurrency"`
@@ -72,6 +73,7 @@ type SettingsValuesDTO struct {
 	LLMAPIKeyConfigured       bool `json:"llmAPIKeyConfigured"`
 	FallbackAPIKeyConfigured  bool `json:"fallbackAPIKeyConfigured"`
 	LangSmithAPIKeyConfigured bool `json:"langSmithAPIKeyConfigured"`
+	TypeSafeAPIKeyConfigured  bool `json:"typeSafeAPIKeyConfigured"`
 }
 
 // PublicSettingsDTO and SettingsDTO are descriptive aliases for generated
@@ -126,6 +128,7 @@ type SecretPatchDTO struct {
 	LLMAPIKey       SecretUpdateDTO `json:"llmAPIKey"`
 	FallbackAPIKey  SecretUpdateDTO `json:"fallbackAPIKey"`
 	LangSmithAPIKey SecretUpdateDTO `json:"langSmithAPIKey"`
+	TypeSafeAPIKey  SecretUpdateDTO `json:"typeSafeAPIKey"`
 }
 
 // SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
@@ -254,8 +257,8 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		WhatsAppEnabled: settings.WhatsAppEnabled, AgentEnabled: settings.AgentEnabled,
 		OwnerJID: settings.OwnerJID, ChatAllowlist: append([]string(nil), settings.ChatAllowlist...),
 		LLMEndpoint: settings.LLMEndpoint, LLMModel: settings.LLMModel, LLMProviderID: settings.LLMProviderID,
-		FallbackEndpoint: settings.FallbackEndpoint,
-		LLMTimeout:       settings.LLMTimeout.String(), LLMConcurrency: settings.LLMConcurrency,
+		FallbackEndpoint: settings.FallbackEndpoint, TypeSafeEndpoint: settings.TypeSafeEndpoint,
+		LLMTimeout: settings.LLMTimeout.String(), LLMConcurrency: settings.LLMConcurrency,
 		MaxOutputTokens: settings.MaxOutputTokens, MaxResponseBytes: settings.MaxResponseBytes,
 		HistoryWindow: settings.HistoryWindow, MaxContextBytes: settings.MaxContextBytes,
 		HistoryKeepLatest: settings.HistoryKeepLatest, HistoryMaxAge: settings.HistoryMaxAge.String(),
@@ -269,7 +272,7 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		PairingOutput: settings.PairingOutput, NoColor: settings.NoColor, ForceColor: settings.ForceColor,
 		StartOnLaunch: settings.StartOnLaunch, TenantID: settings.TenantID.String(), AccountID: settings.AccountID.String(),
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
-		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured,
+		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
 	}
 }
 
@@ -343,7 +346,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.WhatsAppEnabled, settings.AgentEnabled = values.WhatsAppEnabled, values.AgentEnabled
 	settings.OwnerJID, settings.ChatAllowlist = values.OwnerJID, append([]string(nil), values.ChatAllowlist...)
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
-	settings.FallbackEndpoint = values.FallbackEndpoint
+	settings.FallbackEndpoint, settings.TypeSafeEndpoint = values.FallbackEndpoint, values.TypeSafeEndpoint
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
 	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers
@@ -381,6 +384,7 @@ func patchFromDTO(patch SettingsPatchDTO) (control.SettingsPatch, error) {
 		LLMAPIKey:       control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LLMAPIKey.Action), Value: patch.Secrets.LLMAPIKey.Value},
 		FallbackAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.FallbackAPIKey.Action), Value: patch.Secrets.FallbackAPIKey.Value},
 		LangSmithAPIKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LangSmithAPIKey.Action), Value: patch.Secrets.LangSmithAPIKey.Value},
+		TypeSafeAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.TypeSafeAPIKey.Action), Value: patch.Secrets.TypeSafeAPIKey.Value},
 	}}, nil
 }
 

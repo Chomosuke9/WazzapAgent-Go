@@ -16,6 +16,7 @@ import {
   type WhatsAppMessageDTO,
   type WhatsAppQuoteDTO,
 } from "../services/backend";
+import { ChatTasks } from "./ChatTasks";
 
 function conversationKind(kind: string): string {
   if (kind === "group") return "Group";
@@ -180,6 +181,8 @@ export function ChatPage() {
   const [triggerReply, setTriggerReply] = useState(true);
   const [triggerNameRegex, setTriggerNameRegex] = useState(false);
   const [triggerNamePattern, setTriggerNamePattern] = useState("");
+  const [triggerSmart, setTriggerSmart] = useState(false);
+  const [triggerSmartRules, setTriggerSmartRules] = useState("");
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -338,6 +341,8 @@ export function ChatPage() {
         setTriggerReply(settings.triggerReply);
         setTriggerNameRegex(settings.triggerNameRegex);
         setTriggerNamePattern(settings.triggerNamePattern);
+        setTriggerSmart(settings.triggerSmart);
+        setTriggerSmartRules(settings.triggerSmartRules);
       })
       .catch((error) => {
         if (mounted) setSettingsError(actionErrorMessage(error, "Could not load chat settings."));
@@ -427,6 +432,8 @@ export function ChatPage() {
         triggerReply,
         triggerNameRegex,
         triggerNamePattern,
+        triggerSmart,
+        triggerSmartRules,
       });
       setChatSettings(updated);
       setSettingsSaved(true);
@@ -543,7 +550,14 @@ export function ChatPage() {
                         <label><input type="checkbox" checked={triggerMention} onChange={(event) => { setTriggerMention(event.target.checked); setSettingsSaved(false); }} /> Mention the bot account</label>
                         <label><input type="checkbox" checked={triggerName} onChange={(event) => { setTriggerName(event.target.checked); setSettingsSaved(false); }} /> Agent name</label>
                         <label><input type="checkbox" checked={triggerReply} onChange={(event) => { setTriggerReply(event.target.checked); setSettingsSaved(false); }} /> Reply to a bot message</label>
+                        <label><input type="checkbox" checked={triggerSmart} onChange={(event) => { setTriggerSmart(event.target.checked); setSettingsSaved(false); }} /> Smart: TypeSafe decides if a message is meant for the bot</label>
                       </div>
+                      {triggerSmart && <label className="settings-field">Smart rules from group admins
+                        <textarea rows={3} maxLength={2000} value={triggerSmartRules}
+                          onChange={(event) => { setTriggerSmartRules(event.target.value); setSettingsSaved(false); }}
+                          placeholder="One rule per line, for example: someone sends a scam link" />
+                        <small>A message that matches a rule wakes the Agent, and the Agent sees these rules. Up to 10 rules.</small>
+                      </label>}
                       {triggerName && <>
                         <label className="trigger-regex-toggle"><input type="checkbox" checked={triggerNameRegex} onChange={(event) => { setTriggerNameRegex(event.target.checked); setSettingsSaved(false); }} /> Use a custom regex for the name trigger</label>
                         {triggerNameRegex ? <label className="settings-field">Regex pattern
@@ -581,6 +595,7 @@ export function ChatPage() {
                           placeholder="Example: Keep replies concise and use English." />
                       </label>
                     </section>
+                    <ChatTasks chatID={selectedChatID} />
                     {selectedConversation?.kind === "group" && <section className="chat-settings-section group-settings-section">
                       <header><span><h2>Group members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot account is an admin" : " · bot account is not an admin"}</p></span>
                         <button type="button" className="secondary-button" disabled={loadingMembers} onClick={() => setMemberRefresh((value) => value + 1)}>

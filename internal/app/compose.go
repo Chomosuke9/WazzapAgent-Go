@@ -13,6 +13,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	llmopenai "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/llm/openai"
 	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/typesafe"
 	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
@@ -159,6 +160,13 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
+	if apiKey := application.config.TypeSafeAPIKey(); apiKey != "" {
+		client, err := typesafe.New(apiKey, application.config.TypeSafeEndpoint(), nil)
+		if err != nil {
+			return nil, err
+		}
+		gate.SetResponseJudge(typesafe.NewResponseJudge(client, store.History(), application.config.AssistantName(), application.logger))
+	}
 	dispatcher, err := action.NewDispatcher(store.Actions(), gate, waAdapter, agent.SystemClock{}, application.metrics)
 	if err != nil {
 		return nil, err
@@ -168,10 +176,11 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	agentLogs := observability.NewAgentLogger(application.logger)
+	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound()}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
-			Context: contextBuilder, ChatContext: waAdapter, HistoryWindow: application.config.HistoryWindow(),
+			Context: contextBuilder, ChatContext: chatState, HistoryWindow: application.config.HistoryWindow(),
 			Model: model, Responses: dispatcher, Effects: effectDispatcher,
 			InvokeEvents: agentLogs, Clock: agent.SystemClock{},
 		})
@@ -191,7 +200,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		Activity: waAdapter, Events: agentLogs, ChatContext: waAdapter, Muter: waAdapter, Stickers: store.Stickers(),
+		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
 		Report: func(err error) {
 			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 		},

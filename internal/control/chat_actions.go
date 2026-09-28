@@ -61,6 +61,26 @@ type AgentBroadcastSchedule struct {
 	Results           []AgentBroadcastScheduleResult
 }
 
+// AgentChatTask is a scheduled (one-off) or daily task in one chat.
+type AgentChatTask struct {
+	// ID is the task's short ID, the one /schedule-task and /daily-task use.
+	ID     string
+	Prompt string
+	// NextRun is in the bot's time zone; a daily task repeats at its clock
+	// time.
+	NextRun time.Time
+	Daily   bool
+}
+
+// AgentChatTaskInput adds a task that runs once at RunAt, or every day at
+// DailyMinute (minutes after midnight in the bot's time zone).
+type AgentChatTaskInput struct {
+	Prompt      string
+	Daily       bool
+	RunAt       time.Time
+	DailyMinute int
+}
+
 type AgentChatSettings struct {
 	Version            agent.ConfigVersion
 	ModerationLevel    agent.ModerationLevel
@@ -88,6 +108,9 @@ type ManagedAgentChatActions interface {
 	GetChatSettings(context.Context, string) (AgentChatSettings, error)
 	SaveChatSettings(context.Context, string, AgentChatSettingsUpdate) (AgentChatSettings, error)
 	ResetChatSettings(context.Context, ChatSettingsResetCategory, config.ChatDefaults) (int64, error)
+	ListChatTasks(context.Context, string) ([]AgentChatTask, error)
+	AddChatTask(context.Context, string, AgentChatTaskInput) (AgentChatTask, error)
+	DeleteChatTask(ctx context.Context, chatID, taskID string, daily bool) error
 	ListBroadcastGroups(context.Context) ([]AgentBroadcastGroup, error)
 	BroadcastWhatsAppGroups(context.Context, []string, string, string, int, int) ([]AgentBroadcastGroupResult, error)
 	ScheduleWhatsAppBroadcast(context.Context, []string, string, string, int, int, time.Time) (AgentBroadcastSchedule, error)

@@ -79,6 +79,56 @@ func TestFixedGateUsesPerChatInvocationTriggers(t *testing.T) {
 	}
 }
 
+type fakeJudge struct {
+	addressed bool
+	calls     int
+}
+
+func (judge *fakeJudge) ShouldRespond(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error) {
+	judge.calls++
+	return judge.addressed, nil
+}
+
+func TestFixedGateSmartTriggerAsksJudgeOnceForUnmatchedGroupMessages(t *testing.T) {
+	key := fixedEffectKey(t)
+	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
+	gate, err := policy.NewFixedGate(policyID, 1, &fixedConfigReader{}, fixedChatAccess{}, &fixedAuthority{}, "Vivy", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission := agent.PermissionConfig{PolicyID: policyID, Revision: 1}
+	smart := agent.ConfigSnapshot{Version: 1, Permission: permission, Triggers: agent.TriggerConfig{Smart: true}}
+	message := fixedInvocationMessage(t, key, conversation.ChatGroup, "the big one please")
+
+	if err := gate.AuthorizeInvocation(context.Background(), message, smart); err == nil {
+		t.Fatal("smart trigger matched without a judge")
+	}
+	judge := &fakeJudge{addressed: true}
+	gate.SetResponseJudge(judge)
+	if err := gate.AuthorizeInvocation(context.Background(), message, agent.ConfigSnapshot{Version: 1, Permission: permission}); err == nil || judge.calls != 0 {
+		t.Fatalf("judge ran with the smart trigger off: err=%v calls=%d", err, judge.calls)
+	}
+	for range 2 {
+		if err := gate.AuthorizeInvocation(context.Background(), message, smart); err != nil {
+			t.Fatalf("judged-addressed message was denied: %v", err)
+		}
+	}
+	if judge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1 (the batch re-check reuses the judgment)", judge.calls)
+	}
+	mentioned := fixedInvocationMessage(t, key, conversation.ChatGroup, "hi")
+	mentioned.MentionsBot = true
+	smart.Triggers.Mention = true
+	if err := gate.AuthorizeInvocation(context.Background(), mentioned, smart); err != nil || judge.calls != 1 {
+		t.Fatalf("a mention should skip the judge: err=%v calls=%d", err, judge.calls)
+	}
+	judge.addressed = false
+	other := fixedInvocationMessage(t, key, conversation.ChatGroup, "see you tomorrow")
+	if err := gate.AuthorizeInvocation(context.Background(), other, smart); err == nil {
+		t.Fatal("judged-not-addressed message was accepted")
+	}
+}
+
 func fixedInvocationMessage(t *testing.T, key agent.Key, kind conversation.ChatKind, text string) conversation.IncomingMessage {
 	t.Helper()
 	messageID, _ := identity.NewMessageID()
