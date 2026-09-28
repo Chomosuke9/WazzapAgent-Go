@@ -108,26 +108,26 @@ func (gate *FixedGate) triggered(ctx context.Context, message conversation.Incom
 	return respond
 }
 
-// requesterRole reads, from current records, whether the human who started
-// the model's turn is the owner or a group admin. A turn no human started
-// (a scheduled task) has neither role.
-func (gate *FixedGate) requesterRole(ctx context.Context, model Principal) (owner, admin bool, err error) {
+// requesterRole reads, from current records, whether a human who is still
+// current started the model's turn, and whether they are the owner or a
+// group admin. A turn no human started (a scheduled task) has no requester.
+func (gate *FixedGate) requesterRole(ctx context.Context, model Principal) (requested, owner, admin bool, err error) {
 	requester, ok, err := gate.chats.ReadRequester(ctx, model.Key(), model.InvocationID)
 	if err != nil || !ok {
-		return false, false, err
+		return false, false, false, err
 	}
 	access, err := gate.chats.ReadHumanAccess(ctx, requester)
 	if agent.IsCode(err, agent.ErrorNotFound) {
-		return false, false, nil
+		return false, false, false, nil
 	}
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	authority, err := gate.authority.ReadChatAuthority(ctx, requester)
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
-	return access.ConfiguredOwner, authority.ActorIsAdmin, nil
+	return true, access.ConfiguredOwner, authority.ActorIsAdmin, nil
 }
 
 // CommandPermissionFacts resolves the facts consumed by a command's
@@ -222,7 +222,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 			IsPrivate:  authority.ChatKind == conversation.ChatDirect,
 			FromMe:     true,
 		}
-		facts.RequesterIsOwner, facts.RequesterIsAdmin, err = gate.requesterRole(ctx, principal)
+		facts.HasRequester, facts.RequesterIsOwner, facts.RequesterIsAdmin, err = gate.requesterRole(ctx, principal)
 		return facts, err
 	default:
 		return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve command permission facts", errors.New("only human or model principals may dispatch commands"))

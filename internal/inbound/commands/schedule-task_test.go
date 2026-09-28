@@ -130,24 +130,32 @@ func TestScheduleTaskRefusesMoreThanADay(t *testing.T) {
 	}
 }
 
-func TestTaskCommandsAreForAdminsOwnerAndTheBotOnTheirBehalf(t *testing.T) {
-	for _, name := range []string{"/schedule-task 1H hi", "/daily-task 07:00 hi"} {
-		for _, test := range []struct {
-			who   string
-			facts command.PermissionFacts
-			want  bool
-		}{
-			{"owner", command.PermissionFacts{IsOwner: true, IsPrivate: true}, true},
-			{"group admin", command.PermissionFacts{IsAdmin: true, IsGroup: true}, true},
-			{"member", command.PermissionFacts{IsGroup: true}, false},
-			{"stranger in private", command.PermissionFacts{IsPrivate: true}, false},
-			{"bot for a member", command.PermissionFacts{FromMe: true, IsGroup: true}, false},
-			{"bot for an admin", command.PermissionFacts{FromMe: true, IsGroup: true, RequesterIsAdmin: true}, true},
-			{"bot for the owner", command.PermissionFacts{FromMe: true, IsPrivate: true, RequesterIsOwner: true}, true},
-		} {
-			tasks, _, err := dispatchTaskCommand(t, &recordingTasks{}, name, test.facts, conversation.IncomingMessage{})
-			if allowed := !errors.Is(err, command.ErrDenied); allowed != test.want || (allowed && (err != nil || tasks.calls != 1)) {
-				t.Errorf("%s by %s: err=%v calls=%d, want allowed=%v", name, test.who, err, tasks.calls, test.want)
+func TestTaskCommandPermissions(t *testing.T) {
+	people := []struct {
+		who   string
+		facts command.PermissionFacts
+	}{
+		{"owner", command.PermissionFacts{IsOwner: true, IsPrivate: true}},
+		{"group admin", command.PermissionFacts{IsAdmin: true, IsGroup: true}},
+		{"member", command.PermissionFacts{IsGroup: true}},
+		{"stranger in private", command.PermissionFacts{IsPrivate: true}},
+		{"bot for a member", command.PermissionFacts{FromMe: true, IsGroup: true, HasRequester: true}},
+		{"bot for an admin", command.PermissionFacts{FromMe: true, IsGroup: true, HasRequester: true, RequesterIsAdmin: true}},
+		{"bot for the owner", command.PermissionFacts{FromMe: true, IsPrivate: true, HasRequester: true, RequesterIsOwner: true}},
+		{"bot in a firing task", command.PermissionFacts{FromMe: true, IsGroup: true}},
+	}
+	// Reminders are for everyone; daily tasks only for the owner and admins.
+	// A firing task, which nobody asked for, may create neither.
+	want := map[string][]bool{
+		"/schedule-task 1H hi": {true, true, true, true, true, true, true, false},
+		"/daily-task 07:00 hi": {true, true, false, false, false, true, true, false},
+	}
+	for text, allowed := range want {
+		for index, person := range people {
+			tasks, _, err := dispatchTaskCommand(t, &recordingTasks{}, text, person.facts, conversation.IncomingMessage{})
+			got := !errors.Is(err, command.ErrDenied)
+			if got != allowed[index] || (got && (err != nil || tasks.calls != 1)) {
+				t.Errorf("%s by %s: err=%v calls=%d, want allowed=%v", text, person.who, err, tasks.calls, allowed[index])
 			}
 		}
 	}

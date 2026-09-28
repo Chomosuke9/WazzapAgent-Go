@@ -3,6 +3,7 @@ package inbound_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,10 @@ func TestScheduledTaskRunsOnceAsASystemTurn(t *testing.T) {
 	}
 	if !strings.HasPrefix(fixture.sender.last().Text, "reply: Scheduled task firing now.") {
 		t.Fatalf("sent text = %q", fixture.sender.last().Text)
+	}
+	// Nobody asked for the firing turn, so it cannot schedule another task.
+	if commands := fixture.model.lastRequest().Commands; slices.Contains(commands, "schedule-task") || slices.Contains(commands, "daily-task") {
+		t.Fatalf("task turn commands = %v", commands)
 	}
 	tasks, err := fixture.store.Inbound().ListScheduledTasks(context.Background(), key.TenantID)
 	if err != nil || len(tasks) != 0 {

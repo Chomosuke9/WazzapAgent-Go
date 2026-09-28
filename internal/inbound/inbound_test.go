@@ -740,8 +740,8 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	// Task commands need the requester to be the owner or a group admin.
-	if !slices.Equal(request.Commands, []string{"catch", "help", "info"}) {
+	// Anyone may ask for a reminder; settings need the owner or an admin.
+	if !slices.Equal(request.Commands, []string{"catch", "help", "info", "schedule-task"}) {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 

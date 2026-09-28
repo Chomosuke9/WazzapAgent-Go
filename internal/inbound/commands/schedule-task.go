@@ -20,15 +20,15 @@ const maxScheduleTaskDelay = 24 * time.Hour
 func init() {
 	register(command.Command{
 		Name: "schedule-task",
-		// The task later runs as a trusted system turn, so only the owner, a
-		// group admin, or the bot asked by one of them may plant it.
-		Permission: "(owner or (admin and group)) and !fromMe or fromMe and (requesterOwner or (requesterAdmin and group))",
+		// Anyone may set a reminder, and the bot may for anyone who asked. A
+		// firing task has no requester, so it cannot schedule another task.
+		// A task's turn can only reply, react and send stickers.
+		Permission: "!fromMe or requester",
 		Description: "Runs a task once, later, in this chat. Format: /schedule-task <duration> <task>. " +
 			"The duration combines hours (H) and minutes (M), for example 2H30M, 2H, or 45M, up to 24H. " +
 			"Example: /schedule-task 1H30M Remind @Budi (a1b2c3) about the meeting. " +
 			"/schedule-task list shows the pending tasks; /schedule-task delete <ID> deletes one.",
-		DeniedReply: "The /schedule-task command can only be used by group admins or the owner.",
-		Run:         runScheduleTask,
+		Run: runScheduleTask,
 	})
 }
 

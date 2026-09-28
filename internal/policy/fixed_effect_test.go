@@ -236,7 +236,7 @@ func TestModelCommandFactsCarryTheRequesterRole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", test.name, err)
 		}
-		if facts.RequesterIsAdmin != test.wantAdmin || facts.RequesterIsOwner || facts.IsAdmin || !facts.FromMe {
+		if facts.HasRequester != test.found || facts.RequesterIsAdmin != test.wantAdmin || facts.RequesterIsOwner || facts.IsAdmin || !facts.FromMe {
 			t.Fatalf("%s: facts = %+v", test.name, facts)
 		}
 	}

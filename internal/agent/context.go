@@ -269,7 +269,7 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 // them when asked.
 func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	lines := []string{"<chat_state>",
-		"Sensitive settings: change them only when the owner or a group admin asks.",
+		"Sensitive settings (all but one-off tasks): change them only when the owner or a group admin asks.",
 		"Settings of this chat (the command in brackets changes it):"}
 	if chat.Kind == "group" {
 		triggers := config.Triggers
@@ -311,7 +311,7 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	if zone == "" {
 		zone = "UTC"
 	}
-	lines = append(lines, "One-off tasks [/schedule-task], [ID] then time:")
+	lines = append(lines, "One-off tasks [/schedule-task], open to everyone; [ID] then time:")
 	lines = append(lines, orNone(once)...)
 	lines = append(lines, "Daily tasks [/daily-task], [ID] then time in the bot's time zone ("+zone+"):")
 	lines = append(lines, orNone(daily)...)
