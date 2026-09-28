@@ -22,6 +22,7 @@ const agentFieldLabels: Record<string, string> = {
   WAZZAP_LLM_ENDPOINT: "LLM API base URL",
   WAZZAP_LLM_API_KEY: "LLM API key",
   WAZZAP_LLM_MODEL: "LLM model",
+  TYPESAFE_ENDPOINT: "TypeSafe endpoint",
 };
 
 function readinessMessage(field: string, message: string): string {
@@ -219,7 +220,8 @@ export function SettingsPage() {
         <label><span>Fallback API key {draft.fallbackAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={fallbackSecret} onChange={(event) => { setFallbackSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>LangSmith API key {draft.langSmithAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={langSmithSecret} onChange={(event) => { setLangSmithSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>TypeSafe API key {draft.typeSafeAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={typeSafeSecret} onChange={(event) => { setTypeSafeSecret(event.target.value); setSaved(false); }} /></label>
-        <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to api.typesafe.ai.</p>
+        <label><span>TypeSafe endpoint</span><input value={draft.typeSafeEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" onChange={(event) => update("typeSafeEndpoint", event.target.value)} /></label>
+        <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint (Jev on System One by default). Leave the endpoint blank for the default.</p>
       </div>
 
       </section>

@@ -35,6 +35,7 @@ const (
 	defaultMaxResponseBytes  = 16 * 1024
 	defaultProviderID        = "openai-compatible"
 	defaultPolicyID          = "part1-chat-gate.v1"
+	defaultTypeSafeEndpoint  = "https://api.typesafe.ai/v1/systemone"
 	defaultWhatsAppEnabled   = true
 	defaultPairingOutput     = "terminal"
 	maxShutdownTimeout       = 5 * time.Minute
@@ -61,6 +62,7 @@ type Snapshot struct {
 	llmFallbackAPIKey   string
 	langsmithAPIKey     string
 	typesafeAPIKey      string
+	typesafeEndpoint    string
 	llmModel            string
 	llmProviderID       identity.ProviderID
 	llmTimeout          time.Duration
@@ -182,8 +184,8 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		FallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"), FallbackAPIKey: value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
 		PolicyID: value(lookup, "WAZZAP_POLICY_ID"), LogLevel: value(lookup, "WAZZAP_LOG_LEVEL"),
 		LogFormat: value(lookup, "WAZZAP_LOG_FORMAT"), LangSmithAPIKey: value(lookup, "LANGSMITH_API_KEY"),
-		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"),
-		DataDir:        value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
+		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"), TypeSafeEndpoint: value(lookup, "TYPESAFE_ENDPOINT"),
+		DataDir: value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
 		PairingOutput: value(lookup, "WAZZAP_PAIRING_OUTPUT"),
 	}
 	var err error
@@ -261,6 +263,7 @@ func (snapshot Snapshot) LLMFallbackEndpoint() string        { return snapshot.l
 func (snapshot Snapshot) LLMFallbackAPIKey() string          { return snapshot.llmFallbackAPIKey }
 func (snapshot Snapshot) LangSmithAPIKey() string            { return snapshot.langsmithAPIKey }
 func (snapshot Snapshot) TypeSafeAPIKey() string             { return snapshot.typesafeAPIKey }
+func (snapshot Snapshot) TypeSafeEndpoint() string           { return snapshot.typesafeEndpoint }
 func (snapshot Snapshot) LLMModel() string                   { return snapshot.llmModel }
 func (snapshot Snapshot) LLMProviderID() identity.ProviderID { return snapshot.llmProviderID }
 func (snapshot Snapshot) LLMTimeout() time.Duration          { return snapshot.llmTimeout }

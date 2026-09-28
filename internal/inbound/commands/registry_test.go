@@ -83,6 +83,11 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 		{args: "smart clear", ok: true},
 		{args: "smart set ", ok: false},
 		{args: "smart settings", ok: false},
+		{args: "smart add scam links", ok: true},
+		{args: "smart add ", ok: false},
+		{args: "smart remove 2", ok: true},
+		{args: "smart remove 0", ok: false},
+		{args: "smart remove two", ok: false},
 	}
 	for _, test := range triggerTests {
 		if _, ok := parseTriggerArgs(test.args); ok != test.ok {
@@ -97,6 +102,21 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 	change(&triggers)
 	if !triggers.Smart || triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices" {
 		t.Fatalf("smart set = %#v", triggers)
+	}
+	add, _ := parseTriggerArgs("smart add someone spams\n stickers")
+	add(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices\nsomeone spams stickers" {
+		t.Fatalf("smart add = %q", triggers.SmartRules)
+	}
+	remove, _ := parseTriggerArgs("smart remove 2")
+	remove(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
+		t.Fatalf("smart remove 2 = %q", triggers.SmartRules)
+	}
+	removeMissing, _ := parseTriggerArgs("smart remove 5")
+	removeMissing(&triggers)
+	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
+		t.Fatalf("smart remove 5 changed the rules: %q", triggers.SmartRules)
 	}
 	clear, _ := parseTriggerArgs("smart clear")
 	clear(&triggers)

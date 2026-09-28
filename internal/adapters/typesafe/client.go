@@ -11,14 +11,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 const (
-	DefaultBaseURL = "https://api.typesafe.ai"
-	DefaultModel   = "jev-latest"
-	maxBodyBytes   = 1 << 20
+	// DefaultEndpoint is System One, where Jev answers the questions.
+	DefaultEndpoint = "https://api.typesafe.ai/v1/systemone"
+	DefaultModel    = "jev-latest"
+	maxBodyBytes    = 1 << 20
 )
 
 // Question is one named judgment. Type is "noul", "choice" or "score";
@@ -57,22 +59,30 @@ type Result struct {
 }
 
 type Client struct {
-	baseURL    string
+	endpoint   string
 	apiKey     string
 	model      string
 	httpClient *http.Client
 }
 
-// New returns a client for the given API key. A nil httpClient gets a
-// 10-second timeout, the official SDKs' per-attempt default.
-func New(apiKey string, httpClient *http.Client) (*Client, error) {
+// New returns a client that posts to endpoint (DefaultEndpoint when empty)
+// with the given API key. A nil httpClient gets a 10-second timeout, the
+// official SDKs' per-attempt default.
+func New(apiKey, endpoint string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("typesafe: API key is required")
+	}
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	if parsed, err := url.Parse(endpoint); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("typesafe: endpoint %q must be an absolute HTTP(S) URL", endpoint)
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Client{baseURL: DefaultBaseURL, apiKey: strings.TrimSpace(apiKey), model: DefaultModel, httpClient: httpClient}, nil
+	return &Client{endpoint: endpoint, apiKey: strings.TrimSpace(apiKey), model: DefaultModel, httpClient: httpClient}, nil
 }
 
 // SystemOne asks every question about state in one request. The questions
@@ -89,7 +99,7 @@ func (client *Client) SystemOne(ctx context.Context, state any, questions map[st
 	if err != nil {
 		return Result{}, fmt.Errorf("typesafe: encode request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/systemone", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("typesafe: build request: %w", err)
 	}

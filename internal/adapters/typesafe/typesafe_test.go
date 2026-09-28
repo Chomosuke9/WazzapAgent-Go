@@ -25,11 +25,10 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New("test-key", server.Client())
+	client, err := New("test-key", server.URL+"/v1/systemone", server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.baseURL = server.URL
 	return client
 }
 
@@ -127,6 +126,16 @@ func TestClientRejectsMissingAnswer(t *testing.T) {
 	})
 	if _, err := client.SystemOne(t.Context(), "text", map[string]Question{"q": {Type: "noul"}}); err == nil {
 		t.Fatal("accepted a response without the asked answer")
+	}
+}
+
+func TestNewDefaultsAndChecksTheEndpoint(t *testing.T) {
+	client, err := New("key", " ", nil)
+	if err != nil || client.endpoint != DefaultEndpoint {
+		t.Fatalf("empty endpoint = %v, %v", client, err)
+	}
+	if _, err := New("key", "api.typesafe.ai/v1/systemone", nil); err == nil {
+		t.Fatal("accepted an endpoint without a scheme")
 	}
 }
 

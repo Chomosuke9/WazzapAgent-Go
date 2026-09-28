@@ -30,6 +30,7 @@ type SettingsValuesDTO struct {
 	LLMModel         string `json:"llmModel"`
 	LLMProviderID    string `json:"llmProviderID"`
 	FallbackEndpoint string `json:"fallbackEndpoint"`
+	TypeSafeEndpoint string `json:"typeSafeEndpoint"`
 
 	LLMTimeout       string `json:"llmTimeout"`
 	LLMConcurrency   uint32 `json:"llmConcurrency"`
@@ -256,8 +257,8 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		WhatsAppEnabled: settings.WhatsAppEnabled, AgentEnabled: settings.AgentEnabled,
 		OwnerJID: settings.OwnerJID, ChatAllowlist: append([]string(nil), settings.ChatAllowlist...),
 		LLMEndpoint: settings.LLMEndpoint, LLMModel: settings.LLMModel, LLMProviderID: settings.LLMProviderID,
-		FallbackEndpoint: settings.FallbackEndpoint,
-		LLMTimeout:       settings.LLMTimeout.String(), LLMConcurrency: settings.LLMConcurrency,
+		FallbackEndpoint: settings.FallbackEndpoint, TypeSafeEndpoint: settings.TypeSafeEndpoint,
+		LLMTimeout: settings.LLMTimeout.String(), LLMConcurrency: settings.LLMConcurrency,
 		MaxOutputTokens: settings.MaxOutputTokens, MaxResponseBytes: settings.MaxResponseBytes,
 		HistoryWindow: settings.HistoryWindow, MaxContextBytes: settings.MaxContextBytes,
 		HistoryKeepLatest: settings.HistoryKeepLatest, HistoryMaxAge: settings.HistoryMaxAge.String(),
@@ -345,7 +346,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.WhatsAppEnabled, settings.AgentEnabled = values.WhatsAppEnabled, values.AgentEnabled
 	settings.OwnerJID, settings.ChatAllowlist = values.OwnerJID, append([]string(nil), values.ChatAllowlist...)
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
-	settings.FallbackEndpoint = values.FallbackEndpoint
+	settings.FallbackEndpoint, settings.TypeSafeEndpoint = values.FallbackEndpoint, values.TypeSafeEndpoint
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
 	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers

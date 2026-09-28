@@ -39,14 +39,22 @@ type ChatContext struct {
 	Name        string
 	Description string
 	BotIsAdmin  bool
-	// Tasks are the chat's pending scheduled tasks, soonest first.
+	// Tasks are the chat's pending one-off and daily tasks, soonest first.
 	Tasks []ScheduledTaskSummary
+	// TimeZone is the bot's time zone, which daily tasks follow, as a UTC
+	// offset such as "UTC+07:00".
+	TimeZone string
 }
 
-// ScheduledTaskSummary is one pending /schedule-task entry as the model
-// sees it in <chat_state>.
+// ScheduledTaskSummary is one /schedule-task or /daily-task entry as the
+// model sees it in <chat_state>.
 type ScheduledTaskSummary struct {
+	// Code is the short ID the delete commands take.
+	Code string
+	// FireAt is the next run. A daily task shows its time of day as read in
+	// FireAt's location, the bot's time zone.
 	FireAt time.Time
+	Daily  bool
 	Prompt string
 }
 
@@ -260,7 +268,9 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 // with the command that changes it, so the model can explain them and change
 // them when asked.
 func formatChatState(chat ChatContext, config ConfigSnapshot) string {
-	lines := []string{"<chat_state>", "Settings of this chat (the command in brackets changes it):"}
+	lines := []string{"<chat_state>",
+		"Sensitive settings: change them only when the owner or a group admin asks.",
+		"Settings of this chat (the command in brackets changes it):"}
 	if chat.Kind == "group" {
 		triggers := config.Triggers
 		lines = append(lines, fmt.Sprintf("- Triggers [/trigger]: mention %s, name %s, reply to bot %s, smart %s",
@@ -288,15 +298,32 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 		}
 	}
 	lines = append(lines, "- Custom instructions [/prompt]: "+custom+" (the text is in <prompt_override>)")
-	lines = append(lines, "Scheduled tasks [/schedule-task]:")
-	if len(chat.Tasks) == 0 {
-		lines = append(lines, "- none")
-	}
+	var once, daily []string
 	for _, task := range chat.Tasks {
-		lines = append(lines, "- "+task.FireAt.UTC().Format("2006-01-02 15:04 UTC")+": "+sanitizeContextMetadata(task.Prompt))
+		prompt := sanitizeContextMetadata(task.Prompt)
+		if task.Daily {
+			daily = append(daily, "- ["+task.Code+"] every day at "+task.FireAt.Format("15:04")+": "+prompt)
+		} else {
+			once = append(once, "- ["+task.Code+"] "+task.FireAt.UTC().Format("2006-01-02 15:04 UTC")+": "+prompt)
+		}
 	}
+	zone := chat.TimeZone
+	if zone == "" {
+		zone = "UTC"
+	}
+	lines = append(lines, "One-off tasks [/schedule-task], [ID] then time:")
+	lines = append(lines, orNone(once)...)
+	lines = append(lines, "Daily tasks [/daily-task], [ID] then time in the bot's time zone ("+zone+"):")
+	lines = append(lines, orNone(daily)...)
 	lines = append(lines, "</chat_state>")
 	return strings.Join(lines, "\n")
+}
+
+func orNone(lines []string) []string {
+	if len(lines) == 0 {
+		return []string{"- none"}
+	}
+	return lines
 }
 
 func moderationCapabilities(level ModerationLevel) string {

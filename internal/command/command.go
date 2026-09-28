@@ -114,11 +114,30 @@ type StickerSender interface {
 	SendSticker(ctx context.Context, key agent.Key, sticker sticker.Sticker, quoted identity.MessageID) error
 }
 
-// TaskScheduler runs a prompt as an AI turn in a chat at a later time. The
-// task is saved, so it still runs after a restart. source is the command
-// message that asked for it: scheduling twice for one source keeps one task.
+// TaskScheduler runs a prompt as an AI turn in a chat later, once or every
+// day. Tasks are saved, so they still run after a restart. source is the
+// command message that asked for one: scheduling twice for one source keeps
+// one task, and the second call returns a zero Task.
 type TaskScheduler interface {
-	ScheduleTask(ctx context.Context, key agent.Key, source identity.MessageID, fireAt time.Time, prompt string) error
+	ScheduleTask(ctx context.Context, key agent.Key, source identity.MessageID, fireAt time.Time, prompt string) (Task, error)
+	// ScheduleDailyTask runs prompt every day at minute (minutes after
+	// midnight, in the bot's time zone).
+	ScheduleDailyTask(ctx context.Context, key agent.Key, source identity.MessageID, minute int, prompt string) (Task, error)
+	// Tasks lists the chat's tasks, soonest first.
+	Tasks(ctx context.Context, key agent.Key) ([]Task, error)
+	// CancelTask deletes the chat's one-off or daily task with this code. It
+	// reports false when there is none.
+	CancelTask(ctx context.Context, key agent.Key, code string, daily bool) (bool, error)
+}
+
+// Task is a saved task as commands show it.
+type Task struct {
+	// Code is the task's short ID, typed to delete it.
+	Code   string
+	Prompt string
+	// FireAt is the next run, in the bot's time zone.
+	FireAt time.Time
+	Daily  bool
 }
 
 // Store is the durable inbox a command message came from. The registry uses

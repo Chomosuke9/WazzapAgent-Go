@@ -151,6 +151,7 @@ export interface SettingsValuesDTO {
     "llmModel": string;
     "llmProviderID": string;
     "fallbackEndpoint": string;
+    "typeSafeEndpoint": string;
     "llmTimeout": string;
     "llmConcurrency": number;
     "maxOutputTokens": number;

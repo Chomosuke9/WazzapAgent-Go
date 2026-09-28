@@ -102,6 +102,8 @@ type Settings struct {
 	LogFormat       string
 	LangSmithAPIKey string
 	TypeSafeAPIKey  string
+	// TypeSafeEndpoint is the System One (Jev) URL the smart trigger posts to.
+	TypeSafeEndpoint string
 
 	DataDir       string
 	EnvFile       string
@@ -150,8 +152,9 @@ func DefaultSettings() Settings {
 	return Settings{
 		DataDir: defaultDataDir, HTTPAddress: defaultHTTPAddress,
 		LogLevel: defaultLogLevel, LogFormat: defaultLogFormat,
-		ShutdownTimeout: defaultShutdownTimeout,
-		WhatsAppEnabled: defaultWhatsAppEnabled, AgentEnabled: defaultWhatsAppEnabled,
+		TypeSafeEndpoint: defaultTypeSafeEndpoint,
+		ShutdownTimeout:  defaultShutdownTimeout,
+		WhatsAppEnabled:  defaultWhatsAppEnabled, AgentEnabled: defaultWhatsAppEnabled,
 		LLMProviderID: defaultProviderID, PolicyID: defaultPolicyID, PolicyRevision: 1,
 		LLMTimeout: defaultLLMTimeout, LLMConcurrency: defaultLLMConcurrency,
 		MaxOutputTokens: defaultMaxOutputTokens, MaxResponseBytes: defaultMaxResponseBytes,
@@ -314,7 +317,8 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		llmEndpoint: strings.TrimSpace(settings.LLMEndpoint), llmAPIKey: settings.LLMAPIKey,
 		llmFallbackEndpoint: strings.TrimSpace(settings.FallbackEndpoint), llmFallbackAPIKey: settings.FallbackAPIKey,
 		langsmithAPIKey: settings.LangSmithAPIKey, typesafeAPIKey: strings.TrimSpace(settings.TypeSafeAPIKey), llmModel: strings.TrimSpace(settings.LLMModel),
-		llmProviderID: providerID, llmTimeout: settings.LLMTimeout, llmConcurrency: settings.LLMConcurrency,
+		typesafeEndpoint: nonempty(strings.TrimSpace(settings.TypeSafeEndpoint), defaultTypeSafeEndpoint),
+		llmProviderID:    providerID, llmTimeout: settings.LLMTimeout, llmConcurrency: settings.LLMConcurrency,
 		maxOutputTokens: settings.MaxOutputTokens, maxResponseBytes: settings.MaxResponseBytes,
 		basePrompt: settings.BasePrompt, policyID: policyID, policyRevision: settings.PolicyRevision,
 		chatDefaults: settings.ChatDefaults,
@@ -397,7 +401,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
 		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
 		{Key: "WAZZAP_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "WAZZAP_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
-		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true},
+		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true}, {Key: "TYPESAFE_ENDPOINT", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeEndpoint},
 		{Key: "WAZZAP_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "WAZZAP_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "WAZZAP_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "WAZZAP_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
 		{Key: "WAZZAP_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "WAZZAP_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
 		{Key: "startOnLaunch", Group: "application", Kind: FieldBool, Default: "false"},
@@ -629,6 +633,9 @@ func agentIssues(settings Settings) []ReadinessIssue {
 	}
 	if settings.FallbackEndpoint != "" && !validHTTPURL(settings.FallbackEndpoint) {
 		add("WAZZAP_LLM_FALLBACK_ENDPOINT", "invalid", "fallback endpoint must be an absolute HTTP(S) URL")
+	}
+	if settings.TypeSafeEndpoint != "" && !validHTTPURL(settings.TypeSafeEndpoint) {
+		add("TYPESAFE_ENDPOINT", "invalid", "TypeSafe endpoint must be an absolute HTTP(S) URL")
 	}
 	return issues
 }

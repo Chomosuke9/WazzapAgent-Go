@@ -20,7 +20,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 25
+const wantMigrationCount = 26
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
