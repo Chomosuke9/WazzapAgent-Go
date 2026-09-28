@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -649,28 +650,29 @@ func TestSystemPolicyDateIsRenderedPerRequest(t *testing.T) {
 	}
 }
 
-func TestReplyMessageChoicesRideInTheReplyText(t *testing.T) {
+func TestReplyMessageQuizRidesInTheReplyText(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
-	raw := json.RawMessage(`[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Capital of Indonesia?\",\"choices\":[\"Jakarta\",\"Bandung\"],\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	raw := json.RawMessage(`[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Capital of Indonesia?\",\"quiz\":{\"title\":\"Quick quiz\",\"subtitle\":\"Geography\",\"footer\":\"Tap an answer\",\"choices\":[\"Jakarta\",\"Bandung\"]},\"command\":null,\"command_context_msg_id\":null}"}}]`)
 	text, _, _, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil {
 		t.Fatalf("decode quiz reply: %v", err)
 	}
-	body, choices := action.SplitChoices(text)
-	if body != "Capital of Indonesia?" || len(choices) != 2 || choices[0] != "Jakarta" || choices[1] != "Bandung" {
+	body, quiz := action.SplitQuiz(text)
+	want := &action.Quiz{Title: "Quick quiz", Subtitle: "Geography", Footer: "Tap an answer", Choices: []string{"Jakarta", "Bandung"}}
+	if body != "Capital of Indonesia?" || !reflect.DeepEqual(quiz, want) {
 		t.Fatalf("quiz reply = %q", text)
 	}
 
-	plain := json.RawMessage(`[{"id":"reply_plain","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"hi\",\"choices\":null,\"command\":null,\"command_context_msg_id\":null}"}}]`)
+	plain := json.RawMessage(`[{"id":"reply_plain","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"hi\",\"quiz\":null,\"command\":null,\"command_context_msg_id\":null}"}}]`)
 	if text, _, _, err := decodeModelOutput("", plain, request, inbound.CommandRegistry()); err != nil || text != "hi" {
 		t.Fatalf("plain reply = %q, %v", text, err)
 	}
 }
 
-func TestChoicesAreDroppedWhenTheyExceedTheConfiguredLimit(t *testing.T) {
+func TestQuizIsDroppedWhenItExceedsTheConfiguredLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Pick one\",\"choices\":[\"Jakarta\",\"Bandung\"],\"command\":null,\"command_context_msg_id\":null}"}}]}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"reply_quiz","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"Pick one\",\"quiz\":{\"title\":\"Quick quiz\",\"subtitle\":\"Geography\",\"footer\":\"Tap an answer\",\"choices\":[\"Jakarta\",\"Bandung\"]},\"command\":null,\"command_context_msg_id\":null}"}}]}}]}`))
 	}))
 	defer server.Close()
 	providerID, _ := identity.ParseProviderID("openai-compatible")

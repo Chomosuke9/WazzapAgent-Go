@@ -94,18 +94,20 @@ func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
 		}
 		buttons = append(buttons, nativeFlowButton("quick_reply", map[string]string{"display_text": button.Label, "id": button.ID}))
 	}
-	return nativeFlowMessage(request.Text, nil, buttons), nil
+	return nativeFlowMessage(nativeFlowHeader{}, request.Text, nil, buttons), nil
 }
 
 // quizMessage turns a built text message (mentions and quote already
-// resolved) into the same text with one quick_reply button per choice. The
-// button IDs do not start with "/", so a tap arrives as the choice's label.
-func quizMessage(text *waE2E.ExtendedTextMessage, choices []string) *waE2E.Message {
-	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(choices))
-	for index, choice := range choices {
+// resolved) into the same text under the quiz's header, with one quick_reply
+// button per choice. The button IDs do not start with "/", so a tap arrives
+// as the choice's label.
+func quizMessage(text *waE2E.ExtendedTextMessage, quiz action.Quiz) *waE2E.Message {
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(quiz.Choices))
+	for index, choice := range quiz.Choices {
 		buttons = append(buttons, nativeFlowButton("quick_reply", map[string]string{"display_text": choice, "id": fmt.Sprintf("quiz:%d", index+1)}))
 	}
-	return nativeFlowMessage(text.GetText(), text.GetContextInfo(), buttons)
+	header := nativeFlowHeader{title: quiz.Title, subtitle: quiz.Subtitle, footer: quiz.Footer}
+	return nativeFlowMessage(header, text.GetText(), text.GetContextInfo(), buttons)
 }
 
 // quizFallbackText is the quiz as plain text, for when buttons are rejected.
@@ -136,7 +138,7 @@ func copyCodeMessage(code string, target, own types.JID) (*waE2E.Message, error)
 		contextInfo.Participant = proto.String(own.String())
 	}
 	button := nativeFlowButton("cta_copy", map[string]string{"display_text": "Copy code", "copy_code": code})
-	return nativeFlowMessage("", contextInfo, []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button}), nil
+	return nativeFlowMessage(nativeFlowHeader{}, "", contextInfo, []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button}), nil
 }
 
 // codePreview is the code on one line, cut to 120 characters.
@@ -161,20 +163,47 @@ func nativeFlowButton(name string, params map[string]string) *waE2E.InteractiveM
 	}
 }
 
+// invisibleText fills an interactive message's empty text fields. WhatsApp
+// only renders native-flow buttons when the body, header title, subtitle and
+// footer are all present, and it treats an empty or whitespace-only string
+// as absent. U+3164 HANGUL FILLER is not whitespace but draws as a blank.
+const invisibleText = "\u3164"
+
+// nativeFlowHeader is the text around a native-flow message's body. Empty
+// fields are sent as invisibleText.
+type nativeFlowHeader struct {
+	title, subtitle, footer string
+}
+
 // nativeFlowMessage is a top-level interactive message with native-flow
-// buttons, in the shape Rey confirmed WhatsApp accepts on an account that
-// gets 405 otherwise. The trailing nameless button is the trick: hypermeow
-// names its biz node after the buttons ("quick_reply", "cta_copy"), and with
-// a nameless one present it falls back to "mixed", which the server accepts.
-func nativeFlowMessage(body string, contextInfo *waE2E.ContextInfo, buttons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) *waE2E.Message {
+// buttons, in the shape Rey confirmed WhatsApp accepts and renders: body,
+// footer and a media-less header with title and subtitle all set. The
+// trailing nameless button is the 405 trick: hypermeow names its biz node
+// after the buttons ("quick_reply", "cta_copy"), and with a nameless one
+// present it falls back to "mixed", which the server accepts.
+func nativeFlowMessage(header nativeFlowHeader, body string, contextInfo *waE2E.ContextInfo, buttons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) *waE2E.Message {
 	buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{Name: proto.String("")})
 	return &waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
-		Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
+		Header: &waE2E.InteractiveMessage_Header{
+			Title:              proto.String(visibleOrInvisible(header.title)),
+			Subtitle:           proto.String(visibleOrInvisible(header.subtitle)),
+			HasMediaAttachment: proto.Bool(false),
+		},
+		Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(visibleOrInvisible(body))},
+		Footer:      &waE2E.InteractiveMessage_Footer{Text: proto.String(visibleOrInvisible(header.footer))},
 		ContextInfo: contextInfo,
 		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{Buttons: buttons},
 		},
 	}}
+}
+
+// visibleOrInvisible is text, or invisibleText when text is blank.
+func visibleOrInvisible(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return invisibleText
+	}
+	return text
 }
 
 // ownJID is the paired device's phone JID, or empty before pairing completes.

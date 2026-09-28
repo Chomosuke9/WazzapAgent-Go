@@ -3,6 +3,7 @@ package hypermeow
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,10 +95,13 @@ func TestButtonsMessageUsesNativeFlowQuickReplies(t *testing.T) {
 
 func TestQuizMessageKeepsQuoteAndLabelsChoices(t *testing.T) {
 	text := &waE2E.ExtendedTextMessage{Text: proto.String("Capital?"), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("quoted-id")}}
-	interactive := quizMessage(text, []string{"Jakarta", "Bandung"}).GetInteractiveMessage()
+	interactive := quizMessage(text, action.Quiz{Title: "Quick quiz", Subtitle: "Geography", Footer: "Tap an answer", Choices: []string{"Jakarta", "Bandung"}}).GetInteractiveMessage()
 	buttons := interactive.GetNativeFlowMessage().GetButtons()
 	if interactive.GetBody().GetText() != "Capital?" || interactive.GetContextInfo().GetStanzaID() != "quoted-id" || len(buttons) != 3 {
 		t.Fatalf("quiz message = %v", interactive)
+	}
+	if header := interactive.GetHeader(); header.GetTitle() != "Quick quiz" || header.GetSubtitle() != "Geography" || interactive.GetFooter().GetText() != "Tap an answer" {
+		t.Fatalf("quiz header = %v, footer = %v", header, interactive.GetFooter())
 	}
 	var params map[string]string
 	if err := json.Unmarshal([]byte(buttons[1].GetButtonParamsJSON()), &params); err != nil || params["display_text"] != "Bandung" || params["id"] != "quiz:2" {
@@ -148,11 +152,34 @@ func TestCopyCodeMessageCarriesTheCode(t *testing.T) {
 func TestNativeFlowMessagesEndWithANamelessButton(t *testing.T) {
 	buttons, _ := buttonsMessage(action.SendButtonsRequest{Text: "Pick", Buttons: []action.Button{{ID: "/help", Label: "Help"}}})
 	copyCode, _ := copyCodeMessage("x", types.NewJID("15550000002", types.DefaultUserServer), types.EmptyJID)
-	quiz := quizMessage(&waE2E.ExtendedTextMessage{Text: proto.String("Q?")}, []string{"A", "B"})
+	quiz := quizMessage(&waE2E.ExtendedTextMessage{Text: proto.String("Q?")}, action.Quiz{Choices: []string{"A", "B"}})
 	for name, message := range map[string]*waE2E.Message{"buttons": buttons, "copy": copyCode, "quiz": quiz} {
 		all := message.GetInteractiveMessage().GetNativeFlowMessage().GetButtons()
 		if len(all) < 2 || all[len(all)-1].GetName() != "" || all[len(all)-1].ButtonParamsJSON != nil {
 			t.Fatalf("%s buttons = %v", name, all)
 		}
+	}
+}
+
+// WhatsApp only renders the buttons when every text field is set, so each
+// message fills blank ones with an invisible character.
+func TestNativeFlowMessagesHaveEveryTextField(t *testing.T) {
+	buttons, _ := buttonsMessage(action.SendButtonsRequest{Text: "Pick", Buttons: []action.Button{{ID: "/help", Label: "Help"}}})
+	copyCode, _ := copyCodeMessage("x", types.NewJID("15550000002", types.DefaultUserServer), types.EmptyJID)
+	quiz := quizMessage(&waE2E.ExtendedTextMessage{Text: proto.String("Q?")}, action.Quiz{Title: " ", Choices: []string{"A", "B"}})
+	for name, message := range map[string]*waE2E.Message{"buttons": buttons, "copy": copyCode, "quiz": quiz} {
+		interactive := message.GetInteractiveMessage()
+		header := interactive.GetHeader()
+		for field, value := range map[string]string{"title": header.GetTitle(), "subtitle": header.GetSubtitle(), "body": interactive.GetBody().GetText(), "footer": interactive.GetFooter().GetText()} {
+			if strings.TrimSpace(value) == "" {
+				t.Fatalf("%s %s is blank", name, field)
+			}
+		}
+		if header.HasMediaAttachment == nil || header.GetHasMediaAttachment() {
+			t.Fatalf("%s header = %v", name, header)
+		}
+	}
+	if got := copyCode.GetInteractiveMessage().GetBody().GetText(); got != invisibleText {
+		t.Fatalf("copy body = %q", got)
 	}
 }

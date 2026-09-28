@@ -177,9 +177,9 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 		return agent.ModelResult{}, err
 	}
 	if len(text) > int(client.maxResponseBytes) {
-		// Quiz choices must not push a reply over the configured limit; the
-		// reply still goes out, as plain text.
-		if plain, choices := action.SplitChoices(text); len(choices) > 0 {
+		// A quiz must not push a reply over the configured limit; the reply
+		// still goes out, as plain text.
+		if plain, quiz := action.SplitQuiz(text); quiz != nil {
 			text = plain
 		}
 	}
@@ -312,11 +312,23 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 				"minLength":   1,
 				"description": "Visible reply text. Put anything the user may want to copy (code, commands, templates) in one fenced ``` block: the first block is also sent with a Copy button. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (Bot)` using the configured assistant name from the system prompt.",
 			},
-			"choices": map[string]any{
-				"type":        []string{"array", "null"},
-				"items":       map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxChoiceRunes},
-				"maxItems":    action.MaxChoices,
-				"description": "Quiz buttons under the reply: 2 to 5 short, mutually exclusive answers (max 20 characters each). Use them whenever you ask a question whose answer is one of a few known options (yes/no, A/B, a quiz, a poll); keep any explanation of the options in text. A tapped button comes back as the user's message with that choice's text. Otherwise null.",
+			"quiz": map[string]any{
+				"type":        []string{"object", "null"},
+				"description": "Quiz buttons under the reply. Use them whenever you ask a question whose answer is one of a few known options (yes/no, A/B, a quiz, a poll); keep any explanation of the options in text. A tapped button comes back as the user's message with that choice's text. WhatsApp only shows the buttons when title, subtitle and footer are all filled, so always write all three. Otherwise null.",
+				"properties": map[string]any{
+					"title":    map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxQuizHeaderRunes, "description": "Short heading shown above the question, e.g. \"Quick quiz\"."},
+					"subtitle": map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxQuizHeaderRunes, "description": "One short line under the title, e.g. the topic."},
+					"footer":   map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxQuizHeaderRunes, "description": "Short line under the question, e.g. \"Tap an answer\"."},
+					"choices": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxChoiceRunes},
+						"minItems":    action.MinChoices,
+						"maxItems":    action.MaxChoices,
+						"description": "2 to 5 short, mutually exclusive answers (max 20 characters each).",
+					},
+				},
+				"required":             []string{"title", "subtitle", "footer", "choices"},
+				"additionalProperties": false,
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},
@@ -331,7 +343,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 				"description": "Optional per-command anchors; use none when a command has no message anchor.",
 			},
 		},
-		"required":             []string{"context_msg_id", "text", "choices", "command", "command_context_msg_id"},
+		"required":             []string{"context_msg_id", "text", "quiz", "command", "command_context_msg_id"},
 		"additionalProperties": false,
 	})
 	if err != nil {
@@ -441,16 +453,18 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 			if replySeen {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("reply_message may only be called once"))
 			}
-			text, choices, target, commands, err := decodeReplyMessage(call, request, registry)
+			text, quiz, target, commands, err := decodeReplyMessage(call, request, registry)
 			if err != nil {
 				return "", identity.MessageID{}, nil, err
 			}
 			if strings.TrimSpace(content) != "" && content != text {
 				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("content conflicts with reply_message text"))
 			}
-			// Quiz choices ride in the stored text; see action.WithChoices.
-			if withChoices := action.WithChoices(text, choices); len(withChoices) <= agent.MaxResponseBytes {
-				text = withChoices
+			// The quiz rides in the stored text; see action.WithQuiz.
+			if quiz != nil {
+				if withQuiz := action.WithQuiz(text, *quiz); len(withQuiz) <= agent.MaxResponseBytes {
+					text = withQuiz
+				}
 			}
 			replyText, replyTo, replySeen = text, target, true
 			effects = append(effects, commands...)
@@ -501,11 +515,16 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 	}
 }
 
-func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, []string, identity.MessageID, []agent.ModelEffect, error) {
+func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, registry *command.Registry) (string, *action.Quiz, identity.MessageID, []agent.ModelEffect, error) {
 	var args struct {
-		ContextMessageID        string          `json:"context_msg_id"`
-		Text                    string          `json:"text"`
-		Choices                 []string        `json:"choices"`
+		ContextMessageID string `json:"context_msg_id"`
+		Text             string `json:"text"`
+		Quiz             *struct {
+			Title    string   `json:"title"`
+			Subtitle string   `json:"subtitle"`
+			Footer   string   `json:"footer"`
+			Choices  []string `json:"choices"`
+		} `json:"quiz"`
 		Commands                []string        `json:"command"`
 		CommandContextMessageID json.RawMessage `json:"command_context_msg_id"`
 	}
@@ -556,7 +575,11 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, reg
 		}
 		effects = append(effects, agent.ModelEffect{CallID: fmt.Sprintf("%s:%d", call.ID, index), Intent: agent.EffectIntent{Kind: agent.EffectRunCommand, TargetMessageID: commandTarget, Command: canonical}})
 	}
-	return args.Text, args.Choices, replyTo, effects, nil
+	var quiz *action.Quiz
+	if args.Quiz != nil {
+		quiz = &action.Quiz{Title: args.Quiz.Title, Subtitle: args.Quiz.Subtitle, Footer: args.Quiz.Footer, Choices: args.Quiz.Choices}
+	}
+	return args.Text, quiz, replyTo, effects, nil
 }
 
 func decodeArguments(raw json.RawMessage, value any) error {

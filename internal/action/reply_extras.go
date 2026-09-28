@@ -2,28 +2,41 @@ package action
 
 import "strings"
 
-// Quiz choices travel inside the stored reply text as one last line,
-// "【choices】 A | B | C". The model's own history then shows what it offered,
-// and the outbox needs no extra column. SplitChoices takes the line back out
-// before sending.
-const choicesMarker = "【choices】"
+// A quiz travels inside the stored reply text as its last two lines,
+// "【quiz】 Title | Subtitle | Footer" then "【choices】 A | B | C". The model's
+// own history then shows what it offered, and the outbox needs no extra
+// column. SplitQuiz takes the lines back out before sending. Rows stored
+// before quizzes had a header carry only the choices line.
+const (
+	quizMarker    = "【quiz】"
+	choicesMarker = "【choices】"
+)
 
 const (
 	MinChoices     = 2
 	MaxChoices     = 5
 	MaxChoiceRunes = 20
+	// MaxQuizHeaderRunes caps the title, subtitle and footer.
+	MaxQuizHeaderRunes = 60
 )
 
-// WithChoices appends cleaned choices to text. Fewer than MinChoices usable
+// Quiz is a question with quick-reply buttons. WhatsApp only renders the
+// buttons when the message has a header title, subtitle and footer, so the
+// model writes all three; an empty one is filled in when sending.
+type Quiz struct {
+	Title    string
+	Subtitle string
+	Footer   string
+	Choices  []string
+}
+
+// WithQuiz appends the cleaned quiz to text. Fewer than MinChoices usable
 // choices leaves the text as a plain reply.
-func WithChoices(text string, choices []string) string {
-	cleaned := make([]string, 0, len(choices))
-	seen := make(map[string]struct{}, len(choices))
-	for _, choice := range choices {
-		choice = strings.Join(strings.Fields(strings.ReplaceAll(choice, "|", "/")), " ")
-		if runes := []rune(choice); len(runes) > MaxChoiceRunes {
-			choice = strings.TrimSpace(string(runes[:MaxChoiceRunes]))
-		}
+func WithQuiz(text string, quiz Quiz) string {
+	cleaned := make([]string, 0, len(quiz.Choices))
+	seen := make(map[string]struct{}, len(quiz.Choices))
+	for _, choice := range quiz.Choices {
+		choice = cleanQuizField(choice, MaxChoiceRunes)
 		if _, dup := seen[choice]; choice == "" || dup {
 			continue
 		}
@@ -36,12 +49,22 @@ func WithChoices(text string, choices []string) string {
 	if len(cleaned) < MinChoices {
 		return text
 	}
-	return strings.TrimRight(text, "\n ") + "\n\n" + choicesMarker + " " + strings.Join(cleaned, " | ")
+	header := []string{cleanQuizField(quiz.Title, MaxQuizHeaderRunes), cleanQuizField(quiz.Subtitle, MaxQuizHeaderRunes), cleanQuizField(quiz.Footer, MaxQuizHeaderRunes)}
+	return strings.TrimRight(text, "\n ") + "\n\n" + quizMarker + " " + strings.Join(header, " | ") + "\n" + choicesMarker + " " + strings.Join(cleaned, " | ")
 }
 
-// SplitChoices returns the text without its choices line and the choices, or
-// the text unchanged and nil when it carries no valid choices line.
-func SplitChoices(stored string) (string, []string) {
+// cleanQuizField puts value on one line without "|" and cuts it to limit runes.
+func cleanQuizField(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.ReplaceAll(value, "|", "/")), " ")
+	if runes := []rune(value); len(runes) > limit {
+		value = strings.TrimSpace(string(runes[:limit]))
+	}
+	return value
+}
+
+// SplitQuiz returns the text without its quiz lines and the quiz, or the text
+// unchanged and nil when it carries no valid choices line.
+func SplitQuiz(stored string) (string, *Quiz) {
 	index := strings.LastIndex(stored, "\n"+choicesMarker)
 	if index < 0 {
 		return stored, nil
@@ -50,16 +73,25 @@ func SplitChoices(stored string) (string, []string) {
 	if strings.Contains(line, "\n") {
 		return stored, nil
 	}
-	var choices []string
+	quiz := &Quiz{}
 	for _, choice := range strings.Split(line, "|") {
 		if choice = strings.TrimSpace(choice); choice != "" {
-			choices = append(choices, choice)
+			quiz.Choices = append(quiz.Choices, choice)
 		}
 	}
-	if len(choices) < MinChoices || len(choices) > MaxChoices {
+	if len(quiz.Choices) < MinChoices || len(quiz.Choices) > MaxChoices {
 		return stored, nil
 	}
-	return strings.TrimRight(stored[:index], "\n "), choices
+	text := stored[:index]
+	if headerIndex := strings.LastIndex(text, "\n"+quizMarker); headerIndex >= 0 && !strings.Contains(text[headerIndex+1:], "\n") {
+		fields := strings.SplitN(text[headerIndex+1+len(quizMarker):], "|", 3)
+		for len(fields) < 3 {
+			fields = append(fields, "")
+		}
+		quiz.Title, quiz.Subtitle, quiz.Footer = strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1]), strings.TrimSpace(fields[2])
+		text = text[:headerIndex]
+	}
+	return strings.TrimRight(text, "\n "), quiz
 }
 
 // FirstCodeBlock returns the body of the first fenced code block in text, or

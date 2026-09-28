@@ -364,7 +364,7 @@ func (adapter *Adapter) Fatal() <-chan error                    { return adapter
 func (adapter *Adapter) QueueUsage() (int, int)                 { return len(adapter.queue), cap(adapter.queue) }
 
 func (adapter *Adapter) SendText(ctx context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
-	if len(request.Choices) > 0 {
+	if request.Quiz != nil && len(request.Quiz.Choices) > 0 {
 		return adapter.sendQuiz(ctx, request)
 	}
 	return adapter.send(ctx, request.Key, "send WhatsApp text", func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
@@ -382,14 +382,14 @@ func (adapter *Adapter) sendQuiz(ctx context.Context, request action.SendTextReq
 		if err != nil {
 			return nil, err
 		}
-		return quizMessage(text.GetExtendedTextMessage(), request.Choices), nil
+		return quizMessage(text.GetExtendedTextMessage(), *request.Quiz), nil
 	})
 	if !errors.Is(err, whatsmeow.ErrServerReturnedError) {
 		return result, err
 	}
 	adapter.logger.Warn("WhatsApp rejected quiz buttons; sending the quiz as text", "error", err)
 	fallback := request
-	fallback.Text, fallback.Choices = quizFallbackText(request.Text, request.Choices), nil
+	fallback.Text, fallback.Quiz = quizFallbackText(request.Text, request.Quiz.Choices), nil
 	return adapter.SendText(ctx, fallback)
 }
 

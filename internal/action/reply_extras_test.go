@@ -33,25 +33,37 @@ func TestFirstCodeBlock(t *testing.T) {
 	}
 }
 
-func TestChoicesRoundTrip(t *testing.T) {
-	stored := WithChoices("Capital of Indonesia?\n", []string{" Jakarta ", "Band|ung", "Jakarta", "", "A choice that is far too long to fit"})
-	want := "Capital of Indonesia?\n\n【choices】 Jakarta | Band/ung | A choice that is far"
+func TestQuizRoundTrip(t *testing.T) {
+	stored := WithQuiz("Capital of Indonesia?\n", Quiz{
+		Title: " Quick | quiz ", Subtitle: "Geography", Footer: "Tap\nan answer",
+		Choices: []string{" Jakarta ", "Band|ung", "Jakarta", "", "A choice that is far too long to fit"},
+	})
+	want := "Capital of Indonesia?\n\n【quiz】 Quick / quiz | Geography | Tap an answer\n【choices】 Jakarta | Band/ung | A choice that is far"
 	if stored != want {
-		t.Fatalf("WithChoices = %q, want %q", stored, want)
+		t.Fatalf("WithQuiz = %q, want %q", stored, want)
 	}
-	text, choices := SplitChoices(stored)
-	if text != "Capital of Indonesia?" || !reflect.DeepEqual(choices, []string{"Jakarta", "Band/ung", "A choice that is far"}) {
-		t.Fatalf("SplitChoices = %q %q", text, choices)
+	text, quiz := SplitQuiz(stored)
+	wantQuiz := &Quiz{Title: "Quick / quiz", Subtitle: "Geography", Footer: "Tap an answer", Choices: []string{"Jakarta", "Band/ung", "A choice that is far"}}
+	if text != "Capital of Indonesia?" || !reflect.DeepEqual(quiz, wantQuiz) {
+		t.Fatalf("SplitQuiz = %q %+v", text, quiz)
+	}
+}
+
+// Rows stored before quizzes had a header carry only the choices line.
+func TestQuizWithoutHeaderLine(t *testing.T) {
+	text, quiz := SplitQuiz("Capital?\n\n【choices】 Jakarta | Bandung")
+	if text != "Capital?" || !reflect.DeepEqual(quiz, &Quiz{Choices: []string{"Jakarta", "Bandung"}}) {
+		t.Fatalf("SplitQuiz = %q %+v", text, quiz)
 	}
 }
 
 func TestPlainRepliesKeepTheirText(t *testing.T) {
-	if got := WithChoices("hi", []string{"only one"}); got != "hi" {
+	if got := WithQuiz("hi", Quiz{Title: "T", Choices: []string{"only one"}}); got != "hi" {
 		t.Fatalf("one choice must not make a quiz: %q", got)
 	}
 	for _, text := range []string{"hi", "【choices】 a | b", "x\n【choices】 a | b\nmore", "x\n【choices】 only"} {
-		if got, choices := SplitChoices(text); got != text || choices != nil {
-			t.Fatalf("SplitChoices(%q) = %q %q", text, got, choices)
+		if got, quiz := SplitQuiz(text); got != text || quiz != nil {
+			t.Fatalf("SplitQuiz(%q) = %q %+v", text, got, quiz)
 		}
 	}
 }

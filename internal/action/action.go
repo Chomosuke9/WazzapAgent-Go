@@ -53,9 +53,9 @@ type SendTextRequest struct {
 	ActionID        identity.ActionID
 	Text            string
 	QuotedMessageID identity.MessageID
-	// Choices, when set, are sent as quick-reply buttons under Text (a quiz).
+	// Quiz, when set, sends its choices as quick-reply buttons under Text.
 	// A tap comes back as the tapped choice's text.
-	Choices []string
+	Quiz *Quiz
 }
 
 // SendCopyCodeRequest sends Code behind a single "copy" button.
@@ -159,8 +159,8 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 		}
 		return pending, err
 	}
-	text, choices := SplitChoices(action.Text)
-	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Choices: choices})
+	text, quiz := SplitQuiz(action.Text)
+	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Quiz: quiz})
 	if sendErr != nil {
 		// The request may have reached WhatsApp. Never send it a second time.
 		code := agent.CodeOf(sendErr)
