@@ -12,8 +12,9 @@ import (
 
 // broadcastMentionPattern matches the mentions a person can type in a text
 // broadcast: "@all", "@admin" and "@<phone number>" (optionally "+"-prefixed).
-// The "@" must start a word, so e-mail addresses are left alone.
-var broadcastMentionPattern = regexp.MustCompile(`(?:^|[\s(])@(all|admin|\+?[0-9]{6,16})\b`)
+// The "@" must not follow a character an e-mail address can hold, so
+// "a@628111.com" is left alone while "Attention:@all" still mentions.
+var broadcastMentionPattern = regexp.MustCompile(`(?:^|[^0-9A-Za-z._%+\-@])@(all|admin|\+?[0-9]{6,16})\b`)
 
 // broadcastForGroup is the message sent to one group. A text broadcast has its
 // mentions resolved against that group's members; payload broadcasts are sent

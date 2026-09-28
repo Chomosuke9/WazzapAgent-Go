@@ -186,14 +186,20 @@ func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broa
 				}
 				sendCtx, sendCancel := context.WithTimeout(ctx, adapter.sendTimeout)
 				defer sendCancel()
-				groupMessage, sendErr := adapter.broadcastForGroup(sendCtx, format, message, target.address)
-				var response whatsmeow.SendResponse
-				if sendErr == nil {
-					stripe := adapter.sendStripe(target.address.String())
-					stripe.Lock()
-					response, sendErr = adapter.client.SendMessage(sendCtx, target.address, groupMessage)
-					stripe.Unlock()
+				groupMessage, err := adapter.broadcastForGroup(sendCtx, format, message, target.address)
+				if err != nil {
+					// Nothing was sent: the group's members could not be read.
+					result.ErrorCode = agent.CodeOf(err)
+					if adapter.logger != nil {
+						adapter.logger.Warn("WhatsApp broadcast mentions could not be resolved", "chat_name", target.name, "code", result.ErrorCode, "error", err)
+					}
+					results[index] = result
+					return
 				}
+				stripe := adapter.sendStripe(target.address.String())
+				stripe.Lock()
+				response, sendErr := adapter.client.SendMessage(sendCtx, target.address, groupMessage)
+				stripe.Unlock()
 				if sendErr != nil {
 					result.ErrorCode = agent.CodeOf(nativeEffectError(sendCtx, "send WhatsApp broadcast", sendErr))
 					if adapter.logger != nil {

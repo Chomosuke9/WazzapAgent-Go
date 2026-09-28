@@ -16,12 +16,12 @@ func TestRenderBroadcastMentions(t *testing.T) {
 		{JID: types.NewJID("628222", types.DefaultUserServer)},
 	}}
 
-	message, err := renderBroadcastMentions("Hi @all, ask @admin or @+628111 or @628222 or @62899999. mail a@628111.com @alliance", group, info, nil)
+	message, err := renderBroadcastMentions("Hi:@all, ask @admin or @+628111 or @628222 or @62899999. mail a@628111.com @alliance", group, info, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := message.GetExtendedTextMessage()
-	want := "Hi @all, ask @" + group.String() + " or @111222333444555 or @628222 or @62899999. mail a@628111.com @alliance"
+	want := "Hi:@all, ask @" + group.String() + " or @111222333444555 or @628222 or @62899999. mail a@628111.com @alliance"
 	if text.GetText() != want {
 		t.Fatalf("text = %q, want %q", text.GetText(), want)
 	}
