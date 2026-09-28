@@ -78,9 +78,9 @@ func TestButtonsMessageUsesNativeFlowQuickReplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build buttons: %v", err)
 	}
-	interactive := message.GetViewOnceMessage().GetMessage().GetInteractiveMessage()
+	interactive := message.GetInteractiveMessage()
 	buttons := interactive.GetNativeFlowMessage().GetButtons()
-	if interactive.GetBody().GetText() != "Pick" || len(buttons) != 1 || buttons[0].GetName() != "quick_reply" {
+	if interactive.GetBody().GetText() != "Pick" || len(buttons) != 2 || buttons[0].GetName() != "quick_reply" {
 		t.Fatalf("interactive message = %v", interactive)
 	}
 	var params map[string]string
@@ -94,9 +94,9 @@ func TestButtonsMessageUsesNativeFlowQuickReplies(t *testing.T) {
 
 func TestQuizMessageKeepsQuoteAndLabelsChoices(t *testing.T) {
 	text := &waE2E.ExtendedTextMessage{Text: proto.String("Capital?"), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("quoted-id")}}
-	interactive := quizMessage(text, []string{"Jakarta", "Bandung"}).GetViewOnceMessage().GetMessage().GetInteractiveMessage()
+	interactive := quizMessage(text, []string{"Jakarta", "Bandung"}).GetInteractiveMessage()
 	buttons := interactive.GetNativeFlowMessage().GetButtons()
-	if interactive.GetBody().GetText() != "Capital?" || interactive.GetContextInfo().GetStanzaID() != "quoted-id" || len(buttons) != 2 {
+	if interactive.GetBody().GetText() != "Capital?" || interactive.GetContextInfo().GetStanzaID() != "quoted-id" || len(buttons) != 3 {
 		t.Fatalf("quiz message = %v", interactive)
 	}
 	var params map[string]string
@@ -125,9 +125,9 @@ func TestCopyCodeMessageCarriesTheCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build copy button: %v", err)
 	}
-	interactive := message.GetViewOnceMessage().GetMessage().GetInteractiveMessage()
+	interactive := message.GetInteractiveMessage()
 	buttons := interactive.GetNativeFlowMessage().GetButtons()
-	if len(buttons) != 1 || buttons[0].GetName() != "cta_copy" {
+	if len(buttons) != 2 || buttons[0].GetName() != "cta_copy" {
 		t.Fatalf("copy message = %v", interactive)
 	}
 	var params map[string]string
@@ -139,5 +139,20 @@ func TestCopyCodeMessageCarriesTheCode(t *testing.T) {
 	}
 	if _, err := copyCodeMessage("  ", chat, own); err == nil {
 		t.Fatal("empty code was accepted")
+	}
+}
+
+// hypermeow names its biz node after the buttons unless one is nameless, and
+// only "mixed" gets past the 405 on Rey's account, so every native-flow
+// message must end with a nameless button.
+func TestNativeFlowMessagesEndWithANamelessButton(t *testing.T) {
+	buttons, _ := buttonsMessage(action.SendButtonsRequest{Text: "Pick", Buttons: []action.Button{{ID: "/help", Label: "Help"}}})
+	copyCode, _ := copyCodeMessage("x", types.NewJID("15550000002", types.DefaultUserServer), types.EmptyJID)
+	quiz := quizMessage(&waE2E.ExtendedTextMessage{Text: proto.String("Q?")}, []string{"A", "B"})
+	for name, message := range map[string]*waE2E.Message{"buttons": buttons, "copy": copyCode, "quiz": quiz} {
+		all := message.GetInteractiveMessage().GetNativeFlowMessage().GetButtons()
+		if len(all) < 2 || all[len(all)-1].GetName() != "" || all[len(all)-1].ButtonParamsJSON != nil {
+			t.Fatalf("%s buttons = %v", name, all)
+		}
 	}
 }
