@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,11 +91,11 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 		{args: "smart remove two", ok: false},
 	}
 	for _, test := range triggerTests {
-		if _, ok := parseTriggerArgs(test.args); ok != test.ok {
+		if _, _, ok := parseTriggerArgs(test.args); ok != test.ok {
 			t.Fatalf("trigger %q ok = %v, want %v", test.args, ok, test.ok)
 		}
 	}
-	change, ok := parseTriggerArgs("smart set\nsomeone sends a scam link\nsomeone asks about prices")
+	change, _, ok := parseTriggerArgs("smart set\nsomeone sends a scam link\nsomeone asks about prices")
 	if !ok {
 		t.Fatal("multi-line smart rules were rejected")
 	}
@@ -103,22 +104,22 @@ func TestCommandFilesOwnTheirArgumentGrammar(t *testing.T) {
 	if !triggers.Smart || triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices" {
 		t.Fatalf("smart set = %#v", triggers)
 	}
-	add, _ := parseTriggerArgs("smart add someone spams\n stickers")
+	add, _, _ := parseTriggerArgs("smart add someone spams\n stickers")
 	add(&triggers)
 	if triggers.SmartRules != "someone sends a scam link\nsomeone asks about prices\nsomeone spams stickers" {
 		t.Fatalf("smart add = %q", triggers.SmartRules)
 	}
-	remove, _ := parseTriggerArgs("smart remove 2")
+	remove, _, _ := parseTriggerArgs("smart remove 2")
 	remove(&triggers)
 	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
 		t.Fatalf("smart remove 2 = %q", triggers.SmartRules)
 	}
-	removeMissing, _ := parseTriggerArgs("smart remove 5")
+	removeMissing, _, _ := parseTriggerArgs("smart remove 5")
 	removeMissing(&triggers)
 	if triggers.SmartRules != "someone sends a scam link\nsomeone spams stickers" {
 		t.Fatalf("smart remove 5 changed the rules: %q", triggers.SmartRules)
 	}
-	clear, _ := parseTriggerArgs("smart clear")
+	clear, _, _ := parseTriggerArgs("smart clear")
 	clear(&triggers)
 	if !triggers.Smart || triggers.SmartRules != "" {
 		t.Fatalf("smart clear = %#v", triggers)
@@ -151,14 +152,14 @@ func TestTriggerPermissionAllowsOwnerGroupAdminOrTheBotInGroups(t *testing.T) {
 	}
 }
 
-func TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger(t *testing.T) {
+func TestTriggerViewShowsRulesWithButtonsThatRouteBackToTrigger(t *testing.T) {
 	registry := builtinRegistry(t)
 	facts := command.PermissionFacts{IsGroup: true, IsAdmin: true}
 	buttons := &recordingButtons{}
 	request, _, _ := registry.Parse("/trigger")
 	err := registry.Dispatch(t.Context(), request, command.Invocation{
 		Facts: facts, Platform: command.Platform{Buttons: buttons},
-		Config: agent.ConfigSnapshot{Triggers: agent.TriggerConfig{Mention: true}},
+		Config: agent.ConfigSnapshot{Triggers: agent.TriggerConfig{Mention: true, SmartRules: "someone sends a scam link: delete it\nsomeone asks for prices"}},
 	})
 	if err != nil {
 		t.Fatalf("dispatch /trigger: %v", err)
@@ -166,16 +167,25 @@ func TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger(t *testing.T) {
 	if len(buttons.sent) != 1 {
 		t.Fatalf("button messages = %d, want 1", len(buttons.sent))
 	}
-	got := buttons.sent[0].Buttons
-	if len(got) != 4 || got[0].ID != "/trigger mention off" || got[1].ID != "/trigger name on" || got[2].ID != "/trigger reply on" || got[3].ID != "/trigger smart on" {
-		t.Fatalf("buttons = %#v", got)
+	text := buttons.sent[0].Text
+	if !strings.Contains(text, "✅ Mention") || !strings.Contains(text, "❌ Smart") ||
+		!strings.Contains(text, "paused while Smart is off") || !strings.Contains(text, "1. someone sends a scam link: delete it\n2. someone asks for prices") {
+		t.Fatalf("view = %q", text)
 	}
-	for _, button := range got {
-		if request, _, recognized := registry.Parse(button.ID); !recognized || request.Name != "trigger" {
-			t.Fatalf("tap %q does not route back to /trigger", button.ID)
+	var ids []string
+	for _, button := range buttons.sent[0].Buttons {
+		ids = append(ids, button.ID)
+	}
+	want := []string{"/trigger mention off", "/trigger reply on", "/trigger name on", "/trigger smart on", "/trigger smart remove 1", "/trigger smart remove 2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("buttons = %q, want %q", ids, want)
+	}
+	for _, id := range ids {
+		if request, _, recognized := registry.Parse(id); !recognized || request.Name != "trigger" {
+			t.Fatalf("tap %q does not route back to /trigger", id)
 		}
-		if _, ok := parseTriggerArgs(strings.TrimPrefix(button.ID, "/trigger ")); !ok {
-			t.Fatalf("tap %q is not valid /trigger syntax", button.ID)
+		if _, _, ok := parseTriggerArgs(strings.TrimPrefix(id, "/trigger ")); !ok {
+			t.Fatalf("tap %q is not valid /trigger syntax", id)
 		}
 	}
 }

@@ -94,7 +94,7 @@ package, so a generic helper name will collide with another command.
 | `c.Agent` | The chat's Agent. Use `c.Agent.History()` or `c.Agent.BuildInput(...)` for read-only access. |
 | `c.Key()` | The chat key (tenant, account, chat). |
 | `c.Reply(ctx, text)` | Sends text to the chat. |
-| `c.ReplyButtons(ctx, text, buttons...)` | Sends text with buttons owned by this command (see "Buttons"). |
+| `c.ReplyButtons(ctx, text, buttons...)` | Sends text with buttons (see "Buttons"). |
 | `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Changes the chat config. Crash-safe (see "Changing config"). |
 | `c.ResetHistory(ctx)` | Clears the chat history. |
 | `c.Group()` | The group moderation port: announce, description, revoke, kick, mute. Returns an error if unavailable. |
@@ -145,21 +145,23 @@ Never check permissions inside `Run`. The registry has already done it.
 
 ## Buttons
 
-Buttons belong to the command that sends them. A button's ID is always
-`/<this command> <Args>`, so a tap comes back through the normal router into
-**this file's `Run`**, exactly as if the user had typed it, with the same
-permission check. You never write a separate button handler.
+A button's ID is `/<command> <Args>`, where the command is the one that
+sends it unless `Command` names another. A tap comes back through the normal
+router into that command's `Run`, exactly as if the user had typed it, with
+the same permission check. You never write a separate button handler.
 
 ```go
 return c.ReplyButtons(ctx, "Mention trigger is on.",
-	command.Button{Label: "Turn off", Args: "mention off"},  // ID "/trigger mention off"
-	command.Button{Label: "Show all", Args: ""},             // ID "/trigger"
+	command.Button{Label: "Turn off", Args: "mention off"},       // ID "/trigger mention off"
+	command.Button{Label: "Show all", Args: ""},                  // ID "/trigger"
+	command.Button{Label: "Moderation", Command: "permission"},   // ID "/permission" (as /settings does)
 )
 ```
 
 - A message can have 1 to 10 buttons. Button labels must not be empty.
-- `Args` must be valid input for your own `Run`. Add a test that parses every
-  button you send (see `TestTriggerViewOffersToggleButtonsThatRouteBackToTrigger`).
+- `Args` must be valid input for the target command's `Run`. Add a test that
+  parses every button you send (see
+  `TestTriggerViewShowsRulesWithButtonsThatRouteBackToTrigger`).
 - When the host can't send buttons, or WhatsApp rejects the button message,
   `ReplyButtons` falls back to a text reply that lists each label next to the
   command to type.

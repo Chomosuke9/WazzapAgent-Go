@@ -612,7 +612,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), view); err != nil {
 		t.Fatalf("view prompt: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "Current prompt override:\nspeak concisely" {
+	if got := fixture.sender.last().Text; !strings.HasPrefix(got, "*Custom instructions*, added to the main prompt:\nspeak concisely\n") {
 		t.Fatalf("view response = %q", got)
 	}
 

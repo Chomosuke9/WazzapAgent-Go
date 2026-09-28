@@ -33,11 +33,13 @@ type Command struct {
 	Run func(ctx context.Context, c *Context) error
 }
 
-// Button is a quick-reply button owned by the command that sends it. A tap
-// runs that command again with Args, under the same Permission.
+// Button is a quick-reply button. A tap runs "/<Command> <Args>" through
+// the router, so the tapper's own permission is checked as if they typed it.
 type Button struct {
 	Label string
 	Args  string
+	// Command is the command a tap runs; empty means the one that sent it.
+	Command string
 }
 
 // PermissionFacts are the trusted facts a Permission expression is evaluated

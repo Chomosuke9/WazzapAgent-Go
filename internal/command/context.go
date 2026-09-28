@@ -58,8 +58,8 @@ func (c *Context) Reply(ctx context.Context, text string) error {
 	return err
 }
 
-// ReplyButtons sends text with quick-reply buttons. Every button belongs to
-// this command: a tap runs "/<Name> <Args>" through Run.
+// ReplyButtons sends text with quick-reply buttons. A tap runs the button's
+// command (this one unless Button.Command says otherwise) with its Args.
 func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Button) error {
 	if len(buttons) == 0 || len(buttons) > action.MaxButtons {
 		return agent.NewError(agent.ErrorInvalidArgument, "send /"+c.Name+" buttons", fmt.Errorf("1 to %d buttons are required", action.MaxButtons))
@@ -97,12 +97,16 @@ func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons [
 	return c.Reply(ctx, strings.Join(lines, "\n"))
 }
 
-// buttonID is what a tap sends back: this command with the button's args.
+// buttonID is what a tap sends back: the button's command with its args.
 func (c *Context) buttonID(button Button) string {
-	if button.Args == "" {
-		return "/" + c.Name
+	name := button.Command
+	if name == "" {
+		name = c.Name
 	}
-	return "/" + c.Name + " " + button.Args
+	if button.Args == "" {
+		return "/" + name
+	}
+	return "/" + name + " " + button.Args
 }
 
 // Group returns the group moderation port.
