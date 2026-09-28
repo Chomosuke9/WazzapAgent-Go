@@ -65,10 +65,11 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// New returns a client that posts to endpoint (DefaultEndpoint when empty)
-// with the given API key. A nil httpClient gets a 10-second timeout, the
-// official SDKs' per-attempt default.
-func New(apiKey, endpoint string, httpClient *http.Client) (*Client, error) {
+// New returns a client that asks model (DefaultModel when empty) at
+// endpoint (DefaultEndpoint when empty) with the given API key. A nil
+// httpClient gets a 10-second timeout, the official SDKs' per-attempt
+// default.
+func New(apiKey, endpoint, model string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("typesafe: API key is required")
 	}
@@ -82,7 +83,10 @@ func New(apiKey, endpoint string, httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Client{endpoint: endpoint, apiKey: strings.TrimSpace(apiKey), model: DefaultModel, httpClient: httpClient}, nil
+	if model = strings.TrimSpace(model); model == "" {
+		model = DefaultModel
+	}
+	return &Client{endpoint: endpoint, apiKey: strings.TrimSpace(apiKey), model: model, httpClient: httpClient}, nil
 }
 
 // SystemOne asks every question about state in one request. The questions

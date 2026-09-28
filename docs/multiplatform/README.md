@@ -242,7 +242,7 @@ aktif harus ditandai demikian di UI. Field secret menggunakan aksi khusus.
 | Koneksi | `WAZZAP_CONNECT_TIMEOUT`, `WAZZAP_SEND_TIMEOUT`, `WAZZAP_SHUTDOWN_TIMEOUT` | R |
 | Policy | `WAZZAP_POLICY_ID`, `WAZZAP_POLICY_REVISION` | R; bukan moderation level per-chat |
 | Observability | `WAZZAP_LOG_LEVEL`, `WAZZAP_LOG_FORMAT`, `LANGSMITH_API_KEY` | R; LangSmith key kosong berarti tracing nonaktif |
-| TypeSafe | `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT` | R; key kosong berarti trigger Smart nonaktif; endpoint default `https://api.typesafe.ai/v1/systemone` |
+| TypeSafe | `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT`, `TYPESAFE_MODEL` | R; key kosong berarti trigger Smart nonaktif; endpoint default `https://api.typesafe.ai/v1/systemone`; model default `jev-latest` |
 | Storage | `WAZZAP_DATA_DIR` | B; tampilkan lokasi efektif, ubah lewat operasi data-root khusus |
 | Sumber file | `WAZZAP_ENV_FILE` | C; pemilih file impor pada GUI, bukan field yang mengubah sumber GUI |
 | HTTP | `WAZZAP_HTTP_ADDRESS` | C; boleh diedit/disimpan untuk ekspor, tidak membuka listener GUI |
