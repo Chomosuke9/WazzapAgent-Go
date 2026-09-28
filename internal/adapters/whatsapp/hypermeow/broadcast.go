@@ -110,7 +110,7 @@ func (adapter *Adapter) BroadcastGroups(ctx context.Context, groupIDs []string, 
 	if err != nil {
 		return nil, err
 	}
-	return adapter.sendBroadcastTargets(ctx, targets, groupIDs, joinedSet, message, batchSize, batchDelaySeconds), nil
+	return adapter.sendBroadcastTargets(ctx, targets, groupIDs, joinedSet, format, message, batchSize, batchDelaySeconds), nil
 }
 
 func (adapter *Adapter) resolveBroadcastTargets(groupIDs []string) ([]broadcastGroupTarget, error) {
@@ -156,7 +156,7 @@ func (adapter *Adapter) joinedBroadcastGroups(ctx context.Context, operation str
 	return joinedSet, nil
 }
 
-func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broadcastGroupTarget, ids []string, joinedSet map[types.JID]struct{}, message *waE2E.Message, batchSize, batchDelaySeconds int) []BroadcastGroupResult {
+func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broadcastGroupTarget, ids []string, joinedSet map[types.JID]struct{}, format string, message *waE2E.Message, batchSize, batchDelaySeconds int) []BroadcastGroupResult {
 	results := make([]BroadcastGroupResult, len(targets))
 	for start := 0; start < len(targets); start += batchSize {
 		end := start + batchSize
@@ -186,9 +186,19 @@ func (adapter *Adapter) sendBroadcastTargets(ctx context.Context, targets []broa
 				}
 				sendCtx, sendCancel := context.WithTimeout(ctx, adapter.sendTimeout)
 				defer sendCancel()
+				groupMessage, err := adapter.broadcastForGroup(sendCtx, format, message, target.address)
+				if err != nil {
+					// Nothing was sent: the group's members could not be read.
+					result.ErrorCode = agent.CodeOf(err)
+					if adapter.logger != nil {
+						adapter.logger.Warn("WhatsApp broadcast mentions could not be resolved", "chat_name", target.name, "code", result.ErrorCode, "error", err)
+					}
+					results[index] = result
+					return
+				}
 				stripe := adapter.sendStripe(target.address.String())
 				stripe.Lock()
-				response, sendErr := adapter.client.SendMessage(sendCtx, target.address, proto.Clone(message).(*waE2E.Message))
+				response, sendErr := adapter.client.SendMessage(sendCtx, target.address, groupMessage)
 				stripe.Unlock()
 				if sendErr != nil {
 					result.ErrorCode = agent.CodeOf(nativeEffectError(sendCtx, "send WhatsApp broadcast", sendErr))
@@ -370,7 +380,7 @@ func (adapter *Adapter) runBroadcastSchedule(ctx context.Context, schedule broad
 		}
 		targets[index] = broadcastGroupTarget{address: address.ToNonAD(), name: target.Name}
 	}
-	result := adapter.sendBroadcastTargets(ctx, targets, nil, joinedSet, message, schedule.BatchSize, schedule.BatchDelaySeconds)
+	result := adapter.sendBroadcastTargets(ctx, targets, nil, joinedSet, schedule.Format, message, schedule.BatchSize, schedule.BatchDelaySeconds)
 	sent := 0
 	for index, item := range result {
 		results[index] = broadcastmodel.Result{Name: item.Name, Sent: item.Sent, ErrorCode: string(item.ErrorCode)}
