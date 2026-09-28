@@ -244,7 +244,7 @@ export function BroadcastPage() {
         </div>
         {format === "text" ? <label className="broadcast-editor">Message text
           <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Write a broadcast message…" maxLength={32768} rows={9} disabled={busy} />
-          <small>Text is sent as a regular WhatsApp text message.</small>
+          <small>Text is sent as a regular WhatsApp text message. Mention with <code>@all</code> (everyone), <code>@admin</code> (group admins) or a phone number such as <code>@628123456789</code>.</small>
         </label> : <label className="broadcast-editor">WhatsApp message JSON
           <textarea className="broadcast-json" value={payload} onChange={(event) => { setPayload(event.target.value); setPayloadNormalizationMessage(""); }} spellCheck={false} maxLength={262144} rows={9} disabled={busy} />
           <small>Use ProtoJSON for <code>waE2E.Message</code>. Text example: <code>{'{"conversation":"Hello everyone!"}'}</code>. Protobuf <code>bytes</code> fields use base64; media requires a complete WhatsApp payload.</small>
