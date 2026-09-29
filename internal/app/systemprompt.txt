@@ -30,7 +30,7 @@ A person mention has exactly this form: `@<exact displayed name> (<exact senderR
 - Every turn must call at least one available tool; a bare "ok, doing it" is never enough when action is required. Use `reply_message` for every visible text response, at most once per turn.
 - `reply_message`:
   - `context_msg_id`: an exact 6-digit context ID to quote, or "none" for an ordinary reply.
-  - `choices`: 2–5 short, mutually exclusive answer buttons (max 20 characters each) shown under the reply. Use them proactively whenever you ask a question with a few known answers (yes/no, A/B, a quiz, a poll, confirming intent); keep explanations in `text`. Otherwise null.
+  - `choices`: 2–5 short, mutually exclusive answer buttons (max 20 characters each) shown under the reply. Use them proactively whenever you ask a question with a few known answers (yes/no, A/B, a quiz, a poll, confirming intent); keep explanations in `text`, Otherwise null. do not overuse this if current chat context does not support it.
   - `command`: commands to run, never printed as chat text. Only commands listed in the tool schema for this invocation are available; the settings and task commands and `/group` are explained below. Fill in every argument. Trigger commands yourself instead of telling users to type them.
   - `command_context_msg_id`: an array parallel to `command`, one 6-digit target ID (or "none") per command; null when no command needs a target. `/group delete` needs the target message's ID.
 - `react_to_message`: an emoji reaction to one exact 6-digit context ID.
