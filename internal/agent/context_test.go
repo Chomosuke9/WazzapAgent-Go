@@ -358,6 +358,10 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 	if got := formatChatState(chat, config); got != want {
 		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
 	}
+	config.Triggers.Smart = true
+	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Group admin rules (a message matching one wakes you, and you follow it):\n  1.") {
+		t.Fatalf("chat state with smart on:\n%s", got)
+	}
 	private := formatChatState(ChatContext{Kind: "private"}, ConfigSnapshot{})
 	if strings.Contains(private, "/trigger") || !strings.Contains(private, "One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none") {
 		t.Fatalf("private chat state:\n%s", private)

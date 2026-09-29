@@ -686,3 +686,30 @@ func TestChoicesAreDroppedWhenTheyExceedTheConfiguredLimit(t *testing.T) {
 		t.Fatalf("generate = %q, %v", result.Text, err)
 	}
 }
+
+func TestCommandSchemaNamesAvailableCommandsOnly(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.ContextMessages = map[string]identity.MessageID{"000001": request.CurrentMessageID}
+	request.Commands = []string{"prompt", "trigger"}
+	tools, err := completionTools(request, inbound.CommandRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(tools[0].Function.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	want := "Each item is one complete command, written as the system prompt explains. Available now: /prompt, /trigger. Any other command is unavailable."
+	if got := schema.Properties["command"].Description; got != want {
+		t.Fatalf("command description = %q", got)
+	}
+	request.Commands = []string{"nope"}
+	if _, err := completionTools(request, inbound.CommandRegistry()); err == nil {
+		t.Fatal("an unregistered command was offered")
+	}
+}

@@ -82,13 +82,14 @@ func TestPermissionOffersOneButtonPerLevel(t *testing.T) {
 	}
 }
 
-func TestPromptReplaceUsesReplaceMode(t *testing.T) {
-	if action, text := parsePromptArgs("replace Speak like a pirate.", true); action != "replace" || text != "Speak like a pirate." {
-		t.Fatalf("replace = %q %q", action, text)
+func TestPromptSetsInstructionsAndShowsAppReplaceMode(t *testing.T) {
+	if action, text := parsePromptArgs("set Speak like a pirate.", true); action != "set" || text != "Speak like a pirate." {
+		t.Fatalf("set = %q %q", action, text)
 	}
-	if action, _ := parsePromptArgs("replace ", true); action != "" {
-		t.Fatalf("empty replace = %q", action)
+	if action, _ := parsePromptArgs("replace Speak like a pirate.", true); action != "" {
+		t.Fatalf("replace = %q, want it unsupported", action)
 	}
+	// Replace mode can still be chosen in the app's chat panel.
 	config := agent.ConfigSnapshot{PromptOverride: &agent.PromptOverride{Mode: agent.PromptReplace, Text: "Speak like a pirate."}}
 	text, ids, err := dispatchWithButtons(t, "/prompt", command.PermissionFacts{IsGroup: true, IsAdmin: true}, config, nil)
 	if err != nil || !strings.Contains(text, "used instead of the main prompt:\nSpeak like a pirate.") || !slices.Equal(ids, []string{"/prompt clear"}) {

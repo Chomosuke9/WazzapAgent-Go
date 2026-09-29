@@ -8,14 +8,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 func init() {
 	register(command.Command{
-		Name:        "group",
-		Permission:  "admin and group and !fromMe",
+		Name: "group",
+		// For the bot, admin means the bot is a group admin; runGroup also
+		// holds it to the chat's moderation level.
+		Permission:  "admin and group",
 		Description: "Manages group status, description, messages, mutes, and members.",
 		DeniedReply: "The /group command can only be used by a group admin.",
 		Run:         runGroup,
@@ -39,6 +42,9 @@ func runGroup(ctx context.Context, c *command.Context) error {
 	parsed, err := parseGroupArgs(c.Args)
 	if err != nil {
 		return c.Reply(ctx, groupUsage)
+	}
+	if level := c.Config.Permission.ModerationLevel; c.Facts.FromMe && level < parsed.botLevel() {
+		return c.Reply(ctx, fmt.Sprintf("My moderation level here is %d, so I can't %s. A group admin can raise it with /permission.", level, parsed.verb()))
 	}
 	var target identity.MessageID
 	if parsed.kind == "delete" {
@@ -68,6 +74,30 @@ func runGroup(ctx context.Context, c *command.Context) error {
 		return nil
 	}
 	return c.Reply(ctx, fmt.Sprintf("The /group %s command completed successfully.", parsed.kind))
+}
+
+// botLevel is the moderation level the bot needs for the action. People are
+// held only to the command's permission.
+func (parsed groupAction) botLevel() agent.ModerationLevel {
+	switch parsed.kind {
+	case "delete":
+		return agent.ModerationDelete
+	case "mute":
+		return agent.ModerationDeleteMute
+	case "kick":
+		return agent.ModerationDeleteMuteKick
+	}
+	return agent.ModerationNone
+}
+
+func (parsed groupAction) verb() string {
+	switch parsed.kind {
+	case "delete":
+		return "delete messages"
+	case "mute":
+		return "mute members"
+	}
+	return "remove members"
 }
 
 func parseGroupArgs(args string) (groupAction, error) {

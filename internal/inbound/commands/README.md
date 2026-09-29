@@ -63,7 +63,7 @@ func init() {
 		Name:        "ping",                 // lowercase, [a-z][a-z0-9-]*, no slash
 		Aliases:     []string{"p"},          // optional
 		Permission:  "public",               // required, see "Permissions"
-		Description: "Replies with pong.",   // shown by /help and to the model
+		Description: "Replies with pong.",   // shown by /help
 		DeniedReply: "",                     // optional; sent when Permission denies
 		Run:         runPing,
 	})
@@ -116,8 +116,12 @@ button tap:
 - Atoms: `public`, `owner`/`isOwner`, `admin`/`isAdmin`/`senderIsAdmin`,
   `group`/`isGroup`, `private`/`isPrivate`, `fromMe`/`from_me`.
 - Operators, highest precedence first: `!`, `and`, `or`. Use parentheses.
-- Commands the AI model issues inside its reply run with `fromMe=true`. Add
-  `and !fromMe` when the bot must not run the command itself.
+- Commands the AI model issues inside its reply run with `fromMe=true`, and
+  `admin` means the bot is a group admin. Add `and !fromMe` when the bot must
+  not run the command itself.
+- The model's tool schema lists only the names of the commands it may run.
+  Explain each of them, with its syntax and who may ask for it, in
+  `internal/app/systemprompt.txt`; the model never sees `Description`.
 
 ```go
 Permission: "public"                                      // anyone, including the bot
@@ -127,6 +131,9 @@ Permission: "fromMe"                                      // only the bot; peopl
 ```
 
 Never check permissions inside `Run`. The registry has already done it.
+A chat setting that limits what a command does is not a permission check:
+`/group` holds the bot to the chat's moderation level (delete 1, mute 2,
+kick 3).
 
 ## Replies and errors
 

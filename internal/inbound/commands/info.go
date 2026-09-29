@@ -11,7 +11,7 @@ import (
 func init() {
 	register(command.Command{
 		Name:        "info",
-		Permission:  "public",
+		Permission:  "public and !fromMe",
 		Description: "Shows the Agent, model, configuration, and history status.",
 		Run:         runInfo,
 	})
