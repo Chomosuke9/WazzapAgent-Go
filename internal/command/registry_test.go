@@ -223,3 +223,35 @@ func TestRejectedButtonsFallBackToText(t *testing.T) {
 		t.Fatalf("ambiguous failure: err=%v text=%q", err, text.sent)
 	}
 }
+
+func TestMenusRouteOptionsToTheirCommandsAndFallBackToText(t *testing.T) {
+	registry, err := command.NewRegistry([]command.Command{{
+		Name: "settings", Permission: "public",
+		Run: func(ctx context.Context, c *command.Context) error {
+			return c.ReplyMenus(ctx, "Current: level 1", "Tap a menu", command.Menu{Title: "Moderation", Options: []command.Button{
+				{Label: "Level 0", Description: "Off", Command: "permission", Args: "0"},
+				{Label: "Show all", Command: "permission"},
+			}})
+		},
+	}})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	buttons := &buttonRecorder{}
+	if err := registry.Dispatch(context.Background(), command.Request{Name: "settings"}, command.Invocation{Platform: command.Platform{Buttons: buttons}}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	sent := buttons.sent[0]
+	if sent.Footer != "Tap a menu" || len(sent.Buttons) != 0 || len(sent.Menus) != 1 || sent.Menus[0].Title != "Moderation" {
+		t.Fatalf("menu request = %#v", sent)
+	}
+	if rows := sent.Menus[0].Rows; len(rows) != 2 || rows[0] != (action.MenuRow{ID: "/permission 0", Title: "Level 0", Description: "Off"}) || rows[1].ID != "/permission" {
+		t.Fatalf("menu rows = %#v", rows)
+	}
+
+	text := &textRecorder{}
+	err = registry.Dispatch(context.Background(), command.Request{Name: "settings"}, command.Invocation{Platform: command.Platform{Text: text, Buttons: &rejectingButtons{code: agent.ErrorUnsupported}}})
+	if err != nil || len(text.sent) != 1 || text.sent[0] != "Current: level 1\n\n*Moderation*\n• Level 0: /permission 0\n• Show all: /permission" {
+		t.Fatalf("text fallback = %q, %v", text.sent, err)
+	}
+}

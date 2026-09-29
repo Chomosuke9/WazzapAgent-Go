@@ -61,20 +61,42 @@ func (c *Context) Reply(ctx context.Context, text string) error {
 // ReplyButtons sends text with quick-reply buttons. A tap runs the button's
 // command (this one unless Button.Command says otherwise) with its Args.
 func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Button) error {
-	if len(buttons) == 0 || len(buttons) > action.MaxButtons {
-		return agent.NewError(agent.ErrorInvalidArgument, "send /"+c.Name+" buttons", fmt.Errorf("1 to %d buttons are required", action.MaxButtons))
+	return c.replyInteractive(ctx, text, "", buttons, nil)
+}
+
+// ReplyMenus sends text and a footer line with list menus. Picking an option
+// runs it like a Button tap.
+func (c *Context) ReplyMenus(ctx context.Context, text, footer string, menus ...Menu) error {
+	return c.replyInteractive(ctx, text, footer, nil, menus)
+}
+
+func (c *Context) replyInteractive(ctx context.Context, text, footer string, buttons []Button, menus []Menu) error {
+	if count := len(buttons) + len(menus); count == 0 || count > action.MaxButtons {
+		return agent.NewError(agent.ErrorInvalidArgument, "send /"+c.Name+" buttons", fmt.Errorf("1 to %d buttons and menus are required", action.MaxButtons))
+	}
+	for _, menu := range menus {
+		if len(menu.Options) == 0 || len(menu.Options) > action.MaxMenuRows {
+			return agent.NewError(agent.ErrorInvalidArgument, "send /"+c.Name+" menu", fmt.Errorf("a menu needs 1 to %d options", action.MaxMenuRows))
+		}
 	}
 	sender := c.invocation.Platform.Buttons
 	if sender == nil {
-		return c.replyButtonsAsText(ctx, text, buttons)
+		return c.replyButtonsAsText(ctx, text, buttons, menus)
 	}
 	actionID, err := identity.NewActionID()
 	if err != nil {
 		return agent.NewError(agent.ErrorInternal, "create /"+c.Name+" reply ID", err)
 	}
-	request := action.SendButtonsRequest{Key: c.Key(), ActionID: actionID, Text: text, Buttons: make([]action.Button, 0, len(buttons))}
+	request := action.SendButtonsRequest{Key: c.Key(), ActionID: actionID, Text: text, Footer: footer, Buttons: make([]action.Button, 0, len(buttons))}
 	for _, button := range buttons {
 		request.Buttons = append(request.Buttons, action.Button{ID: c.buttonID(button), Label: button.Label})
+	}
+	for _, menu := range menus {
+		rows := make([]action.MenuRow, 0, len(menu.Options))
+		for _, option := range menu.Options {
+			rows = append(rows, action.MenuRow{ID: c.buttonID(option), Title: option.Label, Description: option.Description})
+		}
+		request.Menus = append(request.Menus, action.Menu{Title: menu.Title, Rows: rows})
 	}
 	_, err = sender.SendButtons(ctx, request)
 	if agent.IsCode(err, agent.ErrorUnsupported) {
@@ -82,17 +104,23 @@ func (c *Context) ReplyButtons(ctx context.Context, text string, buttons ...Butt
 		// for some accounts or chats), so nothing was delivered and the
 		// text form is safe to send. Ambiguous failures are not retried
 		// as text, which could deliver both.
-		return c.replyButtonsAsText(ctx, text, buttons)
+		return c.replyButtonsAsText(ctx, text, buttons, menus)
 	}
 	return err
 }
 
-// replyButtonsAsText sends the commands the buttons would have sent, as text
-// the user can type.
-func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons []Button) error {
+// replyButtonsAsText sends the commands the buttons and menus would have
+// sent, as text the user can type.
+func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons []Button, menus []Menu) error {
 	lines := []string{text, ""}
 	for _, button := range buttons {
 		lines = append(lines, "• "+button.Label+": "+c.buttonID(button))
+	}
+	for _, menu := range menus {
+		lines = append(lines, "*"+menu.Title+"*")
+		for _, option := range menu.Options {
+			lines = append(lines, "• "+option.Label+": "+c.buttonID(option))
+		}
 	}
 	return c.Reply(ctx, strings.Join(lines, "\n"))
 }

@@ -152,17 +152,34 @@ func TestTriggerPermissionAllowsOwnerGroupAdminOrTheBotInGroups(t *testing.T) {
 	}
 }
 
-func TestTriggerViewShowsRulesWithButtonsThatRouteBackToTrigger(t *testing.T) {
+func TestTriggerViewIsPlainTextWithUsage(t *testing.T) {
+	registry := builtinRegistry(t)
+	text, buttons := &recordingText{}, &recordingButtons{}
+	request, _, _ := registry.Parse("/trigger")
+	err := registry.Dispatch(t.Context(), request, command.Invocation{
+		Facts: command.PermissionFacts{IsGroup: true, IsAdmin: true}, Platform: command.Platform{Text: text, Buttons: buttons},
+		Config: agent.ConfigSnapshot{Triggers: agent.TriggerConfig{Mention: true, SmartRules: "someone sends a scam link: delete it"}},
+	})
+	if err != nil || len(buttons.sent) != 0 || len(text.sent) != 1 {
+		t.Fatalf("/trigger = %v, %d button messages, texts %q", err, len(buttons.sent), text.sent)
+	}
+	if view := text.sent[0]; !strings.Contains(view, "✅ Mention") || !strings.Contains(view, "1. someone sends a scam link: delete it") ||
+		!strings.Contains(view, "/trigger toggle: buttons to turn each one on or off") || !strings.Contains(view, "/trigger smart add <rule>") {
+		t.Fatalf("view = %q", view)
+	}
+}
+
+func TestTriggerToggleShowsRulesWithButtonsThatRouteBackToTrigger(t *testing.T) {
 	registry := builtinRegistry(t)
 	facts := command.PermissionFacts{IsGroup: true, IsAdmin: true}
 	buttons := &recordingButtons{}
-	request, _, _ := registry.Parse("/trigger")
+	request, _, _ := registry.Parse("/trigger toggle")
 	err := registry.Dispatch(t.Context(), request, command.Invocation{
 		Facts: facts, Platform: command.Platform{Buttons: buttons},
 		Config: agent.ConfigSnapshot{Triggers: agent.TriggerConfig{Mention: true, SmartRules: "someone sends a scam link: delete it\nsomeone asks for prices"}},
 	})
 	if err != nil {
-		t.Fatalf("dispatch /trigger: %v", err)
+		t.Fatalf("dispatch /trigger toggle: %v", err)
 	}
 	if len(buttons.sent) != 1 {
 		t.Fatalf("button messages = %d, want 1", len(buttons.sent))

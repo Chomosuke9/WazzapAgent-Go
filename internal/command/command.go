@@ -28,18 +28,28 @@ type Command struct {
 	Description string
 	// DeniedReply is sent when Permission denies the sender. Optional.
 	DeniedReply string
-	// Run executes the command. Taps on buttons this command sent with
-	// Context.ReplyButtons arrive here too, as "/<Name> <Button.Args>".
+	// Run executes the command. Taps on buttons and menus this command sent
+	// arrive here too, as "/<Name> <Button.Args>".
 	Run func(ctx context.Context, c *Context) error
 }
 
-// Button is a quick-reply button. A tap runs "/<Command> <Args>" through
-// the router, so the tapper's own permission is checked as if they typed it.
+// Button is a quick-reply button, or a row in a Menu. A tap runs
+// "/<Command> <Args>" through the router, so the tapper's own permission is
+// checked as if they typed it.
 type Button struct {
 	Label string
 	Args  string
 	// Command is the command a tap runs; empty means the one that sent it.
 	Command string
+	// Description is a second line under the label, shown only in a Menu.
+	Description string
+}
+
+// Menu is a list button: tapping Title opens Options, and picking one
+// runs it like a Button tap.
+type Menu struct {
+	Title   string
+	Options []Button
 }
 
 // PermissionFacts are the trusted facts a Permission expression is evaluated

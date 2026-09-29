@@ -34,19 +34,19 @@ func runPermission(ctx context.Context, c *command.Context) error {
 		return c.Reply(ctx, "Send /permission to see the levels with buttons, or /permission 0, 1, 2 or 3.")
 	}
 	if !set {
-		return replyPermission(ctx, c, "", c.Config.Permission.ModerationLevel)
+		return replyPermission(ctx, c, c.Config.Permission.ModerationLevel)
 	}
 	if _, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) {
 		values.Permission.ModerationLevel = level
 	}); err != nil {
 		return err
 	}
-	return replyPermission(ctx, c, fmt.Sprintf("✅ Moderation is now level %d.\n\n", level), level)
+	return c.Reply(ctx, fmt.Sprintf("✅ Moderation is now level %d. %s", level, moderationLevels[level].can))
 }
 
 // replyPermission shows the level with one button per level. A tap arrives
 // back here as "/permission <n>".
-func replyPermission(ctx context.Context, c *command.Context, prefix string, current agent.ModerationLevel) error {
+func replyPermission(ctx context.Context, c *command.Context, current agent.ModerationLevel) error {
 	buttons := make([]command.Button, 0, len(moderationLevels))
 	for level, described := range moderationLevels {
 		label := described.button
@@ -55,7 +55,7 @@ func replyPermission(ctx context.Context, c *command.Context, prefix string, cur
 		}
 		buttons = append(buttons, command.Button{Label: label, Args: fmt.Sprint(level)})
 	}
-	text := prefix + formatModeration(current) + "\n\n" + strings.Join([]string{
+	text := formatModeration(current) + "\n\n" + strings.Join([]string{
 		"0: off", "1: delete messages", "2: delete + mute", "3: delete + mute + kick",
 	}, "\n") + "\n\nI act only when a group admin asks or a smart rule says so, and the bot account must be a group admin."
 	return c.ReplyButtons(ctx, text, buttons...)

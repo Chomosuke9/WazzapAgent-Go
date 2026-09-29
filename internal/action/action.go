@@ -71,15 +71,35 @@ type Button struct {
 	Label string
 }
 
-// SendButtonsRequest sends Text with up to MaxButtons quick-reply buttons.
+// Menu is a list button: tapping it opens Rows, and picking a row sends the
+// row's ID back like a quick-reply button.
+type Menu struct {
+	Title string
+	Rows  []MenuRow
+}
+
+// MenuRow is one choice in a Menu; Description is an optional second line.
+type MenuRow struct {
+	ID          string
+	Title       string
+	Description string
+}
+
+// SendButtonsRequest sends Text, and an optional Footer line, with up to
+// MaxButtons quick-reply buttons and menus in all.
 type SendButtonsRequest struct {
 	Key      agent.Key
 	ActionID identity.ActionID
 	Text     string
+	Footer   string
 	Buttons  []Button
+	Menus    []Menu
 }
 
-const MaxButtons = 10
+const (
+	MaxButtons  = 10
+	MaxMenuRows = 10
+)
 
 type SendTextResult struct {
 	ProviderReceipt string

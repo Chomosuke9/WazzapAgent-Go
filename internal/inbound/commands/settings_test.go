@@ -32,10 +32,15 @@ func dispatchWithButtons(t *testing.T, text string, facts command.PermissionFact
 	for _, button := range buttons.sent[0].Buttons {
 		ids = append(ids, button.ID)
 	}
+	for _, menu := range buttons.sent[0].Menus {
+		for _, row := range menu.Rows {
+			ids = append(ids, row.ID)
+		}
+	}
 	return buttons.sent[0].Text, ids, nil
 }
 
-func TestSettingsShowsEverythingWithButtonsToEachCommand(t *testing.T) {
+func TestSettingsShowsTheCurrentSettingsWithAMenuPerPart(t *testing.T) {
 	zone := time.FixedZone("", 7*60*60)
 	tasks := &recordingTasks{saved: []command.Task{
 		{Code: "a1b2c3", Prompt: "remind about the meeting", FireAt: time.Date(2026, 9, 28, 20, 30, 0, 0, zone)},
@@ -50,21 +55,23 @@ func TestSettingsShowsEverythingWithButtonsToEachCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch /settings: %v", err)
 	}
-	for _, want := range []string{
-		"✅ mention, ❌ reply, ❌ name, ✅ smart", "1 smart rule;", "level 2 of 3", "added to the main prompt: Keep replies short.",
-		"• a1b2c3, 28 Sep 20:30: remind about the meeting", "• d4e5f6, every day at 07:00 (UTC+07:00): say good morning",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("settings text lacks %q:\n%s", want, text)
-		}
+	want := "⚙️ *Chat settings*\n\nCurrent:\n- When I reply: mention, smart, 1 smart rule\n- Moderation: level 2 (delete + mute)\n" +
+		"- Custom instructions: set, added to the main prompt\n- Tasks: 1 one-off, 1 daily; ask me to list or change them"
+	if text != want {
+		t.Fatalf("settings text:\n%s\nwant:\n%s", text, want)
 	}
-	if !slices.Equal(ids, []string{"/trigger", "/permission", "/prompt"}) {
-		t.Fatalf("buttons = %q", ids)
+	wantIDs := []string{
+		"/trigger mention off", "/trigger reply on", "/trigger name on", "/trigger smart off", "/trigger",
+		"/permission 0", "/permission 1", "/permission 2", "/permission 3",
+		"/prompt", "/reset",
+	}
+	if !slices.Equal(ids, wantIDs) {
+		t.Fatalf("menu options = %q", ids)
 	}
 
-	_, ids, err = dispatchWithButtons(t, "/settings", command.PermissionFacts{IsPrivate: true, IsOwner: true}, agent.ConfigSnapshot{}, &recordingTasks{})
-	if err != nil || !slices.Equal(ids, []string{"/prompt"}) {
-		t.Fatalf("direct chat buttons = %q, %v", ids, err)
+	text, ids, err = dispatchWithButtons(t, "/settings", command.PermissionFacts{IsPrivate: true, IsOwner: true}, agent.ConfigSnapshot{}, &recordingTasks{})
+	if err != nil || !slices.Equal(ids, []string{"/prompt", "/reset"}) || strings.Contains(text, "When I reply") {
+		t.Fatalf("direct chat = %q, %q, %v", text, ids, err)
 	}
 	for _, facts := range []command.PermissionFacts{{IsGroup: true}, {IsGroup: true, IsAdmin: true, FromMe: true}} {
 		if _, _, err := dispatchWithButtons(t, "/settings", facts, agent.ConfigSnapshot{}, &recordingTasks{}); !errors.Is(err, command.ErrDenied) {

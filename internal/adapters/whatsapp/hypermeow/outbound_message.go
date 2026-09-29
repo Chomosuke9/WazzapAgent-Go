@@ -82,19 +82,40 @@ func (adapter *Adapter) quoteContext(ctx context.Context, key agent.Key, address
 }
 
 // buttonsMessage builds a native-flow message with one quick_reply button per
-// request button.
+// request button and one single_select list per menu.
 func buttonsMessage(request action.SendButtonsRequest) (*waE2E.Message, error) {
-	if strings.TrimSpace(request.Text) == "" || len(request.Buttons) == 0 || len(request.Buttons) > action.MaxButtons {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("text and 1 to 10 buttons are required"))
+	count := len(request.Buttons) + len(request.Menus)
+	if strings.TrimSpace(request.Text) == "" || count == 0 || count > action.MaxButtons {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("text and 1 to 10 buttons and menus are required"))
 	}
-	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(request.Buttons))
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, count)
 	for _, button := range request.Buttons {
 		if strings.TrimSpace(button.ID) == "" || strings.TrimSpace(button.Label) == "" {
 			return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp buttons", errors.New("every button needs an ID and a label"))
 		}
 		buttons = append(buttons, nativeFlowButton("quick_reply", map[string]string{"display_text": button.Label, "id": button.ID}))
 	}
-	return nativeFlowMessage(request.Text, nil, buttons), nil
+	for _, menu := range request.Menus {
+		if strings.TrimSpace(menu.Title) == "" || len(menu.Rows) == 0 || len(menu.Rows) > action.MaxMenuRows {
+			return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp menu", errors.New("every menu needs a title and 1 to 10 rows"))
+		}
+		rows := make([]map[string]string, 0, len(menu.Rows))
+		for _, row := range menu.Rows {
+			if strings.TrimSpace(row.ID) == "" || strings.TrimSpace(row.Title) == "" {
+				return nil, agent.NewError(agent.ErrorInvalidArgument, "build WhatsApp menu", errors.New("every menu row needs an ID and a title"))
+			}
+			rows = append(rows, map[string]string{"id": row.ID, "title": row.Title, "description": row.Description})
+		}
+		buttons = append(buttons, nativeFlowButton("single_select", map[string]any{
+			"title":    menu.Title,
+			"sections": []map[string]any{{"title": menu.Title, "rows": rows}},
+		}))
+	}
+	message := nativeFlowMessage(request.Text, nil, buttons)
+	if footer := strings.TrimSpace(request.Footer); footer != "" {
+		message.InteractiveMessage.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(footer)}
+	}
+	return message, nil
 }
 
 // quizMessage turns a built text message (mentions and quote already
@@ -152,8 +173,8 @@ func plainTextMessage(text string) *waE2E.Message {
 	return &waE2E.Message{Conversation: proto.String(text)}
 }
 
-func nativeFlowButton(name string, params map[string]string) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
-	// Marshalling a map of strings cannot fail.
+func nativeFlowButton(name string, params any) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
+	// The params are strings, maps and slices, which always marshal.
 	encoded, _ := json.Marshal(params)
 	return &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
 		Name:             proto.String(name),

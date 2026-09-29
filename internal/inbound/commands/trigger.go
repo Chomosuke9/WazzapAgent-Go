@@ -16,10 +16,10 @@ func init() {
 	register(command.Command{
 		Name:       "trigger",
 		Permission: "(owner or isAdmin or fromMe) and isGroup",
-		Description: "Shows and changes when the Agent replies in this group: /trigger shows everything with buttons; " +
-			"/trigger mention|name|reply|smart on|off; /trigger smart add <rule>, /trigger smart remove <number>, " +
-			"/trigger smart set <rules, one per line>, /trigger smart clear; /trigger pattern <regex>, /trigger regex off. " +
-			"Only the owner or a group admin can use it in a group.",
+		Description: "Shows and changes when the Agent replies in this group: /trigger shows it and how to change it; " +
+			"/trigger toggle has buttons; /trigger mention|name|reply|smart on|off; /trigger smart add <rule>, " +
+			"/trigger smart remove <number>, /trigger smart set <rules, one per line>, /trigger smart clear; " +
+			"/trigger pattern <regex>, /trigger regex off. Only the owner or a group admin can use it in a group.",
 		DeniedReply: "The /trigger command can only be used by the owner or an admin in a group.",
 		Run:         runTrigger,
 	})
@@ -32,8 +32,11 @@ var triggerToggles = []struct{ name, label string }{
 
 func runTrigger(ctx context.Context, c *command.Context) error {
 	args := strings.TrimSpace(c.Args)
-	if !c.HasArgs || args == "view" || args == "smart" || args == "smart view" {
-		return replyTriggers(ctx, c, "", c.Config.Triggers)
+	switch args {
+	case "", "view", "help", "smart", "smart view":
+		return c.Reply(ctx, formatTriggers(c.Config.Triggers, c.AssistantName())+"\n\n"+triggerUsage)
+	case "toggle":
+		return replyTriggerToggles(ctx, c, c.Config.Triggers)
 	}
 	change, done, ok := parseTriggerArgs(args)
 	if !ok {
@@ -54,13 +57,14 @@ func runTrigger(ctx context.Context, c *command.Context) error {
 		}
 		return err
 	}
-	return replyTriggers(ctx, c, "✅ "+done+"\n\n", updated.Triggers)
+	return c.Reply(ctx, "✅ "+done+"\n\n"+formatTriggers(updated.Triggers, c.AssistantName()))
 }
 
-// replyTriggers shows the triggers with a toggle button per trigger and a
-// remove button per smart rule. A tap arrives back here as
-// "/trigger <name> on|off" or "/trigger smart remove <n>".
-func replyTriggers(ctx context.Context, c *command.Context, prefix string, triggers agent.TriggerConfig) error {
+// replyTriggerToggles shows the triggers with a toggle button per trigger and
+// a remove button per smart rule. A tap arrives back here as
+// "/trigger <name> on|off" or "/trigger smart remove <n>", and its answer is
+// plain text; /trigger toggle sends the buttons again.
+func replyTriggerToggles(ctx context.Context, c *command.Context, triggers agent.TriggerConfig) error {
 	buttons := make([]command.Button, 0, action.MaxButtons)
 	for _, toggle := range triggerToggles {
 		if triggerOn(triggers, toggle.name) {
@@ -75,7 +79,7 @@ func replyTriggers(ctx context.Context, c *command.Context, prefix string, trigg
 		}
 		buttons = append(buttons, command.Button{Label: fmt.Sprintf("Remove rule %d", index+1), Args: fmt.Sprintf("smart remove %d", index+1)})
 	}
-	return c.ReplyButtons(ctx, prefix+formatTriggers(triggers, c.AssistantName())+"\n\n"+triggerHints(triggers), buttons...)
+	return c.ReplyButtons(ctx, formatTriggers(triggers, c.AssistantName())+"\n\nTap to turn one on or off, or to remove a rule.", buttons...)
 }
 
 func triggerOn(triggers agent.TriggerConfig, name string) bool {
@@ -208,18 +212,15 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 	return strings.Join(lines, "\n")
 }
 
-func triggerHints(triggers agent.TriggerConfig) string {
-	lines := []string{"Tap a button, or send:", "/trigger smart add <rule>, e.g. /trigger smart add someone sends a scam link: delete it and warn them"}
-	if len(triggers.SmartRuleList()) > 0 {
-		lines = append(lines, "/trigger smart remove <number>")
-	}
-	if triggers.NameRegex {
-		lines = append(lines, "/trigger regex off to use my name again")
-	} else {
-		lines = append(lines, "/trigger pattern <regex> to match the name with a regex")
-	}
-	return strings.Join(lines, "\n")
-}
+// triggerUsage is how to change the triggers, shown under /trigger.
+const triggerUsage = "*How to change it*\n" +
+	"/trigger toggle: buttons to turn each one on or off\n" +
+	"/trigger mention|reply|name|smart on|off\n" +
+	"/trigger smart add <rule>: add a rule, e.g. /trigger smart add someone sends a scam link: delete it and warn them\n" +
+	"/trigger smart remove <number>: delete a rule\n" +
+	"/trigger smart set <rules, one per line>: replace all rules\n" +
+	"/trigger smart clear: delete all rules\n" +
+	"/trigger pattern <regex>: match the name with a regex; /trigger regex off goes back to my name"
 
 func check(enabled bool) string {
 	if enabled {
@@ -242,9 +243,7 @@ func triggerHelp(args string) string {
 	case "mention", "reply", "name":
 		return "Send /trigger " + field + " on or /trigger " + field + " off."
 	}
-	return "Send /trigger to see when I reply here, with buttons to change it. Other forms:\n" +
-		"/trigger mention|reply|name|smart on|off\n/trigger smart add <rule>\n/trigger smart remove <number>\n" +
-		"/trigger smart set <rules, one per line>\n/trigger smart clear\n/trigger pattern <regex>\n/trigger regex off"
+	return "I don't know that one.\n\n" + triggerUsage
 }
 
 // triggerInvalid explains why a change was refused.
