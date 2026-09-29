@@ -29,22 +29,15 @@ func (reader chatStateReader) ReadChatContext(ctx context.Context, key agent.Key
 	if err != nil {
 		return agent.ChatContext{}, err
 	}
-	// Daily tasks follow the computer's time zone, as the dispatcher does.
-	chat.TimeZone = utcOffset(time.Now().In(time.Local))
+	// The model sees times in the computer's time zone (TZ overrides it),
+	// the one daily tasks follow and the prompt's date uses.
+	chat.Location = time.Local
 	for _, task := range tasks {
 		if task.Key == key {
 			chat.Tasks = append(chat.Tasks, agent.ScheduledTaskSummary{
-				Code: task.Code(), FireAt: task.FireAt.In(time.Local), Daily: task.Daily, Prompt: task.Prompt,
+				Code: task.Code(), FireAt: task.FireAt, Daily: task.Daily, Prompt: task.Prompt,
 			})
 		}
 	}
 	return chat, nil
-}
-
-// utcOffset writes the offset of t's zone as "UTC+07:00", or "UTC".
-func utcOffset(t time.Time) string {
-	if _, offset := t.Zone(); offset == 0 {
-		return "UTC"
-	}
-	return "UTC" + t.Format("-07:00")
 }

@@ -284,20 +284,17 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 	replyContextIDs := append([]string{"none"}, contextIDs...)
 	commandDescription := "No registered command is available for this invocation; use null."
 	if len(request.Commands) > 0 {
+		// The system prompt explains each command the model may get, so the
+		// schema only says which are available now. Descriptions are for
+		// people reading /help.
 		available := make([]string, 0, len(request.Commands))
-		registered := registry.Commands()
-		byName := make(map[string]command.Command, len(registered))
-		for _, cmd := range registered {
-			byName[cmd.Name] = cmd
-		}
 		for _, name := range request.Commands {
-			cmd, ok := byName[name]
-			if !ok {
+			if _, _, ok := registry.Parse("/" + name); !ok {
 				return nil, agent.NewError(agent.ErrorIntegrityFailure, "build model tools", fmt.Errorf("command is not registered"))
 			}
-			available = append(available, fmt.Sprintf("/%s - %s", name, cmd.Description))
+			available = append(available, "/"+name)
 		}
-		commandDescription = "Each item must be one complete registered command, with or without the initial slash. Available commands: " + strings.Join(available, "; ")
+		commandDescription = "Each item is one complete command, written as the system prompt explains. Available now: " + strings.Join(available, ", ") + ". Any other command is unavailable."
 	}
 	replyParameters, err := json.Marshal(map[string]any{
 		"type": "object",

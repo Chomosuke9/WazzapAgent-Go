@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { KeyboardEvent } from "react";
 import {
   addWhatsAppChatTask,
   deleteWhatsAppChatTask,
@@ -7,7 +6,7 @@ import {
   type WhatsAppChatTaskDTO,
 } from "../services/backend";
 
-function errorMessage(error: unknown, fallback: string): string {
+export function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
   return fallback;
@@ -26,13 +25,6 @@ function taskWhen(task: WhatsAppChatTaskDTO): string {
   const date = new Date(task.nextRun);
   if (Number.isNaN(date.getTime())) return task.nextRun;
   return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-// The section sits inside the chat settings form, so its fields carry no
-// validation attributes (they would block Save settings), and Enter in a time
-// field must not submit that form.
-function keepEnter(event: KeyboardEvent<HTMLInputElement>) {
-  if (event.key === "Enter") event.preventDefault();
 }
 
 // ChatTasks lists, adds and deletes the chat's reminders and daily tasks. The
@@ -94,7 +86,7 @@ export function ChatTasks({ chatID }: { chatID: string }) {
 
   return <section className="chat-settings-section chat-tasks-section">
     <h2>Tasks</h2>
-    <p>The Agent runs these in this chat: a one-off task within the next 24 hours, or a daily task at a time in the bot's time zone. Changes here apply right away; Save settings is not needed.</p>
+    <p>The Agent carries these out in this chat: once within the next 24 hours, or every day at a time in the bot's time zone. People in the chat ask the Agent in plain words to add or delete one.</p>
     {error && <p className="error-text">{error}</p>}
     {loading ? <p className="member-hint">Loading tasks…</p>
       : tasks.length === 0 ? <p className="member-hint">No tasks in this chat.</p>
@@ -113,10 +105,10 @@ export function ChatTasks({ chatID }: { chatID: string }) {
         </label>
         {daily
           ? <label className="settings-field">Time
-            <input type="time" value={clock} onKeyDown={keepEnter} onChange={(event) => setClock(event.target.value)} />
+            <input type="time" value={clock} onChange={(event) => setClock(event.target.value)} />
           </label>
           : <label className="settings-field">Run at
-            <input type="datetime-local" value={runAt} onKeyDown={keepEnter} onChange={(event) => setRunAt(event.target.value)} />
+            <input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} />
           </label>}
       </div>
       <label className="settings-field">Task

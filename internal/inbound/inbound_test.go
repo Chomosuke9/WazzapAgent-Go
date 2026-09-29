@@ -133,7 +133,7 @@ func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
 
 func TestBotOriginatedPublicCommandUsesTheSameCommandLane(t *testing.T) {
 	fixture := newFixture(t)
-	command := fixture.candidate("bot-help", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/help")
+	command := fixture.candidate("bot-prompt", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/prompt")
 	command.FromMe = true
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
 		t.Fatalf("handle bot command: %v", err)
@@ -141,7 +141,7 @@ func TestBotOriginatedPublicCommandUsesTheSameCommandLane(t *testing.T) {
 	if fixture.model.calls.Load() != 0 {
 		t.Fatalf("bot command invoked model %d times", fixture.model.calls.Load())
 	}
-	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "/help") {
+	if fixture.sender.count() != 1 || !strings.Contains(fixture.sender.last().Text, "Custom instructions") {
 		t.Fatalf("bot command response count/text = %d/%q", fixture.sender.count(), fixture.sender.last().Text)
 	}
 }
@@ -612,7 +612,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), view); err != nil {
 		t.Fatalf("view prompt: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "Current prompt override:\nspeak concisely" {
+	if got := fixture.sender.last().Text; !strings.HasPrefix(got, "*Custom instructions*, added to the main prompt:\nspeak concisely\n") {
 		t.Fatalf("view response = %q", got)
 	}
 
@@ -740,8 +740,9 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	// The bot may run the settings and task commands; the prompt says for whom.
-	if !slices.Equal(request.Commands, []string{"catch", "daily-task", "help", "info", "permission", "prompt", "schedule-task"}) {
+	// The bot may run the settings and task commands; the prompt says for
+	// whom. /catch, /help and /info are for people only.
+	if !slices.Equal(request.Commands, []string{"daily-task", "permission", "prompt", "schedule-task"}) {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 

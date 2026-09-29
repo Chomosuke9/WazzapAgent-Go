@@ -74,7 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
-		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time in the bot's time zone (UTC):\n- none\n</chat_state>"},
+		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nTimes here and in the chat transcript are in the bot's time zone, UTC.\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time:\n- none\n</chat_state>"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
@@ -335,7 +335,7 @@ func TestValidateModelMessagesRejectsDuplicateCurrentProvenance(t *testing.T) {
 
 func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 	wib := time.FixedZone("WIB", 7*60*60)
-	chat := ChatContext{Kind: "group", Name: "Tim", TimeZone: "UTC+07:00", Tasks: []ScheduledTaskSummary{
+	chat := ChatContext{Kind: "group", Name: "Tim", Location: wib, Tasks: []ScheduledTaskSummary{
 		{Code: "a1b2c3", FireAt: time.Date(2026, 9, 28, 14, 0, 0, 0, time.UTC), Prompt: "remind 【everyone】 about the meeting"},
 		{Code: "d4e5f6", FireAt: time.Date(2026, 9, 29, 7, 0, 0, 0, wib), Daily: true, Prompt: "say good morning"},
 	}}
@@ -351,14 +351,30 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 		"  1. delete scam links\n  2. no spam\n" +
 		"- Moderation level [/permission]: 1 (delete messages)\n" +
 		"- Custom instructions [/prompt]: set, replacing the chat prompt (the text is in <prompt_override>)\n" +
-		"One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- [a1b2c3] 2026-09-28 14:00 UTC: remind (everyone) about the meeting\n" +
-		"Daily tasks [/daily-task], [ID] then time in the bot's time zone (UTC+07:00):\n- [d4e5f6] every day at 07:00: say good morning\n" +
+		"Times here and in the chat transcript are in the bot's time zone, UTC+07:00.\n" +
+		"One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- [a1b2c3] 2026-09-28 21:00: remind (everyone) about the meeting\n" +
+		"Daily tasks [/daily-task], [ID] then time:\n- [d4e5f6] every day at 07:00: say good morning\n" +
 		"</chat_state>"
 	if got := formatChatState(chat, config); got != want {
 		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
 	}
+	config.Triggers.Smart = true
+	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Group admin rules (a message matching one wakes you, and you follow it):\n  1.") {
+		t.Fatalf("chat state with smart on:\n%s", got)
+	}
 	private := formatChatState(ChatContext{Kind: "private"}, ConfigSnapshot{})
 	if strings.Contains(private, "/trigger") || !strings.Contains(private, "One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none") {
 		t.Fatalf("private chat state:\n%s", private)
+	}
+}
+
+func TestTranscriptTimesUseTheBotsTimeZone(t *testing.T) {
+	entry := HistoryEntry{Sequence: 40, Role: HistorySystem, CreatedAt: time.Date(2026, 9, 28, 12, 56, 0, 0, time.UTC)}
+	wib := time.FixedZone("WIB", 7*60*60)
+	if got := formatCompactHistoryEntry(entry, "x", "Vivy", wib); got != "【#system】 19:56\nSYSTEM: x" {
+		t.Fatalf("entry = %q", got)
+	}
+	if got := formatCompactHistoryEntry(entry, "x", "Vivy", ChatContext{}.location()); got != "【#system】 12:56\nSYSTEM: x" {
+		t.Fatalf("entry without a location = %q", got)
 	}
 }

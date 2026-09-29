@@ -25,7 +25,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New("test-key", server.URL+"/v1/systemone", server.Client())
+	client, err := New("test-key", server.URL+"/v1/systemone", "", server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +70,15 @@ func TestJudgeAsksEachQuestionAndSendsTranscript(t *testing.T) {
 	if body.Model != DefaultModel || len(body.Questions) != 6 || body.Questions["rule_2"].Type != "noul" {
 		t.Fatalf("request model/questions = %q %#v", body.Model, body.Questions)
 	}
-	if rule, _ := json.Marshal(body.Questions["rule_2"].Instructions); !strings.Contains(string(rule), `"rule":"someone asks about prices"`) {
+	// A rule case in an earlier message was handled when it arrived, so
+	// the rule question is about new_message alone.
+	if rule, _ := json.Marshal(body.Questions["rule_2"].Instructions); !strings.Contains(string(rule), `"rule":"someone asks about prices"`) ||
+		!strings.Contains(string(rule), "Judge only `new_message`. `earlier_messages` were already judged and handled") {
 		t.Fatalf("rule_2 instructions = %s", rule)
 	}
-	recent, _ := json.Marshal(body.State["recent_messages"])
+	recent, _ := json.Marshal(body.State["earlier_messages"])
 	if got := string(recent); got != `[{"from":"Budi","text":"Vivy, pesan kopi"},{"from":"Vivy (the assistant)","text":"Mau ukuran berapa?"}]` {
-		t.Fatalf("recent_messages = %s (want oldest first, current message excluded)", got)
+		t.Fatalf("earlier_messages = %s (want oldest first, current message excluded)", got)
 	}
 
 	yes = map[string]float64{"followup": 0.9, "chatter": 0.8}
@@ -130,11 +133,14 @@ func TestClientRejectsMissingAnswer(t *testing.T) {
 }
 
 func TestNewDefaultsAndChecksTheEndpoint(t *testing.T) {
-	client, err := New("key", " ", nil)
-	if err != nil || client.endpoint != DefaultEndpoint {
-		t.Fatalf("empty endpoint = %v, %v", client, err)
+	client, err := New("key", " ", " ", nil)
+	if err != nil || client.endpoint != DefaultEndpoint || client.model != DefaultModel {
+		t.Fatalf("empty endpoint and model = %v, %v", client, err)
 	}
-	if _, err := New("key", "api.typesafe.ai/v1/systemone", nil); err == nil {
+	if client, err := New("key", "", " jev-2 ", nil); err != nil || client.model != "jev-2" {
+		t.Fatalf("configured model = %v, %v", client, err)
+	}
+	if _, err := New("key", "api.typesafe.ai/v1/systemone", "", nil); err == nil {
 		t.Fatal("accepted an endpoint without a scheme")
 	}
 }

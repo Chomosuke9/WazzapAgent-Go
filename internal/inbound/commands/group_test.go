@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,5 +202,43 @@ func TestGroupCommandDoesNotMarkHandledOnModeratorFailure(t *testing.T) {
 	run := runGroupCommand(t, "/group kick @Alice (abc123)", nil, &fakeGroupModerator{err: want})
 	if !errors.Is(run.err, want) || run.store.handled != 0 || len(run.text.sent) != 0 {
 		t.Fatalf("error/handled/sent = %v/%d/%d", run.err, run.store.handled, len(run.text.sent))
+	}
+}
+
+func TestBotGroupCommandsStayWithinTheModerationLevel(t *testing.T) {
+	target, _ := identity.NewMessageID()
+	quote := &conversation.QuotedMessage{ID: target, Role: conversation.QuoteUser, Text: "spam"}
+	tests := []struct {
+		text    string
+		level   agent.ModerationLevel
+		allowed bool
+	}{
+		{"/group delete", agent.ModerationNone, false}, {"/group delete", agent.ModerationDelete, true},
+		{"/group mute @Budi (a1b2c3) 10", agent.ModerationDelete, false}, {"/group mute @Budi (a1b2c3) 10", agent.ModerationDeleteMute, true},
+		{"/group kick @Budi (a1b2c3)", agent.ModerationDeleteMute, false}, {"/group kick @Budi (a1b2c3)", agent.ModerationDeleteMuteKick, true},
+		{"/group close", agent.ModerationNone, true},
+	}
+	registry := builtinRegistry(t)
+	for _, test := range tests {
+		request, _, _ := registry.Parse(test.text)
+		key := testChatKey(t)
+		moderator, text := &fakeGroupModerator{}, &recordingText{}
+		err := registry.Dispatch(context.Background(), request, command.Invocation{
+			Message: conversation.IncomingMessage{
+				TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, Text: test.text, Quote: quote, FromMe: true,
+			},
+			Config:   agent.ConfigSnapshot{Permission: agent.PermissionConfig{ModerationLevel: test.level}},
+			Facts:    command.PermissionFacts{IsGroup: true, IsAdmin: true, BotIsAdmin: true, FromMe: true},
+			Platform: command.Platform{Text: text, Group: moderator},
+		})
+		if err != nil {
+			t.Fatalf("%s at level %d: %v", test.text, test.level, err)
+		}
+		if ran := moderator.operation != ""; ran != test.allowed {
+			t.Fatalf("%s at level %d ran = %v, replies %q", test.text, test.level, ran, text.sent)
+		}
+		if !test.allowed && (len(text.sent) != 1 || !strings.Contains(text.sent[0], "raise it with /permission")) {
+			t.Fatalf("%s at level %d replies = %q", test.text, test.level, text.sent)
+		}
 	}
 }

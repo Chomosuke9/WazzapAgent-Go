@@ -12,7 +12,7 @@ func init() {
 	register(command.Command{
 		Name:        "help",
 		Aliases:     []string{"menu"},
-		Permission:  "public",
+		Permission:  "public and !fromMe",
 		Description: "Shows the list of available commands.",
 		Run:         runHelp,
 	})

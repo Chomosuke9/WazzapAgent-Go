@@ -64,7 +64,7 @@ type newMessage struct {
 var fixedQuestions = map[string]Question{
 	"followup": {
 		Type: "noul",
-		Instructions: "Does `new_message` answer or continue something the assistant said in `recent_messages` " +
+		Instructions: "Does `new_message` answer or continue something the assistant said in `earlier_messages` " +
 			"(oldest first)? For example, the assistant asked a question and the sender is answering it, or the " +
 			"sender reacts to the assistant's last reply with a further request.",
 		Criteria: NoulCriteria{
@@ -102,16 +102,21 @@ var fixedQuestions = map[string]Question{
 	},
 }
 
+// ruleQuestion asks about new_message alone. Every earlier message was
+// judged when it arrived, so a rule case there must not wake the Agent again
+// for each message that follows it.
 func ruleQuestion(rule string) Question {
 	return Question{
 		Type: "noul",
 		Instructions: map[string]string{
-			"task": "Does `new_message` match this rule set by the group admins?",
+			"task": "Is `new_message` itself a case of this rule set by the group admins?",
 			"rule": rule,
+			"scope": "Judge only `new_message`. `earlier_messages` were already judged and handled: a case of the rule " +
+				"there does not count, and neither does `new_message` only talking about or reacting to that earlier case.",
 		},
 		Criteria: NoulCriteria{
-			True:  "The message is a case the rule describes.",
-			False: "The message is not a case the rule describes.",
+			True:  "`new_message` itself is a case the rule describes.",
+			False: "`new_message` itself is not a case the rule describes, even if an earlier message was.",
 		},
 	}
 }
@@ -154,9 +159,9 @@ func (judge *ResponseJudge) ShouldRespond(ctx context.Context, message conversat
 		return false, err
 	}
 	state := map[string]any{
-		"assistant":       map[string]string{"name": judge.assistantName, "role": "AI assistant (a bot) taking part in this WhatsApp group"},
-		"recent_messages": judge.recent(page.Entries, message),
-		"new_message":     judge.newMessage(message),
+		"assistant":        map[string]string{"name": judge.assistantName, "role": "AI assistant (a bot) taking part in this WhatsApp group"},
+		"earlier_messages": judge.recent(page.Entries, message),
+		"new_message":      judge.newMessage(message),
 	}
 	questions := maps.Clone(fixedQuestions)
 	rules := snapshot.Triggers.SmartRuleList()

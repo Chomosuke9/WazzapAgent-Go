@@ -13,7 +13,7 @@ import (
 func init() {
 	register(command.Command{
 		Name:        "catch",
-		Permission:  "public",
+		Permission:  "public and !fromMe",
 		Description: "Outputs the raw JSON payload of the replied-to WhatsApp message.",
 		Run:         runCatch,
 	})

@@ -2,20 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   deleteWhatsAppMessage,
-  getWhatsAppChatSettings,
   getWhatsAppConversations,
   getWhatsAppGroupMembers,
   getWhatsAppMessages,
   kickWhatsAppGroupMember,
-  saveWhatsAppChatSettings,
   sendWhatsAppMessage,
-  type WhatsAppChatSettingsDTO,
   type WhatsAppConversationDTO,
   type WhatsAppGroupMemberDTO,
   type WhatsAppMentionDTO,
   type WhatsAppMessageDTO,
   type WhatsAppQuoteDTO,
 } from "../services/backend";
+import { ChatSettings } from "./ChatSettings";
 import { ChatTasks } from "./ChatTasks";
 
 function conversationKind(kind: string): string {
@@ -172,21 +170,6 @@ export function ChatPage() {
   const [busyMember, setBusyMember] = useState("");
   const [busyMessage, setBusyMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [chatSettings, setChatSettings] = useState<WhatsAppChatSettingsDTO | null>(null);
-  const [moderationLevel, setModerationLevel] = useState(0);
-  const [promptOverrideMode, setPromptOverrideMode] = useState("append");
-  const [promptOverrideText, setPromptOverrideText] = useState("");
-  const [triggerMention, setTriggerMention] = useState(true);
-  const [triggerName, setTriggerName] = useState(false);
-  const [triggerReply, setTriggerReply] = useState(true);
-  const [triggerNameRegex, setTriggerNameRegex] = useState(false);
-  const [triggerNamePattern, setTriggerNamePattern] = useState("");
-  const [triggerSmart, setTriggerSmart] = useState(false);
-  const [triggerSmartRules, setTriggerSmartRules] = useState("");
-  const [loadingSettings, setLoadingSettings] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [settingsError, setSettingsError] = useState("");
-  const [settingsSaved, setSettingsSaved] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const stickToLatest = useRef(true);
   const forceLatestOnLoad = useRef(true);
@@ -317,40 +300,6 @@ export function ChatPage() {
     return () => { mounted = false; };
   }, [selectedChatID, selectedConversation?.kind, memberRefresh]);
 
-  useEffect(() => {
-    let mounted = true;
-    if (!settingsOpen || !selectedChatID) {
-      setChatSettings(null);
-      setSettingsError("");
-      setSettingsSaved(false);
-      setLoadingSettings(false);
-      return () => { mounted = false; };
-    }
-    setLoadingSettings(true);
-    setSettingsError("");
-    setSettingsSaved(false);
-    void getWhatsAppChatSettings(selectedChatID)
-      .then((settings) => {
-        if (!mounted) return;
-        setChatSettings(settings);
-        setModerationLevel(settings.moderationLevel);
-        setPromptOverrideMode(settings.promptOverrideMode || "append");
-        setPromptOverrideText(settings.promptOverrideText);
-        setTriggerMention(settings.triggerMention);
-        setTriggerName(settings.triggerName);
-        setTriggerReply(settings.triggerReply);
-        setTriggerNameRegex(settings.triggerNameRegex);
-        setTriggerNamePattern(settings.triggerNamePattern);
-        setTriggerSmart(settings.triggerSmart);
-        setTriggerSmartRules(settings.triggerSmartRules);
-      })
-      .catch((error) => {
-        if (mounted) setSettingsError(actionErrorMessage(error, "Could not load chat settings."));
-      })
-      .finally(() => { if (mounted) setLoadingSettings(false); });
-    return () => { mounted = false; };
-  }, [settingsOpen, selectedChatID]);
-
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedConversation || !draft.trim() || sending) return;
@@ -411,36 +360,6 @@ export function ChatPage() {
       setMembersError(actionErrorMessage(error, "Could not remove the member. Check the connection and the WhatsApp account's admin permissions."));
     } finally {
       setBusyMember("");
-    }
-  }
-
-  async function saveChatSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!chatSettings || savingSettings) return;
-    setSavingSettings(true);
-    setSettingsError("");
-    setSettingsSaved(false);
-    try {
-      const updated = await saveWhatsAppChatSettings({
-        chatID: selectedChatID,
-        expectedVersion: chatSettings.version,
-        moderationLevel,
-        promptOverrideMode: promptOverrideText.trim() ? promptOverrideMode : "",
-        promptOverrideText,
-        triggerMention,
-        triggerName,
-        triggerReply,
-        triggerNameRegex,
-        triggerNamePattern,
-        triggerSmart,
-        triggerSmartRules,
-      });
-      setChatSettings(updated);
-      setSettingsSaved(true);
-    } catch (error) {
-      setSettingsError(actionErrorMessage(error, "Could not save chat settings."));
-    } finally {
-      setSavingSettings(false);
     }
   }
 
@@ -539,86 +458,27 @@ export function ChatPage() {
                   <span><small>CHAT SETTINGS</small><strong>{selectedConversation?.name}</strong></span>
                   <button type="button" className="chat-settings-close" aria-label="Close" onClick={() => setSettingsOpen(false)}>×</button>
                 </header>
-                {loadingSettings ? <p className="member-hint">Loading settings…</p> : <>
-                  {settingsError && <p className="error-text settings-feedback" role="status">{settingsError}</p>}
-                  {settingsSaved && <p className="settings-success" role="status">Settings saved.</p>}
-                  {chatSettings && <form className="chat-settings-form" onSubmit={(event) => void saveChatSettings(event)}>
-                    <section className="chat-settings-section">
-                      <h2>Agent triggers</h2>
-                      <p>In groups, the Agent responds when one of the enabled triggers matches. Direct chats can still receive replies without a trigger.</p>
-                      <div className="trigger-options">
-                        <label><input type="checkbox" checked={triggerMention} onChange={(event) => { setTriggerMention(event.target.checked); setSettingsSaved(false); }} /> Mention the bot account</label>
-                        <label><input type="checkbox" checked={triggerName} onChange={(event) => { setTriggerName(event.target.checked); setSettingsSaved(false); }} /> Agent name</label>
-                        <label><input type="checkbox" checked={triggerReply} onChange={(event) => { setTriggerReply(event.target.checked); setSettingsSaved(false); }} /> Reply to a bot message</label>
-                        <label><input type="checkbox" checked={triggerSmart} onChange={(event) => { setTriggerSmart(event.target.checked); setSettingsSaved(false); }} /> Smart: TypeSafe decides if a message is meant for the bot</label>
-                      </div>
-                      {triggerSmart && <label className="settings-field">Smart rules from group admins
-                        <textarea rows={3} maxLength={2000} value={triggerSmartRules}
-                          onChange={(event) => { setTriggerSmartRules(event.target.value); setSettingsSaved(false); }}
-                          placeholder="One rule per line, for example: someone sends a scam link" />
-                        <small>A message that matches a rule wakes the Agent, and the Agent sees these rules. Up to 10 rules.</small>
-                      </label>}
-                      {triggerName && <>
-                        <label className="trigger-regex-toggle"><input type="checkbox" checked={triggerNameRegex} onChange={(event) => { setTriggerNameRegex(event.target.checked); setSettingsSaved(false); }} /> Use a custom regex for the name trigger</label>
-                        {triggerNameRegex ? <label className="settings-field">Regex pattern
-                          <input type="text" value={triggerNamePattern} maxLength={512} required
-                            onChange={(event) => { setTriggerNamePattern(event.target.value); setSettingsSaved(false); }}
-                            placeholder="Contoh: (?i)\bvivy\b" />
-                          <small>Uses Go regex syntax. Add (?i) to make matching case-insensitive.</small>
-                        </label> : <p className="member-hint">The trigger uses the Agent name from the main settings.</p>}
-                      </>}
-                    </section>
-                    <section className="chat-settings-section">
-                      <h2>Agent permissions</h2>
-                      <p>Choose which moderation actions the Agent can use in this conversation.</p>
-                      <label className="settings-field">Moderation level
-                        <select value={moderationLevel} onChange={(event) => { setModerationLevel(Number(event.target.value)); setSettingsSaved(false); }}>
-                          <option value={0}>Disabled — no moderation</option>
-                          <option value={1}>Level 1 — delete messages</option>
-                          <option value={2}>Level 2 — delete and mute</option>
-                          <option value={3}>Level 3 — delete, mute, and kick</option>
-                        </select>
-                      </label>
-                    </section>
-                    <section className="chat-settings-section">
-                      <h2>Custom instructions</h2>
-                      <p>Append adds these instructions to the system prompt. Replace uses them in place of the main prompt. Leave blank to use the main prompt without a custom addition.</p>
-                      <label className="settings-field">Apply mode
-                        <select value={promptOverrideMode} onChange={(event) => { setPromptOverrideMode(event.target.value); setSettingsSaved(false); }}>
-                          <option value="append">Append to main instructions</option>
-                          <option value="replace">Replace main instructions for this conversation</option>
-                        </select>
-                      </label>
-                      <label className="settings-field">Instructions
-                        <textarea value={promptOverrideText} maxLength={16000} rows={5}
-                          onChange={(event) => { setPromptOverrideText(event.target.value); setSettingsSaved(false); }}
-                          placeholder="Example: Keep replies concise and use English." />
-                      </label>
-                    </section>
-                    <ChatTasks chatID={selectedChatID} />
-                    {selectedConversation?.kind === "group" && <section className="chat-settings-section group-settings-section">
-                      <header><span><h2>Group members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot account is an admin" : " · bot account is not an admin"}</p></span>
-                        <button type="button" className="secondary-button" disabled={loadingMembers} onClick={() => setMemberRefresh((value) => value + 1)}>
-                          {loadingMembers ? "Loading…" : "Refresh"}
-                        </button>
-                      </header>
-                      {membersError && <p className="error-text">{membersError}</p>}
-                      {loadingMembers && members.length === 0 ? <p className="member-hint">Loading WhatsApp group members…</p>
-                        : members.length === 0 ? <p className="member-hint">No members to display.</p>
-                          : <ul>{members.map((member) => <li key={member.id}>
-                            <span className="member-avatar" aria-hidden="true">{member.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
-                            <span className="member-name">{member.name}<small>{member.isSuperAdmin ? "Group owner" : member.isAdmin ? "Admin" : "Member"}</small></span>
-                            {member.canKick && <button type="button" className="member-kick" disabled={busyMember === member.id}
-                              onClick={() => void kickMember(member)}>{busyMember === member.id ? "Removing…" : "Remove"}</button>}
-                          </li>)}</ul>}
-                      {!botIsGroupAdmin && <p className="member-hint">The bot account must be a group admin to delete members' messages or remove members.</p>}
-                    </section>}
-                    <footer className="chat-settings-footer">
-                      <button type="button" className="secondary-button" onClick={() => setSettingsOpen(false)}>Close</button>
-                      <button type="submit" disabled={savingSettings || !chatSettings}>{savingSettings ? "Saving…" : "Save settings"}</button>
-                    </footer>
-                  </form>}
-                </>}
+                <div className="chat-settings-form">
+                  <ChatSettings key={selectedChatID} chatID={selectedChatID} isGroup={selectedConversation?.kind === "group"} />
+                  <ChatTasks key={`tasks-${selectedChatID}`} chatID={selectedChatID} />
+                  {selectedConversation?.kind === "group" && <section className="chat-settings-section group-settings-section">
+                    <header><span><h2>Group members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot account is an admin" : " · bot account is not an admin"}</p></span>
+                      <button type="button" className="secondary-button" disabled={loadingMembers} onClick={() => setMemberRefresh((value) => value + 1)}>
+                        {loadingMembers ? "Loading…" : "Refresh"}
+                      </button>
+                    </header>
+                    {membersError && <p className="error-text">{membersError}</p>}
+                    {loadingMembers && members.length === 0 ? <p className="member-hint">Loading WhatsApp group members…</p>
+                      : members.length === 0 ? <p className="member-hint">No members to display.</p>
+                        : <ul>{members.map((member) => <li key={member.id}>
+                          <span className="member-avatar" aria-hidden="true">{member.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
+                          <span className="member-name">{member.name}<small>{member.isSuperAdmin ? "Group owner" : member.isAdmin ? "Admin" : "Member"}</small></span>
+                          {member.canKick && <button type="button" className="member-kick" disabled={busyMember === member.id}
+                            onClick={() => void kickMember(member)}>{busyMember === member.id ? "Removing…" : "Remove"}</button>}
+                        </li>)}</ul>}
+                    {!botIsGroupAdmin && <p className="member-hint">The bot account must be a group admin to delete members' messages or remove members.</p>}
+                  </section>}
+                </div>
               </aside>
             </>}
 

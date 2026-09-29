@@ -161,7 +161,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	if apiKey := application.config.TypeSafeAPIKey(); apiKey != "" {
-		client, err := typesafe.New(apiKey, application.config.TypeSafeEndpoint(), nil)
+		client, err := typesafe.New(apiKey, application.config.TypeSafeEndpoint(), application.config.TypeSafeModel(), nil)
 		if err != nil {
 			return nil, err
 		}
