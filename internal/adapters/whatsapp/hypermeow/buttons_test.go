@@ -156,3 +156,42 @@ func TestNativeFlowMessagesEndWithANamelessButton(t *testing.T) {
 		}
 	}
 }
+
+func TestButtonsMessageBuildsSingleSelectMenusWithAFooter(t *testing.T) {
+	message, err := buttonsMessage(action.SendButtonsRequest{Text: "Chat settings", Footer: "Tap a menu", Menus: []action.Menu{{
+		Title: "Moderation",
+		Rows:  []action.MenuRow{{ID: "/permission 0", Title: "Level 0: off", Description: "I don't moderate"}, {ID: "/permission 1", Title: "Level 1: delete"}},
+	}}})
+	if err != nil {
+		t.Fatalf("build menu: %v", err)
+	}
+	interactive := message.GetInteractiveMessage()
+	buttons := interactive.GetNativeFlowMessage().GetButtons()
+	if interactive.GetFooter().GetText() != "Tap a menu" || len(buttons) != 2 || buttons[0].GetName() != "single_select" || buttons[1].GetName() != "" {
+		t.Fatalf("menu message = %v", interactive)
+	}
+	var params struct {
+		Title    string `json:"title"`
+		Sections []struct {
+			Title string `json:"title"`
+			Rows  []struct{ ID, Title, Description string }
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal([]byte(buttons[0].GetButtonParamsJSON()), &params); err != nil || params.Title != "Moderation" ||
+		len(params.Sections) != 1 || len(params.Sections[0].Rows) != 2 || params.Sections[0].Rows[0].ID != "/permission 0" ||
+		params.Sections[0].Rows[0].Description != "I don't moderate" {
+		t.Fatalf("menu params = %s, %v", buttons[0].GetButtonParamsJSON(), err)
+	}
+	// Picking a row comes back as a native-flow response carrying the row ID.
+	pick := &waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+		InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+			NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{Name: proto.String("single_select"), ParamsJSON: proto.String(`{"id":"/permission 1"}`)},
+		},
+	}}
+	if got, _ := buttonReply(pick); got != "/permission 1" {
+		t.Fatalf("menu pick = %q", got)
+	}
+	if _, err := buttonsMessage(action.SendButtonsRequest{Text: "x", Menus: []action.Menu{{Title: "Empty"}}}); err == nil {
+		t.Fatal("a menu without rows was accepted")
+	}
+}

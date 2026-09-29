@@ -95,6 +95,7 @@ package, so a generic helper name will collide with another command.
 | `c.Key()` | The chat key (tenant, account, chat). |
 | `c.Reply(ctx, text)` | Sends text to the chat. |
 | `c.ReplyButtons(ctx, text, buttons...)` | Sends text with buttons (see "Buttons"). |
+| `c.ReplyMenus(ctx, text, footer, menus...)` | Sends text and a footer with list menus (see "Buttons"). |
 | `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Changes the chat config. Crash-safe (see "Changing config"). |
 | `c.ResetHistory(ctx)` | Clears the chat history. |
 | `c.Group()` | The group moderation port: announce, description, revoke, kick, mute. Returns an error if unavailable. |
@@ -161,17 +162,32 @@ the same permission check. You never write a separate button handler.
 return c.ReplyButtons(ctx, "Mention trigger is on.",
 	command.Button{Label: "Turn off", Args: "mention off"},       // ID "/trigger mention off"
 	command.Button{Label: "Show all", Args: ""},                  // ID "/trigger"
-	command.Button{Label: "Moderation", Command: "permission"},   // ID "/permission" (as /settings does)
+	command.Button{Label: "Moderation", Command: "permission"},   // ID "/permission"
 )
 ```
 
-- A message can have 1 to 10 buttons. Button labels must not be empty.
+A menu is a list button: tapping its title opens the options, and picking one
+works like a button tap. `/settings` sends one menu per part of the settings:
+
+```go
+return c.ReplyMenus(ctx, "Current: level 1", "Tap a menu to change a setting",
+	command.Menu{Title: "Moderation", Options: []command.Button{
+		{Label: "Level 0: off", Description: "I don't moderate.", Command: "permission", Args: "0"},
+		{Label: "Level 1: delete", Command: "permission", Args: "1"},
+	}},
+)
+```
+
+- A message can have 1 to 10 buttons and menus in all, and a menu 1 to 10
+  options. Labels and menu titles must not be empty.
+- Send buttons only when someone asks for them (`/trigger toggle`,
+  `/settings`). A command's plain view, and its answer to a tap, are text.
 - `Args` must be valid input for the target command's `Run`. Add a test that
   parses every button you send (see
-  `TestTriggerViewShowsRulesWithButtonsThatRouteBackToTrigger`).
+  `TestTriggerToggleShowsRulesWithButtonsThatRouteBackToTrigger`).
 - When the host can't send buttons, or WhatsApp rejects the button message,
-  `ReplyButtons` falls back to a text reply that lists each label next to the
-  command to type.
+  `ReplyButtons` and `ReplyMenus` fall back to a text reply that lists each
+  label next to the command to type.
 - Taps on list, legacy buttons, template and native-flow messages are all
   handled by the adapter. The ID is read before the message text, and
   numeric IDs are accepted. You never deal with provider types.
