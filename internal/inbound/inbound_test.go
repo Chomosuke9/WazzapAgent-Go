@@ -407,7 +407,7 @@ func TestRecoveryReadsTheInboxPageByPage(t *testing.T) {
 	defer inbound.SetMaxPending(2)()
 	fixture := newFixture(t)
 	for index := 0; index < 5; index++ {
-		chat := fmt.Sprintf("1555000002%d@s.whatsapp.net", index)
+		chat := fmt.Sprintf("1555000002%d", index)
 		candidate := fixture.candidate(fmt.Sprintf("paged-%d", index), chat, conversation.ChatDirect, "hello")
 		if _, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate); err != nil {
 			t.Fatalf("store unfinished message: %v", err)

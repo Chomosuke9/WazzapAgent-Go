@@ -109,6 +109,22 @@ func LoadRuntimeBootstrap(lookup LookupEnv) (Snapshot, error) {
 	return load(mergedLookup, false)
 }
 
+// DiscordToken returns DISCORDAGENT_DISCORD_TOKEN from the environment or
+// the dotenv file, without a "Bot " prefix. It is a credential for the CLI
+// process only and never becomes part of a snapshot or saved settings; ""
+// means the CLI uses the token the app linked for the data directory.
+func DiscordToken(lookup LookupEnv) (string, error) {
+	mergedLookup, err := lookupWithDotEnv(lookup)
+	if err != nil {
+		return "", err
+	}
+	token := value(mergedLookup, "DISCORDAGENT_DISCORD_TOKEN")
+	if fields := strings.Fields(token); len(fields) == 2 && strings.EqualFold(fields[0], "Bot") {
+		token = fields[1]
+	}
+	return token, nil
+}
+
 // ResolveRuntimeIdentity loads or creates the durable identity after the
 // caller has acquired ownership of the data root.
 func (snapshot Snapshot) ResolveRuntimeIdentity() (Snapshot, error) {

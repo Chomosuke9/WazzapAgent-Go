@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -57,13 +56,16 @@ func run() int {
 		return 2
 	}
 
-	// DISCORDAGENT_DISCORD_TOKEN is read here, never stored in settings: it
-	// is a credential for this process only. Without it the CLI uses the
-	// token the desktop app linked for this data directory.
-	token, _ := os.LookupEnv("DISCORDAGENT_DISCORD_TOKEN")
+	// Without DISCORDAGENT_DISCORD_TOKEN the CLI uses the token the desktop
+	// app linked for this data directory.
+	token, err := config.DiscordToken(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
+		return 2
+	}
 	application := app.New(cfg, logger, app.Options{
 		SystemPolicy: app.RenderSystemPolicy(cfg.AssistantName()),
-		DiscordToken: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(token), "Bot ")),
+		DiscordToken: token,
 	})
 	if err := application.RunCLI(ctx); err != nil {
 		logger.Error("application stopped with error", "error", err)

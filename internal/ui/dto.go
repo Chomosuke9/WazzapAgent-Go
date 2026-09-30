@@ -175,9 +175,10 @@ type DiscordSessionStatusDTO struct {
 	DiscordBotID   string `json:"discordBotID,omitempty"`
 	BotName        string `json:"botName,omitempty"`
 	// InviteURL adds the bot to a server with the permissions it uses.
-	InviteURL   string `json:"inviteURL,omitempty"`
-	OperationID string `json:"operationID,omitempty"`
-	ErrorCode   string `json:"errorCode,omitempty"`
+	InviteURL    string `json:"inviteURL,omitempty"`
+	OperationID  string `json:"operationID,omitempty"`
+	ErrorCode    string `json:"errorCode,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
 }
 
 type DiscordSessionOperationDTO struct {
@@ -194,6 +195,7 @@ func discordSessionStatusDTO(status control.SessionStatus) DiscordSessionStatusD
 		BindingState: string(status.BindingState), RuntimeState: string(status.RuntimeState),
 		SessionPresent: status.SessionPresent, DiscordBotID: status.DiscordBotID, BotName: status.BotName,
 		InviteURL: discordadapter.InviteURL(status.DiscordBotID), OperationID: status.OperationID, ErrorCode: string(status.ErrorCode),
+		ErrorMessage: status.ErrorMessage,
 	}
 }
 

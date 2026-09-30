@@ -12,9 +12,9 @@ follow "Adding a command".
 ## How a command runs
 
 ```text
-WhatsApp message "/trigger mention off"        (or a tap on a button with that ID)
+Discord message "/trigger mention off"         (or a tap on a button with that ID)
   │
-  ├─ adapter normalizes it to text             adapters/whatsapp/hypermeow/normalize.go
+  ├─ adapter normalizes it to text             adapters/discord/normalize.go
   │    a button tap's ID becomes the text, so taps and typing are identical
   ├─ inbound sees a registered "/token"        inbound/split.go → command lane
   ├─ permission facts are resolved             owner / admin / group / private / fromMe
@@ -98,12 +98,9 @@ package, so a generic helper name will collide with another command.
 | `c.ReplyMenus(ctx, text, footer, menus...)` | Sends text and a footer with list menus (see "Buttons"). |
 | `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Changes the chat config. Crash-safe (see "Changing config"). |
 | `c.ResetHistory(ctx)` | Clears the chat history. |
-| `c.Group()` | The group moderation port: announce, description, revoke, kick, mute. Returns an error if unavailable. |
+| `c.Group()` | The moderation port: lock/unlock (announce), topic (description), delete (revoke), kick, mute. Returns an error if unavailable. |
 | `c.ScheduleTask(ctx, fireAt, prompt)` | Runs `prompt` as an AI turn in this chat at `fireAt` (at most a day ahead). Saved, so it survives a restart. |
 | `c.QuotedRaw(ctx)` | The raw provider JSON of the quoted message. It is only captured for `/catch`. |
-| `c.Media(ctx)` | Downloads the image, video or sticker the command was the caption of, or else the one it replied to. `agent.ErrorNotFound` when there is none. |
-| `c.SendSticker(ctx, sticker)` | Sends a sticker, replying to the command message. Make one with the `internal/sticker` package. |
-| `c.Stickers()` | The chat's named sticker catalog (the names `send_sticker` offers the model). |
 | `c.Commands()` | Every registered command, sorted. Used by `/help`. |
 
 If a command needs something that isn't in this table, that is a system
@@ -115,10 +112,10 @@ change, not a command change. See "Needing a new capability".
 button tap:
 
 - Atoms: `public`, `owner`/`isOwner`, `admin`/`isAdmin`/`senderIsAdmin`,
-  `group`/`isGroup`, `private`/`isPrivate`, `fromMe`/`from_me`.
+  `group`/`isGroup` (a server channel or thread), `private`/`isPrivate` (a direct message), `fromMe`/`from_me`.
 - Operators, highest precedence first: `!`, `and`, `or`. Use parentheses.
 - Commands the AI model issues inside its reply run with `fromMe=true`, and
-  `admin` means the bot is a group admin. Add `and !fromMe` when the bot must
+  `admin` means the bot may manage messages in the channel. Add `and !fromMe` when the bot must
   not run the command itself.
 - The model's tool schema lists only the names of the commands it may run.
   Explain each of them, with its syntax and who may ask for it, in
@@ -127,13 +124,13 @@ button tap:
 ```go
 Permission: "public"                                      // anyone, including the bot
 Permission: "owner and !fromMe"                           // configured owner only
-Permission: "(owner or isAdmin) and isGroup and !fromMe"  // owner or admin, in groups
+Permission: "(owner or isAdmin) and isGroup and !fromMe"  // owner or moderator, in server channels
 Permission: "fromMe"                                      // only the bot; people ask it
 ```
 
 Never check permissions inside `Run`. The registry has already done it.
 A chat setting that limits what a command does is not a permission check:
-`/group` holds the bot to the chat's moderation level (delete 1, mute 2,
+`/mod` holds the bot to the chat's moderation level (delete 1, mute 2,
 kick 3).
 
 ## Replies and errors
@@ -146,7 +143,7 @@ kick 3).
   message for `ErrorNotReady`), except after a timeout or provider failure,
   where your own reply may already have been delivered. A failed command is never re-run
   automatically, because re-running would repeat anything it already sent.
-- If `Run` returns `nil` without replying, that's fine. `/group delete`
+- If `Run` returns `nil` without replying, that's fine. `/mod delete`
   does this on purpose.
 - Use `agent.NewError(agent.ErrorXxx, "operation", err)` for errors, like
   the rest of the codebase.
@@ -185,12 +182,13 @@ return c.ReplyMenus(ctx, "Current: level 1", "Tap a menu to change a setting",
 - `Args` must be valid input for the target command's `Run`. Add a test that
   parses every button you send (see
   `TestTriggerToggleShowsRulesWithButtonsThatRouteBackToTrigger`).
-- When the host can't send buttons, or WhatsApp rejects the button message,
+- When the host can't send buttons, or Discord can't show the layout (more
+  than five rows, or a command longer than 100 bytes),
   `ReplyButtons` and `ReplyMenus` fall back to a text reply that lists each
   label next to the command to type.
-- Taps on list, legacy buttons, template and native-flow messages are all
-  handled by the adapter. The ID is read before the message text, and
-  numeric IDs are accepted. You never deal with provider types.
+- Buttons and menus are Discord message components. The adapter turns a tap
+  on a button or a menu option into the user's message, so you never deal
+  with provider types.
 
 ## Changing config
 
@@ -261,7 +259,7 @@ not a command change:
 1. Add a port interface and a field to `command.Platform` in
    `internal/command/command.go`, plus a `Context` method that returns an
    `ErrorUnavailable` error when the port is nil.
-2. Implement it in `internal/adapters/whatsapp/hypermeow`.
+2. Implement it in `internal/adapters/discord`.
 3. Wire it in `internal/app/compose.go` (`commandPlatform := command.Platform{...}`).
 
 Don't type-assert `Platform` fields, and don't add methods named after one
@@ -275,6 +273,6 @@ to prevent.
   commands.
 - Don't edit another command's file to add yours.
 - Don't check permissions inside `Run`. Don't mark messages handled yourself.
-- Don't import provider packages (`hypermeow`, `waE2E`, and so on) in this
-  folder.
+- Don't import provider packages (`discordgo`, the adapter, and so on) in
+  this folder.
 - Keep replies in English, matching the existing commands.

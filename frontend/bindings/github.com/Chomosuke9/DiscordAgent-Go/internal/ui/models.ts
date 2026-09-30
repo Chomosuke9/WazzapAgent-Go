@@ -194,6 +194,7 @@ export interface DiscordSessionStatusDTO {
     "inviteURL"?: string;
     "operationID"?: string;
     "errorCode"?: string;
+    "errorMessage"?: string;
 }
 
 export interface DiscordUsageDTO {

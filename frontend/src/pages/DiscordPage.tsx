@@ -140,7 +140,7 @@ export function DiscordPage() {
       </div>}
 
       {error && <p className="error-text" role="alert">{error}</p>}
-      {status?.runtimeState === "failed" && <p className="error-text" role="status">The last connection attempt failed. The saved token is kept; you can try again.</p>}
+      {status?.runtimeState === "failed" && <p className="error-text" role="status">{status.errorMessage ? `${status.errorMessage.replace(/\.?$/, ".")} ` : "The last connection attempt failed. "}{linked ? "The saved token is kept; you can try again." : "Check the token and try again."}</p>}
     </section>
 
     <section className="card session-note">

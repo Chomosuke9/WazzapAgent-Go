@@ -208,7 +208,7 @@ func TestNormalizeBroadcastPayload(t *testing.T) {
 		t.Fatalf("normalized = %q, %v", got, err)
 	}
 	if _, err := NormalizeBroadcastPayload(`{"conversation":"Hi"}`); err == nil {
-		t.Fatal("a WhatsApp-shaped payload was accepted")
+		t.Fatal("a payload that is not a Discord message was accepted")
 	}
 }
 

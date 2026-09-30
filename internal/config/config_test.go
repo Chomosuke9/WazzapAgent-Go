@@ -461,3 +461,13 @@ func mapLookup(values map[string]string) LookupEnv {
 		return value, ok
 	}
 }
+
+func TestDiscordTokenComesFromTheEnvironmentWithoutItsPrefix(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for raw, want := range map[string]string{"": "", "abc.def.ghi": "abc.def.ghi", "Bot abc.def.ghi": "abc.def.ghi", "  bot   abc.def.ghi ": "abc.def.ghi"} {
+		got, err := DiscordToken(mapLookup(map[string]string{"DISCORDAGENT_DISCORD_TOKEN": raw}))
+		if err != nil || got != want {
+			t.Fatalf("DiscordToken(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+}

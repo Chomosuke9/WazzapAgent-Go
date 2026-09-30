@@ -44,8 +44,11 @@ type SessionController struct {
 	operations sync.Mutex
 	mu         sync.Mutex
 	run        *sessionRun
-	closed     bool
-	now        func() time.Time
+	// lastFailure is how the last run failed, kept until the next one starts
+	// so a UI that polls after the run ended still sees why.
+	lastFailure *SessionStatus
+	closed      bool
+	now         func() time.Time
 }
 
 func NewSessionController(
@@ -81,6 +84,9 @@ func (controller *SessionController) GetStatus(ctx context.Context) (SessionStat
 			status.SessionPresent = true
 			status.BindingState = SessionLinked
 		}
+	} else if failure := controller.lastFailure; failure != nil {
+		status.RuntimeState, status.OperationID = RuntimeFailed, failure.OperationID
+		status.ErrorCode, status.ErrorMessage = failure.ErrorCode, failure.ErrorMessage
 	}
 	return status, nil
 }
@@ -430,6 +436,7 @@ func (controller *SessionController) launch(run *sessionRun) bool {
 		return false
 	}
 	controller.run = run
+	controller.lastFailure = nil
 	controller.mu.Unlock()
 	go controller.runSession(run)
 	controller.publish(run.id, controller.statusForRun(run))
@@ -453,10 +460,13 @@ func (controller *SessionController) runSession(run *sessionRun) {
 		_ = controller.bindings.AbortSessionLink(context.Background(), run.scope)
 	}
 	controller.mu.Lock()
+	message := ""
 	if controller.run == run {
 		if err != nil {
 			run.state = RuntimeFailed
 			run.errorCode = agent.CodeOf(err)
+			message = sessionErrorMessage(err)
+			controller.lastFailure = &SessionStatus{OperationID: run.id, ErrorCode: run.errorCode, ErrorMessage: message}
 		} else {
 			run.state = RuntimeStopped
 		}
@@ -470,14 +480,14 @@ func (controller *SessionController) runSession(run *sessionRun) {
 		status.BindingState = SessionRevoked
 	}
 	if err != nil {
-		status.ErrorCode = agent.CodeOf(err)
+		status.ErrorCode, status.ErrorMessage = agent.CodeOf(err), message
 	}
 	close(run.done)
 	controller.mu.Unlock()
 	if binding, loadErr := controller.bindings.LoadSessionBinding(context.Background()); loadErr == nil {
 		status = statusFromBinding(binding)
 		controller.mu.Lock()
-		status.RuntimeState, status.OperationID, status.ErrorCode = run.state, run.id, run.errorCode
+		status.RuntimeState, status.OperationID, status.ErrorCode, status.ErrorMessage = run.state, run.id, run.errorCode, message
 		controller.mu.Unlock()
 	}
 	controller.publish(run.id, status)
@@ -649,6 +659,22 @@ func BotIDFromToken(token string) string {
 		}
 	}
 	return ""
+}
+
+// sessionErrorMessage is what the UI shows for a failed run: the cause the
+// adapter reported, such as "Discord rejected the bot token", cut to a
+// readable length. Adapter errors never contain the token.
+func sessionErrorMessage(err error) string {
+	var typed *agent.Error
+	message := err.Error()
+	if errors.As(err, &typed) && typed.Unwrap() != nil {
+		message = typed.Unwrap().Error()
+	}
+	message = strings.TrimSpace(strings.ReplaceAll(message, "\n", " "))
+	if runes := []rune(message); len(runes) > 300 {
+		message = string(runes[:299]) + "…"
+	}
+	return message
 }
 
 func newSessionOperationID() (string, error) {

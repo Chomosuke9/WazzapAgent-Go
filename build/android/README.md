@@ -7,7 +7,7 @@ Go `libwails.so` compiled with `GOOS=android`, `CGO_ENABLED=1`, and
 
 The native Gradle project was generated from the pinned Wails CLI. The Go app
 uses the same React bundle, Wails service bindings, controllers, settings, and
-WhatsApp runtime as the desktop app. It stores data beneath Android's private
+Discord runtime as the desktop app. It stores data beneath Android's private
 `getFilesDir()` directory. Android's activity lifecycle can stop the process;
 the Agent is not yet a persistent background service.
 

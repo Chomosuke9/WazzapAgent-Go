@@ -14,4 +14,4 @@ aplikasi; kode Go bisnis tetap sama dengan desktop.
 Build dari root repository melalui `wails3 task build`; frontend harus diinstal
 dengan npm yang sesuai lockfile. Lihat `build/README.md` untuk toolchain dan batas
 dukungan platform. Shell membuka settings database dan dapat memulai sesi
-WhatsApp serta Agent.
+bot Discord serta Agent.

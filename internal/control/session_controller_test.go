@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
@@ -123,6 +124,7 @@ type sessionTestRuntime struct {
 	request     SessionRunRequest
 	closed      bool
 	linkReady   chan struct{}
+	runErr      error
 }
 
 func (runtime *sessionTestRuntime) HasSession() bool {
@@ -139,6 +141,9 @@ func (runtime *sessionTestRuntime) Run(ctx context.Context, request SessionRunRe
 	runtime.mu.Lock()
 	runtime.request = request
 	runtime.mu.Unlock()
+	if runtime.runErr != nil {
+		return runtime.runErr
+	}
 	if request.Mode == SessionRunLink {
 		emit(SessionRuntimeEvent{State: RuntimeLinking})
 		if runtime.linkReady != nil {
@@ -395,6 +400,37 @@ func TestSessionControllerRejectsMalformedTokens(t *testing.T) {
 		if _, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: token}); err == nil {
 			t.Fatalf("token %q was accepted", token)
 		}
+	}
+}
+
+func TestSessionControllerKeepsTheLastFailureUntilTheNextRun(t *testing.T) {
+	rejected := agent.NewError(agent.ErrorPermissionDenied, "verify Discord bot token", errors.New("Discord rejected the bot token"))
+	failing := &sessionTestRuntime{runErr: rejected}
+	next := &sessionTestRuntime{linkReady: make(chan struct{})}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionUnlinked}}
+	controller := newSessionTestControllerWith(t, bindings, failing, next)
+	if _, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: testBotToken}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionState(t, controller, RuntimeFailed)
+	status, err := controller.GetStatus(context.Background())
+	if err != nil || status.ErrorCode != agent.ErrorPermissionDenied || status.ErrorMessage != "Discord rejected the bot token" || status.BindingState != SessionUnlinked {
+		t.Fatalf("failed status = %+v, %v", status, err)
+	}
+	binding, _ := bindings.LoadSessionBinding(context.Background())
+	if binding.HasPendingScope {
+		t.Fatalf("a failed link kept its pending scope: %+v", binding)
+	}
+	operation, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: testBotToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannel(t, next.linkReady)
+	if status, _ := controller.GetStatus(context.Background()); status.RuntimeState == RuntimeFailed || status.ErrorMessage != "" {
+		t.Fatalf("the next run still reports the old failure: %+v", status)
+	}
+	if _, err := controller.CancelLink(context.Background(), operation.OperationID); err != nil {
+		t.Fatal(err)
 	}
 }
 

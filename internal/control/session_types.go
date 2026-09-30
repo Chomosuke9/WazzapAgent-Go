@@ -71,6 +71,9 @@ type SessionStatus struct {
 	BotName     string
 	OperationID string
 	ErrorCode   agent.ErrorCode
+	// ErrorMessage says why the last run failed, such as a rejected token.
+	// It never holds the token.
+	ErrorMessage string
 }
 
 type SessionEvent struct {

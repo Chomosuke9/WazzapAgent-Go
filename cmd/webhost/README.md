@@ -1,7 +1,7 @@
 # Web host (`discordagent-web`)
 
 `cmd/webhost` hosts the browser UI for other machines, for example a Debian
-server. It runs the same Agent, WhatsApp session and settings as the desktop app
+server. It runs the same Agent, Discord bot session and settings as the desktop app
 and serves the same pages as [`cmd/server`](../server/README.md), but it listens
 on a network address and requires an **access token**.
 `cmd/server` stays the loopback-only, no-login option for a single machine.

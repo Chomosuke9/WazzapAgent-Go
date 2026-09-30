@@ -117,7 +117,7 @@ func Open(ctx context.Context, config Config) (*Adapter, error) {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "open Discord adapter", errors.New("identity and target resolver are required"))
 	}
 	if strings.TrimSpace(config.Token) == "" {
-		return nil, agent.NewError(agent.ErrorNotReady, "open Discord adapter", errors.New("link a Discord bot before starting the Agent"))
+		return nil, agent.NewError(agent.ErrorNotReady, "open Discord adapter", errors.New("link a Discord bot in the app, or set DISCORDAGENT_DISCORD_TOKEN, before starting the Agent"))
 	}
 	if config.QueueCapacity == 0 || config.Workers == 0 || config.ConnectTimeout <= 0 || config.SendTimeout <= 0 {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "open Discord adapter", errors.New("positive queue, worker, and timeout values are required"))

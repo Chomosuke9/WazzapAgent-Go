@@ -1,9 +1,9 @@
 # Runbook testing manual
 
-Runbook ini menguji shell Wails, persistence settings, pengelolaan sesi WhatsApp,
+Runbook ini menguji shell Wails, persistence settings, pengelolaan bot Discord,
 runtime Agent yang memakai core headless existing, masking secret, dan ownership
-data-root. Gunakan akun WhatsApp khusus untuk pairing/pesan; jangan masukkan API
-key produksi.
+data-root. Gunakan aplikasi Discord dan server khusus untuk pengujian; jangan
+masukkan API key produksi.
 
 ## Build lokal Windows
 
@@ -40,7 +40,7 @@ Jalankan executable:
 ## Skenario persistence
 
 1. Buka halaman **Pengaturan**.
-2. Ubah nama assistant, owner JID sintetis, allowlist, prompt, endpoint/model,
+2. Ubah nama assistant, owner user ID sintetis, allowlist, prompt, endpoint/model,
    satu angka batas, dan satu duration seperti `30s`.
 3. Masukkan secret test pada salah satu field API key, lalu tekan **Simpan
    settings**.
@@ -50,41 +50,38 @@ Jalankan executable:
 6. Pastikan input secret kosong dan hanya label **tersimpan** yang terlihat.
 
 `Save` hanya menyimpan settings. Ia tidak memulai atau menghentikan Agent.
-Pairing sesi diuji terpisah di bawah.
+Link bot diuji terpisah di bawah.
 
-## Skenario sesi WhatsApp
+## Skenario bot Discord
 
-1. Jalankan executable dan buka halaman **WhatsApp**. Pairing harus bisa dimulai
+1. Buat aplikasi di Discord Developer Portal, buka **Bot**, aktifkan **Message
+   Content Intent** (dan **Server Members Intent** untuk daftar anggota), lalu
+   reset dan salin token.
+2. Jalankan executable dan buka halaman **Discord**. Link harus bisa dimulai
    walaupun owner, allowlist, prompt, dan API key LLM belum diisi.
-2. Pilih **QR code**. Di WhatsApp pada telepon test, buka **Perangkat tertaut**,
-   pilih **Tautkan perangkat**, lalu pindai QR yang tampil. Pastikan status
-   berubah menjadi **Terhubung**.
-3. Kirim pesan test ke akun/perangkat tertaut. Sesi-only tidak boleh membalas
-   atau menjalankan Agent.
-4. Tutup aplikasi dengan normal, buka lagi, lalu pilih **Sambungkan sesi
-   tersimpan**. Pairing QR tidak diminta lagi jika sesi WhatsApp masih valid.
-5. Tekan **Hentikan koneksi**, lalu sambungkan lagi. Stop harus mempertahankan
-   kredensial lokal.
-6. Uji **Kode telepon** dengan nomor format internasional dan masukkan kode
-   melalui alur Perangkat tertaut di WhatsApp. Jangan tempelkan nomor/kode ke log
-   atau laporan bug.
-7. Mulai pairing lalu tekan **Batalkan pairing**. Status harus kembali
-   unpaired; QR operasi yang dibatalkan tidak boleh muncul kembali.
-8. Untuk uji **Keluar dari WhatsApp**, gunakan akun khusus dan konfirmasi unlink.
-   Setelah itu status harus meminta pairing ulang. Pair akun kedua dan pastikan
-   aplikasi tetap tidak membalas pesan.
+3. Tempel token dan tekan **Link bot**. Status harus menjadi **Online** dan
+   menampilkan nama serta ID bot. Token yang salah harus gagal dengan pesan
+   yang jelas dan tidak tersimpan.
+4. Buka tautan undangan, tambahkan bot ke server test, lalu kirim pesan. Mode
+   sesi saja tidak boleh membalas atau menjalankan Agent.
+5. Tutup aplikasi dengan normal, buka lagi, lalu pilih **Connect bot**. Token
+   tidak diminta lagi.
+6. Tekan **Go offline**, lalu sambungkan lagi. Stop harus mempertahankan token.
+7. Tekan **Unlink bot** dan konfirmasi. File `discord.token` harus hilang dan
+   status meminta link ulang. Link lagi dengan bot yang sama: riwayat chat lama
+   harus tetap terlihat. Link dengan bot lain: riwayat mulai kosong.
 
 ## Skenario Agent UI dan balasan nyata
 
-1. Pastikan akun test sudah paired dan tampil sebagai sesi tersimpan. Pada
-   **Pengaturan**, isi nama assistant, owner JID, allowlist chat, prompt, LLM
-   endpoint/model, dan API key yang khusus untuk pengujian. Aktifkan mode
-   WhatsApp dan Agent, lalu tekan **Simpan settings**.
+1. Pastikan bot test sudah tertaut. Pada **Pengaturan**, isi nama assistant,
+   owner (user ID Discord Anda), allowlist (ID channel atau server test),
+   prompt, LLM endpoint/model, dan API key yang khusus untuk pengujian. Aktifkan
+   mode Discord dan Agent, lalu tekan **Simpan settings**.
 2. Pada **Overview**, tekan **Jalankan Agent**. Tunggu status Agent berjalan dan
-   WhatsApp berstatus client aktif/terhubung. Halaman WhatsApp harus menyatakan
-   koneksi sedang dimiliki Agent; operasi pairing/logout tidak boleh tersedia.
-3. Dari chat yang masuk allowlist, kirim pesan baru yang meminta jawaban
-   sederhana. Pastikan balasan datang dari akun bot, lalu periksa log lokal bila
+   Discord berstatus online. Halaman Discord harus menyatakan bot sedang dipakai
+   Agent; operasi link/unlink tidak boleh tersedia.
+3. Di channel yang masuk allowlist, mention bot dengan pertanyaan sederhana.
+   Pastikan balasan datang dari bot sebagai reply, lalu periksa log lokal bila
    tidak ada balasan. Jangan mengirim pesan test ke chat yang tidak di-allowlist.
 4. Ubah model atau base prompt di Pengaturan dan tekan **Simpan settings**.
    Overview/settings harus menunjukkan perubahan belum diterapkan. Tekan
@@ -97,17 +94,17 @@ Pairing sesi diuji terpisah di bawah.
 6. Matikan **Start on launch**, tekan **Hentikan Agent**, lalu tutup dan buka
    kembali aplikasi. Runtime harus tetap berhenti sampai tombol Jalankan ditekan.
    Opsional, aktifkan **Start on launch**, simpan, lalu buka ulang aplikasi saat
-   sesi masih paired dan settings valid; Agent boleh start tanpa membuka QR.
+   bot masih tertaut dan settings valid; Agent boleh start otomatis.
 
 Jalur CLI headless dan GUI memakai composition pipeline yang sama, tetapi GUI
 menggunakan settings DB dan leased data root miliknya. Data lama dari folder CLI
 tidak otomatis dipindah atau diimpor; pastikan data-root/identity yang dimaksud
 sudah dipilih sebelum menguji pemakaian conversation database lama.
 
-Layar sesi tidak menyambungkan WhatsApp otomatis saat aplikasi baru dibuka.
-Auto-start Agent hanya mengikuti preferensi **Start on launch** dan tidak memulai
-pairing. Logout mencabut perangkat dari akun WhatsApp dan menghapus kredensial
-lokal melalui library. Jangan gunakan akun utama untuk uji unlink.
+Layar sesi tidak menyambungkan bot otomatis saat aplikasi baru dibuka.
+Auto-start Agent hanya mengikuti preferensi **Start on launch**. Unlink hanya
+menghapus token lokal; untuk membuat token lama tidak berlaku di mana pun,
+reset token di Developer Portal.
 
 ## Skenario data-root dan lock
 
@@ -129,13 +126,13 @@ tutup instance pertama sebelum mencoba lagi.
 go test -count=1 ./...
 go test -tags gui -count=1 ./...
 go vet ./...
-go test -race -count=1 ./internal/config ./internal/control ./internal/adapters/sqlite ./internal/platform ./internal/app ./internal/account ./internal/adapters/whatsapp/hypermeow
+go test -race -count=1 ./internal/config ./internal/control ./internal/adapters/sqlite ./internal/platform ./internal/app ./internal/account ./internal/adapters/discord
 ```
 
 ## Batas saat ini
 
-Langkah otomatis tidak membuktikan hasil pairing atau balasan provider. Uji
-manual di atas memerlukan telepon, akun WhatsApp khusus, dan LLM endpoint yang
-dapat diakses. Backup/restore, pemindahan data-root, dan build APK Android tetap
+Langkah otomatis tidak membuktikan koneksi gateway atau balasan provider. Uji
+manual di atas memerlukan aplikasi bot Discord khusus, server test, dan LLM
+endpoint yang dapat diakses. Backup/restore, pemindahan data-root, dan build APK Android tetap
 memerlukan pekerjaan lanjutan; Android membutuhkan native host dan
 SDK/NDK/JDK/ADB yang sesuai.
