@@ -164,11 +164,12 @@ func (a *TokenAuth) Authenticated(r *http.Request) bool {
 // that remembers the login. retryAfter is set when the caller is blocked.
 func (a *TokenAuth) Login(r *http.Request, token string, secure bool) (cookie *http.Cookie, retryAfter time.Duration, ok bool) {
 	client := clientAddress(r)
-	if wait := a.limiter.blockedFor(client, a.now()); wait > 0 {
+	// The attempt is counted before the token is checked, in the same locked
+	// step as the block check, so parallel requests cannot all slip past the limit.
+	if wait := a.limiter.reserve(client, a.now()); wait > 0 {
 		return nil, wait, false
 	}
 	if !a.tokenMatches(token) {
-		a.limiter.recordFailure(client, a.now())
 		return nil, 0, false
 	}
 	a.limiter.reset(client)
@@ -204,8 +205,8 @@ func clientAddress(r *http.Request) string {
 	return host
 }
 
-// loginLimiter slows down token guessing: after loginMaxFailures wrong tokens
-// from one address, that address is refused until the window passes.
+// loginLimiter slows down token guessing: an address gets loginMaxFailures
+// attempts per window, and a correct login clears its count.
 type loginLimiter struct {
 	mu       sync.Mutex
 	failures map[string]*failureWindow
@@ -216,24 +217,9 @@ type failureWindow struct {
 	start time.Time
 }
 
-func (l *loginLimiter) blockedFor(client string, now time.Time) time.Duration {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	window := l.failures[client]
-	if window == nil {
-		return 0
-	}
-	if now.Sub(window.start) >= loginWindow {
-		delete(l.failures, client)
-		return 0
-	}
-	if window.count >= loginMaxFailures {
-		return window.start.Add(loginWindow).Sub(now)
-	}
-	return 0
-}
-
-func (l *loginLimiter) recordFailure(client string, now time.Time) {
+// reserve counts one attempt for client. It returns how long the client must
+// wait when the limit is already used up, in which case nothing is counted.
+func (l *loginLimiter) reserve(client string, now time.Time) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for address, window := range l.failures {
@@ -246,7 +232,11 @@ func (l *loginLimiter) recordFailure(client string, now time.Time) {
 		window = &failureWindow{start: now}
 		l.failures[client] = window
 	}
+	if window.count >= loginMaxFailures {
+		return window.start.Add(loginWindow).Sub(now)
+	}
 	window.count++
+	return 0
 }
 
 func (l *loginLimiter) reset(client string) {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -243,5 +244,30 @@ func TestConfiguredTokenWhitespaceIsIgnored(t *testing.T) {
 	response := postForTest(handler, "/api/auth/login", `{"token":"correct-horse-battery-staple"}`, "192.168.1.20:8080", "10.0.0.1:1")
 	if response.Code != http.StatusOK {
 		t.Fatalf("login with newline-terminated configured token = %d", response.Code)
+	}
+}
+
+func TestParallelLoginAttemptsCannotBypassLimit(t *testing.T) {
+	handler := authedHandler(t, "correct-horse-battery-staple")
+	const attempts = 60
+	codes := make(chan int, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- postForTest(handler, "/api/auth/login", `{"token":"wrong"}`, "192.168.1.20:8080", "10.0.0.9:1").Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	checked := 0
+	for code := range codes {
+		if code == http.StatusUnauthorized {
+			checked++
+		}
+	}
+	if checked != loginMaxFailures {
+		t.Fatalf("%d tokens were checked from one address, want %d", checked, loginMaxFailures)
 	}
 }
