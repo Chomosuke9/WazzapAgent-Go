@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useApp } from "../hooks/AppProvider";
+import { useAuth } from "../hooks/AuthGate";
 
 export type PageId = "overview" | "whatsapp" | "broadcast" | "chat" | "analytics" | "settings" | "data" | "logs";
 type Theme = "light" | "dark";
@@ -58,6 +59,8 @@ function ThemeIcon({ theme }: { theme: Theme }) {
 
 export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavigate: (page: PageId) => void; children: ReactNode }) {
   const { appInfo } = useApp();
+  const auth = useAuth();
+  const signOut = () => auth.signOut().catch((error: unknown) => window.alert(`Could not sign out: ${error instanceof Error ? error.message : "the server could not be reached."} You are still signed in.`));
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -104,11 +107,12 @@ export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavi
       </div>)}</nav>
       <div className="sidebar-bottom">
         <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}><span className="nav-icon"><ThemeIcon theme={theme} /></span><span className="nav-label">{theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
+        {auth.required && <button type="button" className="theme-toggle" onClick={() => void signOut()} aria-label="Sign out" title="Sign out"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 4H5v16h4" /><path d="M16 8l4 4-4 4M20 12H9" /></svg></span><span className="nav-label">Sign out</span></button>}
         <div className="sidebar-foot"><span className="nav-icon"><NavIcon id="data" /></span><span className="nav-label">{appInfo ? `v${appInfo.version}` : "WazzapAgent"}</span></div>
       </div>
     </aside>
     <main className="main-content"><div className="workspace-bar"><span>Workspace <span className="breadcrumb-divider">/</span> <strong>{navigation.find((item) => item.id === page)?.label}</strong></span><span className="workspace-caption">WazzapAgent</span></div>{children}</main>
-    {mobileMenuOpen && <div className="mobile-more" id="mobile-more-panel"><nav aria-label="More navigation">{secondaryNavigation.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => { onNavigate(item.id); setMobileMenuOpen(false); }}><NavIcon id={item.id} />{item.label}</button>)}<button onClick={toggleTheme}><ThemeIcon theme={theme} />{theme === "dark" ? "Light mode" : "Dark mode"}</button></nav></div>}
+    {mobileMenuOpen && <div className="mobile-more" id="mobile-more-panel"><nav aria-label="More navigation">{secondaryNavigation.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => { onNavigate(item.id); setMobileMenuOpen(false); }}><NavIcon id={item.id} />{item.label}</button>)}<button onClick={toggleTheme}><ThemeIcon theme={theme} />{theme === "dark" ? "Light mode" : "Dark mode"}</button>{auth.required && <button onClick={() => void signOut()}>Sign out</button>}</nav></div>}
     <nav className="mobile-nav" aria-label="Mobile navigation">{mobileNavigation.map((item) => <button key={item.id} type="button" className={page === item.id ? "active" : ""} onClick={() => { onNavigate(item.id); setMobileMenuOpen(false); }} aria-label={item.label} aria-current={page === item.id ? "page" : undefined}><NavIcon id={item.id} /><small>{item.label}</small></button>)}<button id="mobile-more-toggle" type="button" className={secondaryNavigation.some((item) => item.id === page) || mobileMenuOpen ? "active" : ""} onClick={() => setMobileMenuOpen((open) => !open)} aria-expanded={mobileMenuOpen} aria-controls="mobile-more-panel" aria-label="More"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg><small>More</small></button></nav>
   </div>;
 }

@@ -1,0 +1,27 @@
+# Install: sudo install -m 755 wazzapagent-web /usr/local/bin/
+#          sudo useradd --system --create-home --home-dir /var/lib/wazzapagent wazzapagent
+#          sudo cp wazzapagent-web.service /etc/systemd/system/
+#          sudo systemctl enable --now wazzapagent-web
+# First token: sudo -u wazzapagent env HOME=/var/lib/wazzapagent wazzapagent-web token
+[Unit]
+Description=WazzapAgent web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=wazzapagent
+Environment=HOME=/var/lib/wazzapagent
+Environment=WAZZAP_WEB_ADDR=0.0.0.0:8080
+# Behind a TLS reverse proxy, also set:
+# Environment=WAZZAP_WEB_PUBLIC_ORIGIN=https://agent.example.com
+ExecStart=/usr/local/bin/wazzapagent-web
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/wazzapagent
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

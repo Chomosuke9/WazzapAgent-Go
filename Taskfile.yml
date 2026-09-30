@@ -42,6 +42,14 @@ tasks:
         dir: frontend
       - go build -tags web -o {{.BIN_DIR}}/WazzapAgent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/server
 
+  webhost:build:
+    summary: Build the token-protected web host (wazzapagent-web) for Linux servers
+    cmds:
+      - task: common:install:frontend:deps
+      - cmd: '{{.NPM}} run build:web'
+        dir: frontend
+      - go build -tags web -trimpath -ldflags '-s -w' -o {{.BIN_DIR}}/wazzapagent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/webhost
+
   web:run:
     summary: Run the browser server on a loopback address
     cmds:

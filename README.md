@@ -19,7 +19,7 @@ WazzapAgent Go is a complete rewrite of WazzapAgent: a self-hosted WhatsApp assi
 - **Windows desktop** — downloadable x64 application.
 - **Linux desktop** — downloadable x64 application; GTK4 and WebKitGTK are required.
 - **Android** — arm64 APK. The app stores its data in Android private storage. Android may stop the app process when its activity is closed, so continuous background operation is not guaranteed.
-- **Browser** — run the local server and open the same interface in a browser. See the [browser guide](cmd/server/README.md).
+- **Browser** — run the local server and open the same interface in a browser. See the [browser guide](cmd/server/README.md). To host it on a server such as Debian behind an access token, use the [web host](cmd/webhost/README.md).
 
 ## Requirements
 
