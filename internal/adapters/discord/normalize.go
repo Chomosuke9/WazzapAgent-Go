@@ -73,7 +73,6 @@ func (adapter *Adapter) candidateFromMessage(ctx context.Context, message *disco
 			owner := guild != nil && guild.OwnerID == message.Author.ID
 			candidate.SenderIsAdmin, candidate.SenderIsSuperAdmin = roleFlags(permissions, owner)
 		}
-		adapter.rememberChannelName(ctx, channel)
 	}
 
 	if reference := message.MessageReference; reference != nil && reference.Type == discordgo.MessageReferenceTypeDefault &&

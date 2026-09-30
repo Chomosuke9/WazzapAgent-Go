@@ -348,6 +348,13 @@ func (adapter *Adapter) worker() {
 		case candidate := <-adapter.queue:
 			if err := adapter.handler.Handle(adapter.rootCtx, candidate); err != nil {
 				adapter.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
+				continue
+			}
+			// The chat row exists now, so its name can be stored.
+			if candidate.ChatKind == conversation.ChatGroup {
+				if channel, err := adapter.client.State.Channel(candidate.ProviderChatAddress); err == nil {
+					adapter.rememberChannelName(adapter.rootCtx, channel)
+				}
 			}
 		}
 	}

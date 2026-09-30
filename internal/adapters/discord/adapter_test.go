@@ -316,3 +316,57 @@ func TestChatContextAndAuthorityComeFromServerPermissions(t *testing.T) {
 		t.Fatalf("direct chat context = %#v, %v", chat, err)
 	}
 }
+
+type recordingNames struct {
+	mu    sync.Mutex
+	saved map[string]string
+	done  chan struct{}
+}
+
+func (names *recordingNames) SaveGroupName(_ context.Context, _ identity.TenantID, _ identity.AccountID, address, name string) error {
+	names.mu.Lock()
+	defer names.mu.Unlock()
+	names.saved[address] = name
+	select {
+	case names.done <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+type handledCandidates struct {
+	handled chan conversation.IncomingCandidate
+}
+
+func (handler handledCandidates) Handle(_ context.Context, candidate conversation.IncomingCandidate) error {
+	handler.handled <- candidate
+	return nil
+}
+
+func TestWorkerStoresTheChannelNameOnceTheChatIsStored(t *testing.T) {
+	adapter, _ := newTestAdapter(t, []string{"*"}, &fakeTargets{chatAddress: "600"}, &fakeSent{})
+	names := &recordingNames{saved: map[string]string{}, done: make(chan struct{}, 1)}
+	adapter.channelNames = names
+	handler := handledCandidates{handled: make(chan conversation.IncomingCandidate, 1)}
+	adapter.handler = handler
+	adapter.wait.Add(1)
+	go adapter.worker()
+	t.Cleanup(func() { adapter.cancel(); adapter.wait.Wait() })
+
+	adapter.queue <- conversation.IncomingCandidate{ProviderChatAddress: "600", ChatKind: conversation.ChatGroup}
+	select {
+	case <-handler.handled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the candidate was not handled")
+	}
+	select {
+	case <-names.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the channel name was not stored")
+	}
+	names.mu.Lock()
+	defer names.mu.Unlock()
+	if names.saved["600"] != "#general · Test Server" {
+		t.Fatalf("saved names = %v", names.saved)
+	}
+}

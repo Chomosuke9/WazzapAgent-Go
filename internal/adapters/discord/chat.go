@@ -209,7 +209,8 @@ func memberName(user *discordgo.User, member *discordgo.Member) string {
 }
 
 // rememberChannelName saves a server channel's name once per change, so the
-// app lists chats by name.
+// app lists chats by name. Call it only once the chat is stored: a name saved
+// for an unknown chat is dropped, and the cache would then skip it.
 func (adapter *Adapter) rememberChannelName(ctx context.Context, channel *discordgo.Channel) {
 	if adapter.channelNames == nil || channel == nil || channel.GuildID == "" || isDirect(channel) {
 		return
@@ -230,14 +231,32 @@ func (adapter *Adapter) rememberChannelName(ctx context.Context, channel *discor
 	adapter.namesMu.Unlock()
 }
 
+// refreshChannelName stores a channel's current name for a chat that may or
+// may not be stored yet. It does not fill the cache, so the chat's next
+// message stores the name again once the chat exists.
+func (adapter *Adapter) refreshChannelName(ctx context.Context, channel *discordgo.Channel) {
+	if adapter.channelNames == nil || channel == nil || channel.GuildID == "" || isDirect(channel) {
+		return
+	}
+	adapter.namesMu.Lock()
+	delete(adapter.savedNames, channel.ID)
+	adapter.namesMu.Unlock()
+	if err := adapter.channelNames.SaveGroupName(ctx, adapter.tenantID, adapter.accountID, channel.ID, adapter.channelTitle(ctx, channel)); err != nil {
+		adapter.logger.Debug("Discord channel name could not be stored", "code", agent.CodeOf(err))
+	}
+}
+
+// onGuildCreate refreshes the names of the server's known channels, which
+// may have changed while the bot was offline.
 func (adapter *Adapter) onGuildCreate(_ *discordgo.Session, event *discordgo.GuildCreate) {
 	if event == nil || event.Guild == nil || adapter.rootCtx == nil {
 		return
 	}
 	for _, channel := range event.Guild.Channels {
 		if channel != nil {
-			channel.GuildID = event.Guild.ID
-			adapter.rememberChannelName(adapter.rootCtx, channel)
+			copied := *channel
+			copied.GuildID = event.Guild.ID
+			adapter.refreshChannelName(adapter.rootCtx, &copied)
 		}
 	}
 }
@@ -246,5 +265,5 @@ func (adapter *Adapter) onChannelUpdate(_ *discordgo.Session, event *discordgo.C
 	if event == nil || event.Channel == nil || adapter.rootCtx == nil {
 		return
 	}
-	adapter.rememberChannelName(adapter.rootCtx, event.Channel)
+	adapter.refreshChannelName(adapter.rootCtx, event.Channel)
 }
