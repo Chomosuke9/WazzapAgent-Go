@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 )
 
 func TestChatConfigCommandsAllowOwnerGroupAdminsAndTheBot(t *testing.T) {

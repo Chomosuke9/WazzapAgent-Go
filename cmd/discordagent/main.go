@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/app"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/backup"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/app"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/backup"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
 )
 
 func main() {
@@ -78,7 +78,7 @@ func runOfflineCommand(arguments []string) int {
 	switch arguments[0] {
 	case "backup":
 		if len(arguments) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: wazzapagent backup <destination-parent>")
+			fmt.Fprintln(os.Stderr, "usage: discordagent backup <destination-parent>")
 			return 2
 		}
 		dataDir, err := config.LoadDataDirRuntime(os.LookupEnv)
@@ -101,7 +101,7 @@ func runOfflineCommand(arguments []string) int {
 		return 0
 	case "verify-backup":
 		if len(arguments) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: wazzapagent verify-backup <backup-directory>")
+			fmt.Fprintln(os.Stderr, "usage: discordagent verify-backup <backup-directory>")
 			return 2
 		}
 		manifest, err := backup.Verify(ctx, arguments[1])
@@ -113,7 +113,7 @@ func runOfflineCommand(arguments []string) int {
 		return 0
 	case "restore-backup":
 		if len(arguments) != 3 {
-			fmt.Fprintln(os.Stderr, "usage: wazzapagent restore-backup <backup-directory> <new-data-directory>")
+			fmt.Fprintln(os.Stderr, "usage: discordagent restore-backup <backup-directory> <new-data-directory>")
 			return 2
 		}
 		dataDir, err := config.LoadDataDirRuntime(os.LookupEnv)

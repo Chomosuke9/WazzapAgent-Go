@@ -20,13 +20,13 @@ import (
 	waLog "github.com/polymorfa/hypermeow/util/log"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 )
 
 func TestNormalizeTextMessageAndTrustedPolicyFlags(t *testing.T) {
@@ -513,7 +513,7 @@ func TestTextMessageRendersBotMentionLikeLIDMention(t *testing.T) {
 		t.Fatal(err)
 	}
 	message, err := adapter.textMessage(context.Background(), action.SendTextRequest{
-		Text: "Halo @Wazzap (Bot)",
+		Text: "Halo @DiscordAgent (Bot)",
 	}, chat, target)
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
 )
 
 // RawQuotedMessage is command-only provider data used by /catch. It must not

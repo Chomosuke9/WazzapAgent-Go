@@ -12,14 +12,14 @@ import (
 	"sync"
 	"time"
 
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
-	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	coreapp "github.com/Chomosuke9/WazzapAgent-Go/internal/app"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
+	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
+	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	coreapp "github.com/Chomosuke9/DiscordAgent-Go/internal/app"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/ui"
 )
 
 const shutdownTimeout = 20 * time.Second

@@ -11,7 +11,7 @@ Dari PowerShell pada root repository:
 
 ```powershell
 $ErrorActionPreference = "Stop"
-$repo = "C:\Users\bagus\Project\WazzapAgent-Go"
+$repo = "C:\Users\bagus\Project\DiscordAgent-Go"
 $node = "C:\Users\bagus\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 $pnpm = "C:\Users\bagus\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules\pnpm\bin\pnpm.cjs"
 
@@ -23,7 +23,7 @@ Pop-Location
 
 wails3 generate bindings -f "-tags gui" -clean=true -ts -i ./cmd/app
 go test -tags gui ./...
-go build -tags gui,production -trimpath -ldflags="-s -w -H windowsgui" -o bin/WazzapAgent.exe ./cmd/app
+go build -tags gui,production -trimpath -ldflags="-s -w -H windowsgui" -o bin/DiscordAgent.exe ./cmd/app
 ```
 
 Jika Node dan npm sudah tersedia di `PATH`, tiga perintah frontend dapat
@@ -34,7 +34,7 @@ memenuhi precondition npm.
 Jalankan executable:
 
 ```powershell
-.\bin\WazzapAgent-P4-test.exe
+.\bin\DiscordAgent-P4-test.exe
 ```
 
 ## Skenario persistence
@@ -114,13 +114,13 @@ lokal melalui library. Jangan gunakan akun utama untuk uji unlink.
 Setelah aplikasi pernah dibuka, periksa pointer dan database:
 
 ```powershell
-Get-Content "$env:LOCALAPPDATA\WazzapAgent\bootstrap.json"
-Get-ChildItem "$env:LOCALAPPDATA\WazzapAgent"
+Get-Content "$env:LOCALAPPDATA\DiscordAgent\bootstrap.json"
+Get-ChildItem "$env:LOCALAPPDATA\DiscordAgent"
 ```
 
-Default desktop memakai `%LOCALAPPDATA%\WazzapAgent`; pointer bootstrap dapat
+Default desktop memakai `%LOCALAPPDATA%\DiscordAgent`; pointer bootstrap dapat
 menunjuk root lain pada instalasi yang sudah dipindahkan. Jalankan executable
-dua kali bersamaan. Instance kedua harus gagal memperoleh `.wazzapagent.lock`;
+dua kali bersamaan. Instance kedua harus gagal memperoleh `.discordagent.lock`;
 tutup instance pertama sebelum mencoba lagi.
 
 ## Pemeriksaan otomatis

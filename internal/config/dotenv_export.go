@@ -61,7 +61,7 @@ func ExportDotEnv(values map[string]string, options DotEnvExportOptions) ([]byte
 // omitted from exports unless explicitly requested.
 func IsDotEnvSecretKey(key string) bool {
 	switch key {
-	case "LANGSMITH_API_KEY", "TYPESAFE_API_KEY", "WAZZAP_LLM_API_KEY", "WAZZAP_LLM_FALLBACK_API_KEY":
+	case "LANGSMITH_API_KEY", "TYPESAFE_API_KEY", "DISCORDAGENT_LLM_API_KEY", "DISCORDAGENT_LLM_FALLBACK_API_KEY":
 		return true
 	default:
 		return false
@@ -72,7 +72,7 @@ func IsDotEnvSecretKey(key string) bool {
 // than an editable runtime setting.
 func IsDotEnvReadOnlyKey(key string) bool {
 	switch key {
-	case "WAZZAP_TENANT_ID", "WAZZAP_ACCOUNT_ID":
+	case "DISCORDAGENT_TENANT_ID", "DISCORDAGENT_ACCOUNT_ID":
 		return true
 	default:
 		return false

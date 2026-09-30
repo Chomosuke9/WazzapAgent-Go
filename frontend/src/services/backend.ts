@@ -1,6 +1,6 @@
-import { AppService } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui";
-import type { AgentRuntimeStatusDTO, AppInfo, WhatsAppSessionOperationDTO, WhatsAppSessionStatusDTO } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
-export type * from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
+import { AppService } from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui";
+import type { AgentRuntimeStatusDTO, AppInfo, WhatsAppSessionOperationDTO, WhatsAppSessionStatusDTO } from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui/models";
+export type * from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui/models";
 
 // Every backend operation is a method on the Go ui.AppService. The desktop app
 // calls it through the generated Wails binding; the browser build posts the
@@ -13,7 +13,7 @@ const webMode = import.meta.env.MODE === "web";
 
 // Fired when the server no longer accepts the browser's login (for example
 // after the access token was rotated), so the sign-in screen can come back.
-export const unauthorizedEvent = "wazzapagent:unauthorized";
+export const unauthorizedEvent = "discordagent:unauthorized";
 
 async function webPost<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {

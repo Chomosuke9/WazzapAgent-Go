@@ -1,0 +1,27 @@
+# Install: sudo install -m 755 discordagent-web /usr/local/bin/
+#          sudo useradd --system --create-home --home-dir /var/lib/discordagent discordagent
+#          sudo cp discordagent-web.service /etc/systemd/system/
+#          sudo systemctl enable --now discordagent-web
+# First token: sudo -u discordagent env HOME=/var/lib/discordagent discordagent-web token
+[Unit]
+Description=DiscordAgent web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=discordagent
+Environment=HOME=/var/lib/discordagent
+Environment=DISCORDAGENT_WEB_ADDR=0.0.0.0:8080
+# Behind a TLS reverse proxy, also set:
+# Environment=DISCORDAGENT_WEB_PUBLIC_ORIGIN=https://agent.example.com
+ExecStart=/usr/local/bin/discordagent-web
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/discordagent
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

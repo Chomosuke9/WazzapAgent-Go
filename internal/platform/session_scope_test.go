@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestSessionScopeResolverPersistsInitialIdentityAndHonorsSessionScope(t *testing.T) {

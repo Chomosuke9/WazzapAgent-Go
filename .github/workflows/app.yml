@@ -37,11 +37,11 @@ jobs:
         working-directory: frontend
         run: npm run build
       - name: Build Windows application
-        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w -H windowsgui' -o bin/WazzapAgent.exe ./cmd/app
+        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w -H windowsgui' -o bin/DiscordAgent.exe ./cmd/app
       - uses: actions/upload-artifact@v4
         with:
-          name: WazzapAgent-windows-amd64
-          path: bin/WazzapAgent.exe
+          name: DiscordAgent-windows-amd64
+          path: bin/DiscordAgent.exe
           if-no-files-found: error
 
   linux-build:
@@ -62,11 +62,11 @@ jobs:
         working-directory: frontend
         run: npm run build
       - name: Build Linux application
-        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w' -o bin/WazzapAgent ./cmd/app
+        run: go build -tags gui,production -trimpath -buildvcs=false -ldflags='-s -w' -o bin/DiscordAgent ./cmd/app
       - uses: actions/upload-artifact@v4
         with:
-          name: WazzapAgent-linux-amd64
-          path: bin/WazzapAgent
+          name: DiscordAgent-linux-amd64
+          path: bin/DiscordAgent
           if-no-files-found: error
 
   android-build:
@@ -100,7 +100,7 @@ jobs:
             | grep -E ' [Tt] main\.init(\.[0-9]+)?$'
       - uses: actions/upload-artifact@v4
         with:
-          name: WazzapAgent-android-arm64-debug
+          name: DiscordAgent-android-arm64-debug
           path: build/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -132,11 +132,11 @@ jobs:
           CGO_ENABLED: '0'
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-        run: go build -tags web -trimpath -buildvcs=false -ldflags='-s -w' -o bin/wazzapagent-web ./cmd/webhost
+        run: go build -tags web -trimpath -buildvcs=false -ldflags='-s -w' -o bin/discordagent-web ./cmd/webhost
       - uses: actions/upload-artifact@v4
         with:
-          name: wazzapagent-web-linux-${{ matrix.goarch }}
-          path: bin/wazzapagent-web
+          name: discordagent-web-linux-${{ matrix.goarch }}
+          path: bin/discordagent-web
           if-no-files-found: error
 
   release-draft:
@@ -154,43 +154,43 @@ jobs:
       - name: Download Windows application
         uses: actions/download-artifact@v4
         with:
-          name: WazzapAgent-windows-amd64
+          name: DiscordAgent-windows-amd64
           path: release-input/windows
       - name: Download Linux application
         uses: actions/download-artifact@v4
         with:
-          name: WazzapAgent-linux-amd64
+          name: DiscordAgent-linux-amd64
           path: release-input/linux
       - name: Download Android APK
         uses: actions/download-artifact@v4
         with:
-          name: WazzapAgent-android-arm64-debug
+          name: DiscordAgent-android-arm64-debug
           path: release-input/android
       - name: Download web host (amd64)
         uses: actions/download-artifact@v4
         with:
-          name: wazzapagent-web-linux-amd64
+          name: discordagent-web-linux-amd64
           path: release-input/webhost-amd64
       - name: Download web host (arm64)
         uses: actions/download-artifact@v4
         with:
-          name: wazzapagent-web-linux-arm64
+          name: discordagent-web-linux-arm64
           path: release-input/webhost-arm64
       - name: Prepare release assets
         shell: bash
         run: |
           mkdir -p release-assets
-          cp release-input/windows/WazzapAgent.exe release-assets/WazzapAgent-windows-amd64.exe
-          chmod +x release-input/linux/WazzapAgent
-          tar -C release-input/linux -czf release-assets/WazzapAgent-linux-amd64.tar.gz WazzapAgent
-          cp release-input/android/app-debug.apk release-assets/WazzapAgent-android-arm64-debug.apk
+          cp release-input/windows/DiscordAgent.exe release-assets/DiscordAgent-windows-amd64.exe
+          chmod +x release-input/linux/DiscordAgent
+          tar -C release-input/linux -czf release-assets/DiscordAgent-linux-amd64.tar.gz DiscordAgent
+          cp release-input/android/app-debug.apk release-assets/DiscordAgent-android-arm64-debug.apk
           for arch in amd64 arm64; do
-            chmod +x release-input/webhost-$arch/wazzapagent-web
-            tar -C release-input/webhost-$arch -czf release-assets/WazzapAgent-web-linux-$arch.tar.gz wazzapagent-web
+            chmod +x release-input/webhost-$arch/discordagent-web
+            tar -C release-input/webhost-$arch -czf release-assets/DiscordAgent-web-linux-$arch.tar.gz discordagent-web
           done
           (
             cd release-assets
-            sha256sum WazzapAgent-* | sort -k 2 > SHA256SUMS
+            sha256sum DiscordAgent-* | sort -k 2 > SHA256SUMS
           )
       - name: Create or refresh draft release
         env:

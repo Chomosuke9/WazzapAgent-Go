@@ -55,7 +55,7 @@ package commands
 import (
 	"context"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 )
 
 func init() {

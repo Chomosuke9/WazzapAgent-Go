@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestDeliveryForTurnStatePreservesTerminalReplayStatus(t *testing.T) {

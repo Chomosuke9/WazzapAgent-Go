@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/inbound"
 )
 
 // SaveScheduledTask stores task and reports whether it is new. A second task

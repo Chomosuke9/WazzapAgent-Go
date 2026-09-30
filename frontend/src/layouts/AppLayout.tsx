@@ -26,14 +26,14 @@ const secondaryNavigation = navigation.filter((item) => !mobileNavigation.includ
 
 function readTheme(): Theme {
   try {
-    const saved = window.localStorage.getItem("wazzapagent.theme");
+    const saved = window.localStorage.getItem("discordagent.theme");
     if (saved === "light" || saved === "dark") return saved;
   } catch { /* App remains usable when storage is unavailable. */ }
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function readCollapsed(): boolean {
-  try { return window.localStorage.getItem("wazzapagent.sidebar.collapsed") === "true"; }
+  try { return window.localStorage.getItem("discordagent.sidebar.collapsed") === "true"; }
   catch { return false; }
 }
 
@@ -80,13 +80,13 @@ export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavi
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
-    try { window.localStorage.setItem("wazzapagent.theme", theme); } catch { /* Theme still works for this session. */ }
+    try { window.localStorage.setItem("discordagent.theme", theme); } catch { /* Theme still works for this session. */ }
   }, [theme]);
 
   function toggleSidebar() {
     setCollapsed((current) => {
       const next = !current;
-      try { window.localStorage.setItem("wazzapagent.sidebar.collapsed", String(next)); } catch { /* Keep in-session state. */ }
+      try { window.localStorage.setItem("discordagent.sidebar.collapsed", String(next)); } catch { /* Keep in-session state. */ }
       return next;
     });
   }
@@ -96,7 +96,7 @@ export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavi
   return <div className={`app-shell${page === "chat" ? " chat-mode" : ""}${collapsed ? " sidebar-collapsed" : ""}`}>
     <aside className="sidebar" aria-label="Application sidebar">
       <div className="sidebar-top">
-        <div className="brand"><span className="brand-mark"><NavIcon id="whatsapp" /></span><div className="brand-copy"><strong>WazzapAgent</strong><small>Your messaging workspace</small></div></div>
+        <div className="brand"><span className="brand-mark"><NavIcon id="whatsapp" /></span><div className="brand-copy"><strong>DiscordAgent</strong><small>Your messaging workspace</small></div></div>
         <button type="button" className="sidebar-toggle" onClick={toggleSidebar} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={collapsed ? "M9 5l7 7-7 7" : "M15 5l-7 7 7 7"} /></svg>
         </button>
@@ -108,10 +108,10 @@ export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavi
       <div className="sidebar-bottom">
         <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}><span className="nav-icon"><ThemeIcon theme={theme} /></span><span className="nav-label">{theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
         {auth.required && <button type="button" className="theme-toggle" onClick={() => void signOut()} aria-label="Sign out" title="Sign out"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 4H5v16h4" /><path d="M16 8l4 4-4 4M20 12H9" /></svg></span><span className="nav-label">Sign out</span></button>}
-        <div className="sidebar-foot"><span className="nav-icon"><NavIcon id="data" /></span><span className="nav-label">{appInfo ? `v${appInfo.version}` : "WazzapAgent"}</span></div>
+        <div className="sidebar-foot"><span className="nav-icon"><NavIcon id="data" /></span><span className="nav-label">{appInfo ? `v${appInfo.version}` : "DiscordAgent"}</span></div>
       </div>
     </aside>
-    <main className="main-content"><div className="workspace-bar"><span>Workspace <span className="breadcrumb-divider">/</span> <strong>{navigation.find((item) => item.id === page)?.label}</strong></span><span className="workspace-caption">WazzapAgent</span></div>{children}</main>
+    <main className="main-content"><div className="workspace-bar"><span>Workspace <span className="breadcrumb-divider">/</span> <strong>{navigation.find((item) => item.id === page)?.label}</strong></span><span className="workspace-caption">DiscordAgent</span></div>{children}</main>
     {mobileMenuOpen && <div className="mobile-more" id="mobile-more-panel"><nav aria-label="More navigation">{secondaryNavigation.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => { onNavigate(item.id); setMobileMenuOpen(false); }}><NavIcon id={item.id} />{item.label}</button>)}<button onClick={toggleTheme}><ThemeIcon theme={theme} />{theme === "dark" ? "Light mode" : "Dark mode"}</button>{auth.required && <button onClick={() => void signOut()}>Sign out</button>}</nav></div>}
     <nav className="mobile-nav" aria-label="Mobile navigation">{mobileNavigation.map((item) => <button key={item.id} type="button" className={page === item.id ? "active" : ""} onClick={() => { onNavigate(item.id); setMobileMenuOpen(false); }} aria-label={item.label} aria-current={page === item.id ? "page" : undefined}><NavIcon id={item.id} /><small>{item.label}</small></button>)}<button id="mobile-more-toggle" type="button" className={secondaryNavigation.some((item) => item.id === page) || mobileMenuOpen ? "active" : ""} onClick={() => setMobileMenuOpen((open) => !open)} aria-expanded={mobileMenuOpen} aria-controls="mobile-more-panel" aria-label="More"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg><small>More</small></button></nav>
   </div>;

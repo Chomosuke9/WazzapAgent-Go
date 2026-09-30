@@ -3,8 +3,8 @@ package inbound
 import (
 	"fmt"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	builtincommands "github.com/Chomosuke9/WazzapAgent-Go/internal/inbound/commands"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
+	builtincommands "github.com/Chomosuke9/DiscordAgent-Go/internal/inbound/commands"
 )
 
 // builtinCommandRegistry holds every command file in internal/inbound/commands.

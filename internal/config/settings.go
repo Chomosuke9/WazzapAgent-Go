@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 type ChatDefaults struct {
@@ -225,14 +225,14 @@ func ValidateSession(settings Settings, context ...SessionContext) error {
 	settings = settings.withDefaults()
 	issues := draftIssues(settings)
 	if strings.TrimSpace(settings.DataDir) == "" {
-		issues = append(issues, ReadinessIssue{Field: "WAZZAP_DATA_DIR", Code: "required", Message: "data directory is required"})
+		issues = append(issues, ReadinessIssue{Field: "DISCORDAGENT_DATA_DIR", Code: "required", Message: "data directory is required"})
 	} else if _, err := resolveDataDir(settings.DataDir); err != nil {
-		issues = append(issues, ReadinessIssue{Field: "WAZZAP_DATA_DIR", Code: "invalid", Message: "data directory is invalid"})
+		issues = append(issues, ReadinessIssue{Field: "DISCORDAGENT_DATA_DIR", Code: "invalid", Message: "data directory is invalid"})
 	}
 	if len(context) > 0 {
 		state := context[0]
 		if strings.TrimSpace(state.DataDir) == "" && strings.TrimSpace(settings.DataDir) == "" {
-			issues = append(issues, ReadinessIssue{Field: "WAZZAP_DATA_DIR", Code: "required", Message: "data directory is required"})
+			issues = append(issues, ReadinessIssue{Field: "DISCORDAGENT_DATA_DIR", Code: "required", Message: "data directory is required"})
 		}
 		if state.IdentityReady && (state.TenantID.IsZero() || state.AccountID.IsZero()) {
 			issues = append(issues, ReadinessIssue{Field: "identity", Code: "invalid", Message: "runtime identity is incomplete"})
@@ -299,15 +299,15 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 	}
 	dataDir, err := resolveDataDir(settings.DataDir)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_DATA_DIR: %w", err)
+		return Snapshot{}, fmt.Errorf("DISCORDAGENT_DATA_DIR: %w", err)
 	}
 	providerID, err := identity.ParseProviderID(nonempty(settings.LLMProviderID, defaultProviderID))
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_LLM_PROVIDER_ID: %w", err)
+		return Snapshot{}, fmt.Errorf("DISCORDAGENT_LLM_PROVIDER_ID: %w", err)
 	}
 	policyID, err := identity.ParsePolicyID(nonempty(settings.PolicyID, defaultPolicyID))
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("WAZZAP_POLICY_ID: %w", err)
+		return Snapshot{}, fmt.Errorf("DISCORDAGENT_POLICY_ID: %w", err)
 	}
 	return Snapshot{
 		dataDir: dataDir, httpAddress: nonempty(settings.HTTPAddress, defaultHTTPAddress),
@@ -392,22 +392,22 @@ type FieldDescriptor struct {
 // SettingsSchema returns a fresh field catalog on every call.
 func SettingsSchema() []FieldDescriptor {
 	return []FieldDescriptor{
-		{Key: "ASSISTANT_NAME", Group: "assistant", Kind: FieldString}, {Key: "WAZZAP_BASE_PROMPT", Group: "assistant", Kind: FieldString},
-		{Key: "WAZZAP_WHATSAPP_ENABLED", Group: "activation", Kind: FieldBool, Default: "true"}, {Key: "WAZZAP_AGENT_ENABLED", Group: "activation", Kind: FieldBool, Default: "true"},
-		{Key: "WAZZAP_OWNER_JID", Group: "access", Kind: FieldString}, {Key: "WAZZAP_CHAT_ALLOWLIST", Group: "access", Kind: FieldString},
-		{Key: "WAZZAP_LLM_ENDPOINT", Group: "provider", Kind: FieldString}, {Key: "WAZZAP_LLM_API_KEY", Group: "provider", Kind: FieldSecret, Sensitive: true}, {Key: "WAZZAP_LLM_MODEL", Group: "provider", Kind: FieldString}, {Key: "WAZZAP_LLM_PROVIDER_ID", Group: "provider", Kind: FieldString, Default: defaultProviderID},
-		{Key: "WAZZAP_LLM_FALLBACK_ENDPOINT", Group: "fallback", Kind: FieldString}, {Key: "WAZZAP_LLM_FALLBACK_API_KEY", Group: "fallback", Kind: FieldSecret, Sensitive: true},
-		{Key: "WAZZAP_LLM_TIMEOUT", Group: "limits", Kind: FieldDuration, Default: defaultLLMTimeout.String()}, {Key: "WAZZAP_LLM_CONCURRENCY", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultLLMConcurrency)}, {Key: "WAZZAP_MAX_OUTPUT_TOKENS", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxOutputTokens)}, {Key: "WAZZAP_MAX_RESPONSE_BYTES", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxResponseBytes)},
-		{Key: "WAZZAP_HISTORY_WINDOW", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryWindow)}, {Key: "WAZZAP_MAX_CONTEXT_BYTES", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultMaxContextBytes)}, {Key: "WAZZAP_HISTORY_KEEP_LATEST", Group: "retention", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryKeepLatest)}, {Key: "WAZZAP_HISTORY_MAX_AGE", Group: "retention", Kind: FieldDuration, Default: defaultHistoryMaxAge.String()},
-		{Key: "WAZZAP_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "WAZZAP_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)},
-		{Key: "WAZZAP_MESSAGE_DEBOUNCE", Group: "batching", Kind: FieldDuration, Default: defaultMessageDebounce.String()}, {Key: "WAZZAP_MESSAGE_BURST_CAP", Group: "batching", Kind: FieldUint, Default: fmt.Sprint(defaultMessageBurstCap)},
-		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
-		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
-		{Key: "WAZZAP_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "WAZZAP_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
+		{Key: "ASSISTANT_NAME", Group: "assistant", Kind: FieldString}, {Key: "DISCORDAGENT_BASE_PROMPT", Group: "assistant", Kind: FieldString},
+		{Key: "DISCORDAGENT_DISCORD_ENABLED", Group: "activation", Kind: FieldBool, Default: "true"}, {Key: "DISCORDAGENT_AGENT_ENABLED", Group: "activation", Kind: FieldBool, Default: "true"},
+		{Key: "DISCORDAGENT_OWNER_ID", Group: "access", Kind: FieldString}, {Key: "DISCORDAGENT_CHAT_ALLOWLIST", Group: "access", Kind: FieldString},
+		{Key: "DISCORDAGENT_LLM_ENDPOINT", Group: "provider", Kind: FieldString}, {Key: "DISCORDAGENT_LLM_API_KEY", Group: "provider", Kind: FieldSecret, Sensitive: true}, {Key: "DISCORDAGENT_LLM_MODEL", Group: "provider", Kind: FieldString}, {Key: "DISCORDAGENT_LLM_PROVIDER_ID", Group: "provider", Kind: FieldString, Default: defaultProviderID},
+		{Key: "DISCORDAGENT_LLM_FALLBACK_ENDPOINT", Group: "fallback", Kind: FieldString}, {Key: "DISCORDAGENT_LLM_FALLBACK_API_KEY", Group: "fallback", Kind: FieldSecret, Sensitive: true},
+		{Key: "DISCORDAGENT_LLM_TIMEOUT", Group: "limits", Kind: FieldDuration, Default: defaultLLMTimeout.String()}, {Key: "DISCORDAGENT_LLM_CONCURRENCY", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultLLMConcurrency)}, {Key: "DISCORDAGENT_MAX_OUTPUT_TOKENS", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxOutputTokens)}, {Key: "DISCORDAGENT_MAX_RESPONSE_BYTES", Group: "limits", Kind: FieldUint, Default: fmt.Sprint(defaultMaxResponseBytes)},
+		{Key: "DISCORDAGENT_HISTORY_WINDOW", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryWindow)}, {Key: "DISCORDAGENT_MAX_CONTEXT_BYTES", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultMaxContextBytes)}, {Key: "DISCORDAGENT_HISTORY_KEEP_LATEST", Group: "retention", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryKeepLatest)}, {Key: "DISCORDAGENT_HISTORY_MAX_AGE", Group: "retention", Kind: FieldDuration, Default: defaultHistoryMaxAge.String()},
+		{Key: "DISCORDAGENT_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "DISCORDAGENT_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)},
+		{Key: "DISCORDAGENT_MESSAGE_DEBOUNCE", Group: "batching", Kind: FieldDuration, Default: defaultMessageDebounce.String()}, {Key: "DISCORDAGENT_MESSAGE_BURST_CAP", Group: "batching", Kind: FieldUint, Default: fmt.Sprint(defaultMessageBurstCap)},
+		{Key: "DISCORDAGENT_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "DISCORDAGENT_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "DISCORDAGENT_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
+		{Key: "DISCORDAGENT_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "DISCORDAGENT_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
+		{Key: "DISCORDAGENT_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "DISCORDAGENT_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
 		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true}, {Key: "TYPESAFE_ENDPOINT", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeEndpoint},
 		{Key: "TYPESAFE_MODEL", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeModel},
-		{Key: "WAZZAP_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "WAZZAP_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "WAZZAP_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "WAZZAP_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
-		{Key: "WAZZAP_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "WAZZAP_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
+		{Key: "DISCORDAGENT_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "DISCORDAGENT_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "DISCORDAGENT_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "DISCORDAGENT_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
+		{Key: "DISCORDAGENT_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "DISCORDAGENT_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
 		{Key: "startOnLaunch", Group: "application", Kind: FieldBool, Default: "false"},
 	}
 }
@@ -510,39 +510,39 @@ func draftIssues(settings Settings) []ReadinessIssue {
 		issues = append(issues, ReadinessIssue{Field: field, Code: code, Message: message})
 	}
 	if settings.WhatsAppEnabled == false && settings.AgentEnabled {
-		add("WAZZAP_AGENT_ENABLED", "incompatible", "Agent requires WhatsApp to be enabled")
+		add("DISCORDAGENT_AGENT_ENABLED", "incompatible", "Agent requires WhatsApp to be enabled")
 	}
 	if settings.DataDir != "" {
 		if _, err := resolveDataDir(settings.DataDir); err != nil {
-			add("WAZZAP_DATA_DIR", "invalid", "data directory is invalid")
+			add("DISCORDAGENT_DATA_DIR", "invalid", "data directory is invalid")
 		}
 	}
 	if settings.HTTPAddress != "" {
 		if err := validateHTTPAddress(settings.HTTPAddress); err != nil {
-			add("WAZZAP_HTTP_ADDRESS", "invalid", "HTTP address is invalid")
+			add("DISCORDAGENT_HTTP_ADDRESS", "invalid", "HTTP address is invalid")
 		}
 	}
 	if settings.LogLevel != "" && !oneOf(strings.ToLower(settings.LogLevel), "debug", "info", "warn", "error") {
-		add("WAZZAP_LOG_LEVEL", "invalid", "must be debug, info, warn, or error")
+		add("DISCORDAGENT_LOG_LEVEL", "invalid", "must be debug, info, warn, or error")
 	}
 	if settings.LogFormat != "" && !oneOf(strings.ToLower(settings.LogFormat), "json", "text", "compact") {
-		add("WAZZAP_LOG_FORMAT", "invalid", "must be json, text, or compact")
+		add("DISCORDAGENT_LOG_FORMAT", "invalid", "must be json, text, or compact")
 	}
 	if settings.PairingOutput != "" && !oneOf(strings.ToLower(settings.PairingOutput), "disabled", "terminal") {
-		add("WAZZAP_PAIRING_OUTPUT", "invalid", "must be disabled or terminal")
+		add("DISCORDAGENT_PAIRING_OUTPUT", "invalid", "must be disabled or terminal")
 	}
 	if settings.LLMProviderID != "" {
 		if _, err := identity.ParseProviderID(settings.LLMProviderID); err != nil {
-			add("WAZZAP_LLM_PROVIDER_ID", "invalid", "provider ID is invalid")
+			add("DISCORDAGENT_LLM_PROVIDER_ID", "invalid", "provider ID is invalid")
 		}
 	}
 	if settings.PolicyID != "" {
 		if _, err := identity.ParsePolicyID(settings.PolicyID); err != nil {
-			add("WAZZAP_POLICY_ID", "invalid", "policy ID is invalid")
+			add("DISCORDAGENT_POLICY_ID", "invalid", "policy ID is invalid")
 		}
 	}
 	if settings.PolicyRevision == 0 {
-		add("WAZZAP_POLICY_REVISION", "range", "must be greater than zero")
+		add("DISCORDAGENT_POLICY_REVISION", "range", "must be greater than zero")
 	}
 	if err := settings.ChatDefaults.Validate(); err != nil {
 		add("chatDefaults", "invalid", err.Error())
@@ -553,45 +553,45 @@ func draftIssues(settings Settings) []ReadinessIssue {
 		}
 	}
 	if settings.LLMTimeout != 0 {
-		checkDuration("WAZZAP_LLM_TIMEOUT", settings.LLMTimeout, 10*time.Minute)
+		checkDuration("DISCORDAGENT_LLM_TIMEOUT", settings.LLMTimeout, 10*time.Minute)
 	}
 	if settings.ShutdownTimeout != 0 {
-		checkDuration("WAZZAP_SHUTDOWN_TIMEOUT", settings.ShutdownTimeout, maxShutdownTimeout)
+		checkDuration("DISCORDAGENT_SHUTDOWN_TIMEOUT", settings.ShutdownTimeout, maxShutdownTimeout)
 	}
 	if settings.ConnectTimeout != 0 {
-		checkDuration("WAZZAP_CONNECT_TIMEOUT", settings.ConnectTimeout, 10*time.Minute)
+		checkDuration("DISCORDAGENT_CONNECT_TIMEOUT", settings.ConnectTimeout, 10*time.Minute)
 	}
 	if settings.SendTimeout != 0 {
-		checkDuration("WAZZAP_SEND_TIMEOUT", settings.SendTimeout, 5*time.Minute)
+		checkDuration("DISCORDAGENT_SEND_TIMEOUT", settings.SendTimeout, 5*time.Minute)
 	}
 	if settings.MessageDebounce != 0 {
-		checkDuration("WAZZAP_MESSAGE_DEBOUNCE", settings.MessageDebounce, time.Minute)
+		checkDuration("DISCORDAGENT_MESSAGE_DEBOUNCE", settings.MessageDebounce, time.Minute)
 	}
 	if settings.HistoryMaxAge != 0 {
-		checkDuration("WAZZAP_HISTORY_MAX_AGE", settings.HistoryMaxAge, 10*365*24*time.Hour)
+		checkDuration("DISCORDAGENT_HISTORY_MAX_AGE", settings.HistoryMaxAge, 10*365*24*time.Hour)
 	}
 	checkUint := func(field string, value, minimum, maximum uint32) {
 		if value != 0 && (value < minimum || value > maximum) {
 			add(field, "range", "is outside the supported range")
 		}
 	}
-	checkUint("WAZZAP_LLM_CONCURRENCY", settings.LLMConcurrency, 1, 256)
-	checkUint("WAZZAP_MAX_OUTPUT_TOKENS", settings.MaxOutputTokens, 1, 65536)
-	checkUint("WAZZAP_MAX_RESPONSE_BYTES", settings.MaxResponseBytes, 1, maxResponseBytes)
-	checkUint("WAZZAP_HISTORY_WINDOW", settings.HistoryWindow, 1, 256)
-	checkUint("WAZZAP_MAX_CONTEXT_BYTES", settings.MaxContextBytes, 1, 1024*1024)
-	checkUint("WAZZAP_HISTORY_KEEP_LATEST", settings.HistoryKeepLatest, 1, 1000000)
-	checkUint("WAZZAP_INBOUND_QUEUE", settings.InboundQueue, 1, 65536)
-	checkUint("WAZZAP_INBOUND_WORKERS", settings.InboundWorkers, 1, 256)
-	checkUint("WAZZAP_MESSAGE_BURST_CAP", settings.MessageBurstCap, 1, 256)
+	checkUint("DISCORDAGENT_LLM_CONCURRENCY", settings.LLMConcurrency, 1, 256)
+	checkUint("DISCORDAGENT_MAX_OUTPUT_TOKENS", settings.MaxOutputTokens, 1, 65536)
+	checkUint("DISCORDAGENT_MAX_RESPONSE_BYTES", settings.MaxResponseBytes, 1, maxResponseBytes)
+	checkUint("DISCORDAGENT_HISTORY_WINDOW", settings.HistoryWindow, 1, 256)
+	checkUint("DISCORDAGENT_MAX_CONTEXT_BYTES", settings.MaxContextBytes, 1, 1024*1024)
+	checkUint("DISCORDAGENT_HISTORY_KEEP_LATEST", settings.HistoryKeepLatest, 1, 1000000)
+	checkUint("DISCORDAGENT_INBOUND_QUEUE", settings.InboundQueue, 1, 65536)
+	checkUint("DISCORDAGENT_INBOUND_WORKERS", settings.InboundWorkers, 1, 256)
+	checkUint("DISCORDAGENT_MESSAGE_BURST_CAP", settings.MessageBurstCap, 1, 256)
 	if settings.FallbackEndpoint != "" || settings.FallbackAPIKey != "" {
 		if (strings.TrimSpace(settings.FallbackEndpoint) == "") != (strings.TrimSpace(settings.FallbackAPIKey) == "") {
-			add("WAZZAP_LLM_FALLBACK_ENDPOINT", "incomplete", "fallback endpoint and key must be configured together")
+			add("DISCORDAGENT_LLM_FALLBACK_ENDPOINT", "incomplete", "fallback endpoint and key must be configured together")
 		}
 	}
 	for _, item := range settings.ChatAllowlist {
 		if strings.TrimSpace(item) == "" || validateOpaqueAddress(strings.TrimSpace(item)) != nil {
-			add("WAZZAP_CHAT_ALLOWLIST", "invalid", "allowlist contains an invalid address")
+			add("DISCORDAGENT_CHAT_ALLOWLIST", "invalid", "allowlist contains an invalid address")
 			break
 		}
 	}
@@ -604,39 +604,39 @@ func agentIssues(settings Settings) []ReadinessIssue {
 		issues = append(issues, ReadinessIssue{Field: field, Code: code, Message: message})
 	}
 	if !settings.WhatsAppEnabled {
-		add("WAZZAP_WHATSAPP_ENABLED", "required", "WhatsApp must be enabled for Agent mode")
+		add("DISCORDAGENT_DISCORD_ENABLED", "required", "WhatsApp must be enabled for Agent mode")
 	}
 	if strings.TrimSpace(settings.AssistantName) == "" {
 		add("ASSISTANT_NAME", "required", "assistant name is required for Agent mode")
 	}
 	if strings.TrimSpace(settings.OwnerJID) == "" {
-		add("WAZZAP_OWNER_JID", "required", "owner JID is required for Agent mode")
+		add("DISCORDAGENT_OWNER_ID", "required", "owner JID is required for Agent mode")
 	} else if validateOpaqueAddress(strings.TrimSpace(settings.OwnerJID)) != nil {
-		add("WAZZAP_OWNER_JID", "invalid", "owner JID is invalid")
+		add("DISCORDAGENT_OWNER_ID", "invalid", "owner JID is invalid")
 	}
 	if len(settings.ChatAllowlist) == 0 {
-		add("WAZZAP_CHAT_ALLOWLIST", "required", "at least one allowlist target is required for Agent mode")
+		add("DISCORDAGENT_CHAT_ALLOWLIST", "required", "at least one allowlist target is required for Agent mode")
 	} else if len(settings.ChatAllowlist) > 1024 {
-		add("WAZZAP_CHAT_ALLOWLIST", "range", "at most 1024 allowlist targets are allowed")
+		add("DISCORDAGENT_CHAT_ALLOWLIST", "range", "at most 1024 allowlist targets are allowed")
 	}
 	if strings.TrimSpace(settings.LLMEndpoint) == "" {
-		add("WAZZAP_LLM_ENDPOINT", "required", "LLM endpoint is required for Agent mode")
+		add("DISCORDAGENT_LLM_ENDPOINT", "required", "LLM endpoint is required for Agent mode")
 	} else if !validHTTPURL(settings.LLMEndpoint) {
-		add("WAZZAP_LLM_ENDPOINT", "invalid", "LLM endpoint must be an absolute HTTP(S) URL")
+		add("DISCORDAGENT_LLM_ENDPOINT", "invalid", "LLM endpoint must be an absolute HTTP(S) URL")
 	}
 	if strings.TrimSpace(settings.LLMAPIKey) == "" {
-		add("WAZZAP_LLM_API_KEY", "required", "LLM API key is required for Agent mode")
+		add("DISCORDAGENT_LLM_API_KEY", "required", "LLM API key is required for Agent mode")
 	}
 	if strings.TrimSpace(settings.LLMModel) == "" {
-		add("WAZZAP_LLM_MODEL", "required", "LLM model is required for Agent mode")
+		add("DISCORDAGENT_LLM_MODEL", "required", "LLM model is required for Agent mode")
 	}
 	if strings.TrimSpace(settings.BasePrompt) == "" {
-		add("WAZZAP_BASE_PROMPT", "required", "base prompt is required for Agent mode")
+		add("DISCORDAGENT_BASE_PROMPT", "required", "base prompt is required for Agent mode")
 	} else if len(settings.BasePrompt) > 16*1024 {
-		add("WAZZAP_BASE_PROMPT", "range", "base prompt is too large")
+		add("DISCORDAGENT_BASE_PROMPT", "range", "base prompt is too large")
 	}
 	if settings.FallbackEndpoint != "" && !validHTTPURL(settings.FallbackEndpoint) {
-		add("WAZZAP_LLM_FALLBACK_ENDPOINT", "invalid", "fallback endpoint must be an absolute HTTP(S) URL")
+		add("DISCORDAGENT_LLM_FALLBACK_ENDPOINT", "invalid", "fallback endpoint must be an absolute HTTP(S) URL")
 	}
 	if settings.TypeSafeEndpoint != "" && !validHTTPURL(settings.TypeSafeEndpoint) {
 		add("TYPESAFE_ENDPOINT", "invalid", "TypeSafe endpoint must be an absolute HTTP(S) URL")

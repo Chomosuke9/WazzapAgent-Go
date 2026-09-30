@@ -1,4 +1,4 @@
-# Web host (`wazzapagent-web`)
+# Web host (`discordagent-web`)
 
 `cmd/webhost` hosts the browser UI for other machines, for example a Debian
 server. It runs the same Agent, WhatsApp session and settings as the desktop app
@@ -16,7 +16,7 @@ Go 1.26.5+ and the Node/npm versions in `frontend/package.json`:
 task webhost:build
 # equivalent:
 npm --prefix frontend ci && npm --prefix frontend run build:web
-CGO_ENABLED=0 go build -tags web -trimpath -ldflags "-s -w" -o bin/wazzapagent-web ./cmd/webhost
+CGO_ENABLED=0 go build -tags web -trimpath -ldflags "-s -w" -o bin/discordagent-web ./cmd/webhost
 ```
 
 `CGO_ENABLED=0` gives a static binary. Cross-compile for a Debian server with
@@ -26,7 +26,7 @@ is all that has to be copied.
 ## Access token
 
 On first start the server creates a random token, prints it once, and saves it
-to `~/.config/wazzapagent/web-token` (mode 0600, next to `bootstrap.json`).
+to `~/.config/discordagent/web-token` (mode 0600, next to `bootstrap.json`).
 
 1. Open `http://<server>:8080`, paste the token, sign in.
 2. The server replies with a session cookie (HttpOnly, SameSite=Strict, valid
@@ -34,14 +34,14 @@ to `~/.config/wazzapagent/web-token` (mode 0600, next to `bootstrap.json`).
    token itself is never stored in the page.
 
 ```sh
-wazzapagent-web token           # print the token (works while the service runs)
-wazzapagent-web token -rotate   # new token; restart the service to apply
+discordagent-web token           # print the token (works while the service runs)
+discordagent-web token -rotate   # new token; restart the service to apply
 ```
 
 Sessions are signed with a key derived from the token, so they survive server
 restarts, and rotating the token signs out every browser. **Sign out** in the
 sidebar removes the cookie from the current browser. To choose your own token
-(16+ characters) set `WAZZAP_WEB_TOKEN`; it takes precedence over the file.
+(16+ characters) set `DISCORDAGENT_WEB_TOKEN`; it takes precedence over the file.
 
 After 10 wrong tokens from one address the login is refused for 15 minutes.
 
@@ -49,9 +49,9 @@ After 10 wrong tokens from one address the login is refused for 15 minutes.
 
 | Flag | Environment | Default |
 | --- | --- | --- |
-| `-addr` | `WAZZAP_WEB_ADDR` | `0.0.0.0:8080` |
-| `-public-origin` | `WAZZAP_WEB_PUBLIC_ORIGIN` | none |
-| `-tls-cert`, `-tls-key` | `WAZZAP_WEB_TLS_CERT`, `WAZZAP_WEB_TLS_KEY` | none (plain HTTP) |
+| `-addr` | `DISCORDAGENT_WEB_ADDR` | `0.0.0.0:8080` |
+| `-public-origin` | `DISCORDAGENT_WEB_PUBLIC_ORIGIN` | none |
+| `-tls-cert`, `-tls-key` | `DISCORDAGENT_WEB_TLS_CERT`, `DISCORDAGENT_WEB_TLS_KEY` | none (plain HTTP) |
 
 ## HTTPS
 
@@ -61,8 +61,8 @@ untrusted network. Either:
 - serve HTTPS directly with `-tls-cert` and `-tls-key`; or
 - put a TLS reverse proxy (Caddy, nginx) in front, forward to the listen
   address, preserve the `Host` header, and set
-  `WAZZAP_WEB_PUBLIC_ORIGIN=https://your-host.example`. If the proxy is on the
-  same machine, also set `WAZZAP_WEB_ADDR=127.0.0.1:8080`.
+  `DISCORDAGENT_WEB_PUBLIC_ORIGIN=https://your-host.example`. If the proxy is on the
+  same machine, also set `DISCORDAGENT_WEB_ADDR=127.0.0.1:8080`.
 
 The session cookie is marked `Secure` whenever the browser reached the server
 over HTTPS. Requests must be same-origin, and `X-Forwarded-For` is not trusted,
@@ -70,7 +70,7 @@ so behind a proxy the login rate limit applies to all clients together.
 
 ## systemd
 
-[`deploy/wazzapagent-web.service`](../../deploy/wazzapagent-web.service) is a
-hardened unit that runs the server as a dedicated `wazzapagent` user; the
+[`deploy/discordagent-web.service`](../../deploy/discordagent-web.service) is a
+hardened unit that runs the server as a dedicated `discordagent` user; the
 install steps are in its header. Read the first token from
-`journalctl -u wazzapagent-web` or with the `token` command.
+`journalctl -u discordagent-web` or with the `token` command.

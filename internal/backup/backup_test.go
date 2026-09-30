@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/backup"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/backup"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestBackupVerifyAndRestorePreserveDurableHistory(t *testing.T) {

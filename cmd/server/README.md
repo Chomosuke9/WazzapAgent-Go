@@ -13,11 +13,11 @@ wails3 task web:build
 wails3 task web:run
 ```
 
-Open `http://127.0.0.1:8080`. Set `WAZZAP_WEB_ADDR=127.0.0.1:PORT` to choose a
+Open `http://127.0.0.1:8080`. Set `DISCORDAGENT_WEB_ADDR=127.0.0.1:PORT` to choose a
 different loopback port. The server rejects non-loopback listeners and browser
 requests with a non-loopback Host or cross-site Origin. To use it from another
 device, connect through an SSH tunnel or an authenticated HTTPS reverse proxy.
-For the proxy, set `WAZZAP_WEB_PUBLIC_ORIGIN=https://your-host.example`,
+For the proxy, set `DISCORDAGENT_WEB_PUBLIC_ORIGIN=https://your-host.example`,
 preserve the browser's `Host` header, and require authentication at the proxy;
 the server still listens only on loopback.
 Do not publish the port directly.

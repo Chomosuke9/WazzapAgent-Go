@@ -14,11 +14,11 @@ import (
 	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/mention"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/mention"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 )
 
 // messageNormalizer turns a native message event into the provider-neutral

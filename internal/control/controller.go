@@ -3,7 +3,7 @@ package control
 import (
 	"errors"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 )
 
 // Controller owns settings mutations. Concurrent saves are resolved by the

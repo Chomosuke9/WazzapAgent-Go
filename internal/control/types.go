@@ -3,7 +3,7 @@ package control
 import (
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
 )
 
 // SettingsSnapshot is the typed persistence boundary used by the controller.

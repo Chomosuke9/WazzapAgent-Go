@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 const (
@@ -134,9 +134,9 @@ func LoadDataDirRuntime(lookup LookupEnv) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dataDir, err := resolveDataDir(valueOrDefault(mergedLookup, "WAZZAP_DATA_DIR", defaultDataDir))
+	dataDir, err := resolveDataDir(valueOrDefault(mergedLookup, "DISCORDAGENT_DATA_DIR", defaultDataDir))
 	if err != nil {
-		return "", fmt.Errorf("WAZZAP_DATA_DIR: %w", err)
+		return "", fmt.Errorf("DISCORDAGENT_DATA_DIR: %w", err)
 	}
 	return dataDir, nil
 }
@@ -178,27 +178,27 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		return Settings{}, errors.New("environment lookup is required")
 	}
 	settings := Settings{
-		AssistantName: value(lookup, "ASSISTANT_NAME"), BasePrompt: value(lookup, "WAZZAP_BASE_PROMPT"),
+		AssistantName: value(lookup, "ASSISTANT_NAME"), BasePrompt: value(lookup, "DISCORDAGENT_BASE_PROMPT"),
 		ChatDefaults: DefaultChatDefaults(),
-		OwnerJID:     value(lookup, "WAZZAP_OWNER_JID"), ChatAllowlist: splitList(value(lookup, "WAZZAP_CHAT_ALLOWLIST")),
-		LLMEndpoint: value(lookup, "WAZZAP_LLM_ENDPOINT"), LLMAPIKey: value(lookup, "WAZZAP_LLM_API_KEY"),
-		LLMModel: value(lookup, "WAZZAP_LLM_MODEL"), LLMProviderID: value(lookup, "WAZZAP_LLM_PROVIDER_ID"),
-		FallbackEndpoint: value(lookup, "WAZZAP_LLM_FALLBACK_ENDPOINT"), FallbackAPIKey: value(lookup, "WAZZAP_LLM_FALLBACK_API_KEY"),
-		PolicyID: value(lookup, "WAZZAP_POLICY_ID"), LogLevel: value(lookup, "WAZZAP_LOG_LEVEL"),
-		LogFormat: value(lookup, "WAZZAP_LOG_FORMAT"), LangSmithAPIKey: value(lookup, "LANGSMITH_API_KEY"),
+		OwnerJID:     value(lookup, "DISCORDAGENT_OWNER_ID"), ChatAllowlist: splitList(value(lookup, "DISCORDAGENT_CHAT_ALLOWLIST")),
+		LLMEndpoint: value(lookup, "DISCORDAGENT_LLM_ENDPOINT"), LLMAPIKey: value(lookup, "DISCORDAGENT_LLM_API_KEY"),
+		LLMModel: value(lookup, "DISCORDAGENT_LLM_MODEL"), LLMProviderID: value(lookup, "DISCORDAGENT_LLM_PROVIDER_ID"),
+		FallbackEndpoint: value(lookup, "DISCORDAGENT_LLM_FALLBACK_ENDPOINT"), FallbackAPIKey: value(lookup, "DISCORDAGENT_LLM_FALLBACK_API_KEY"),
+		PolicyID: value(lookup, "DISCORDAGENT_POLICY_ID"), LogLevel: value(lookup, "DISCORDAGENT_LOG_LEVEL"),
+		LogFormat: value(lookup, "DISCORDAGENT_LOG_FORMAT"), LangSmithAPIKey: value(lookup, "LANGSMITH_API_KEY"),
 		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"), TypeSafeEndpoint: value(lookup, "TYPESAFE_ENDPOINT"),
 		TypeSafeModel: value(lookup, "TYPESAFE_MODEL"),
-		DataDir:       value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
-		PairingOutput: value(lookup, "WAZZAP_PAIRING_OUTPUT"),
+		DataDir:       value(lookup, "DISCORDAGENT_DATA_DIR"), HTTPAddress: value(lookup, "DISCORDAGENT_HTTP_ADDRESS"),
+		PairingOutput: value(lookup, "DISCORDAGENT_PAIRING_OUTPUT"),
 	}
 	var err error
-	if settings.WhatsAppEnabled, err = parseBool(lookup, "WAZZAP_WHATSAPP_ENABLED", defaultWhatsAppEnabled); err != nil {
+	if settings.WhatsAppEnabled, err = parseBool(lookup, "DISCORDAGENT_DISCORD_ENABLED", defaultWhatsAppEnabled); err != nil {
 		return Settings{}, err
 	}
-	if settings.AgentEnabled, err = parseBool(lookup, "WAZZAP_AGENT_ENABLED", settings.WhatsAppEnabled); err != nil {
+	if settings.AgentEnabled, err = parseBool(lookup, "DISCORDAGENT_AGENT_ENABLED", settings.WhatsAppEnabled); err != nil {
 		return Settings{}, err
 	}
-	if settings.PolicyRevision, err = parseUint(lookup, "WAZZAP_POLICY_REVISION", 0, 1, ^uint64(0)); err != nil {
+	if settings.PolicyRevision, err = parseUint(lookup, "DISCORDAGENT_POLICY_REVISION", 0, 1, ^uint64(0)); err != nil {
 		return Settings{}, err
 	}
 	// An explicit value must be positive; its upper bound is checked with the
@@ -207,9 +207,9 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		key    string
 		target *time.Duration
 	}{
-		{"WAZZAP_SHUTDOWN_TIMEOUT", &settings.ShutdownTimeout}, {"WAZZAP_LLM_TIMEOUT", &settings.LLMTimeout},
-		{"WAZZAP_CONNECT_TIMEOUT", &settings.ConnectTimeout}, {"WAZZAP_SEND_TIMEOUT", &settings.SendTimeout},
-		{"WAZZAP_MESSAGE_DEBOUNCE", &settings.MessageDebounce}, {"WAZZAP_HISTORY_MAX_AGE", &settings.HistoryMaxAge},
+		{"DISCORDAGENT_SHUTDOWN_TIMEOUT", &settings.ShutdownTimeout}, {"DISCORDAGENT_LLM_TIMEOUT", &settings.LLMTimeout},
+		{"DISCORDAGENT_CONNECT_TIMEOUT", &settings.ConnectTimeout}, {"DISCORDAGENT_SEND_TIMEOUT", &settings.SendTimeout},
+		{"DISCORDAGENT_MESSAGE_DEBOUNCE", &settings.MessageDebounce}, {"DISCORDAGENT_HISTORY_MAX_AGE", &settings.HistoryMaxAge},
 	}
 	for _, field := range durations {
 		if *field.target, err = parseDuration(lookup, field.key, 0, time.Duration(1<<63-1)); err != nil {
@@ -220,11 +220,11 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		key    string
 		target *uint32
 	}{
-		{"WAZZAP_LLM_CONCURRENCY", &settings.LLMConcurrency}, {"WAZZAP_MAX_OUTPUT_TOKENS", &settings.MaxOutputTokens},
-		{"WAZZAP_MAX_RESPONSE_BYTES", &settings.MaxResponseBytes}, {"WAZZAP_HISTORY_WINDOW", &settings.HistoryWindow},
-		{"WAZZAP_MAX_CONTEXT_BYTES", &settings.MaxContextBytes}, {"WAZZAP_HISTORY_KEEP_LATEST", &settings.HistoryKeepLatest},
-		{"WAZZAP_INBOUND_QUEUE", &settings.InboundQueue}, {"WAZZAP_INBOUND_WORKERS", &settings.InboundWorkers},
-		{"WAZZAP_MESSAGE_BURST_CAP", &settings.MessageBurstCap},
+		{"DISCORDAGENT_LLM_CONCURRENCY", &settings.LLMConcurrency}, {"DISCORDAGENT_MAX_OUTPUT_TOKENS", &settings.MaxOutputTokens},
+		{"DISCORDAGENT_MAX_RESPONSE_BYTES", &settings.MaxResponseBytes}, {"DISCORDAGENT_HISTORY_WINDOW", &settings.HistoryWindow},
+		{"DISCORDAGENT_MAX_CONTEXT_BYTES", &settings.MaxContextBytes}, {"DISCORDAGENT_HISTORY_KEEP_LATEST", &settings.HistoryKeepLatest},
+		{"DISCORDAGENT_INBOUND_QUEUE", &settings.InboundQueue}, {"DISCORDAGENT_INBOUND_WORKERS", &settings.InboundWorkers},
+		{"DISCORDAGENT_MESSAGE_BURST_CAP", &settings.MessageBurstCap},
 	}
 	for _, field := range numbers {
 		parsed, err := parseUint(lookup, field.key, 0, 1, 1<<32-1)
@@ -237,13 +237,13 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 }
 
 func (snapshot *Snapshot) loadRequiredIdentity(lookup LookupEnv) error {
-	tenantID, err := identity.ParseTenantID(value(lookup, "WAZZAP_TENANT_ID"))
+	tenantID, err := identity.ParseTenantID(value(lookup, "DISCORDAGENT_TENANT_ID"))
 	if err != nil {
-		return fmt.Errorf("WAZZAP_TENANT_ID: %w", err)
+		return fmt.Errorf("DISCORDAGENT_TENANT_ID: %w", err)
 	}
-	accountID, err := identity.ParseAccountID(value(lookup, "WAZZAP_ACCOUNT_ID"))
+	accountID, err := identity.ParseAccountID(value(lookup, "DISCORDAGENT_ACCOUNT_ID"))
 	if err != nil {
-		return fmt.Errorf("WAZZAP_ACCOUNT_ID: %w", err)
+		return fmt.Errorf("DISCORDAGENT_ACCOUNT_ID: %w", err)
 	}
 	snapshot.tenantID = tenantID
 	snapshot.accountID = accountID

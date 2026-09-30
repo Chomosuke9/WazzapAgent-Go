@@ -2,9 +2,9 @@ version: '3'
 
 info:
   companyName: "Chomosuke9"
-  productName: "WazzapAgent"
-  productIdentifier: "io.github.chomosuke9.wazzapagent"
-  description: "WazzapAgent desktop and mobile application"
+  productName: "DiscordAgent"
+  productIdentifier: "io.github.chomosuke9.discordagent"
+  description: "DiscordAgent desktop and mobile application"
   copyright: "(c) 2026, Chomosuke9"
   comments: "Wails v3 beta.23 application shell"
   version: "0.1.0"

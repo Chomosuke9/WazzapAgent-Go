@@ -15,19 +15,19 @@ type ChatResetCategory = "moderation" | "triggers" | "instructions" | "all";
 
 const agentFieldLabels: Record<string, string> = {
   ASSISTANT_NAME: "Assistant name",
-  WAZZAP_BASE_PROMPT: "Base prompt",
-  WAZZAP_WHATSAPP_ENABLED: "WhatsApp mode",
-  WAZZAP_OWNER_JID: "Owner JID",
-  WAZZAP_CHAT_ALLOWLIST: "Chat allowlist",
-  WAZZAP_LLM_ENDPOINT: "LLM API base URL",
-  WAZZAP_LLM_API_KEY: "LLM API key",
-  WAZZAP_LLM_MODEL: "LLM model",
+  DISCORDAGENT_BASE_PROMPT: "Base prompt",
+  DISCORDAGENT_DISCORD_ENABLED: "WhatsApp mode",
+  DISCORDAGENT_OWNER_ID: "Owner JID",
+  DISCORDAGENT_CHAT_ALLOWLIST: "Chat allowlist",
+  DISCORDAGENT_LLM_ENDPOINT: "LLM API base URL",
+  DISCORDAGENT_LLM_API_KEY: "LLM API key",
+  DISCORDAGENT_LLM_MODEL: "LLM model",
   TYPESAFE_ENDPOINT: "TypeSafe endpoint",
   TYPESAFE_MODEL: "TypeSafe model",
 };
 
 function readinessMessage(field: string, message: string): string {
-  if (field === "WAZZAP_BASE_PROMPT" && message.includes("required")) return "Enter a base prompt before starting the Agent.";
+  if (field === "DISCORDAGENT_BASE_PROMPT" && message.includes("required")) return "Enter a base prompt before starting the Agent.";
   return message;
 }
 

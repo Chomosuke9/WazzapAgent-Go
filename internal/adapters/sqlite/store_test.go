@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/maintenance"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 )
 
 const wantMigrationCount = 26

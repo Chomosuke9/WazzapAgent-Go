@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/inbound"
 )
 
 func TestGenerateKeepsSafetyPolicyAndTypedContextSeparate(t *testing.T) {

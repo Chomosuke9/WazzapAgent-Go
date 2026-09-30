@@ -8,9 +8,9 @@ Target lokasi data:
 
 | Platform | Lokasi default yang direncanakan |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%/WazzapAgent/` |
-| Linux | `$XDG_DATA_HOME/wazzapagent/` atau `~/.local/share/wazzapagent/` |
-| macOS | `~/Library/Application Support/WazzapAgent/` |
+| Windows | `%LOCALAPPDATA%/DiscordAgent/` |
+| Linux | `$XDG_DATA_HOME/discordagent/` atau `~/.local/share/discordagent/` |
+| macOS | `~/Library/Application Support/DiscordAgent/` |
 | Android | Internal app storage dari Android context |
 
 Jangan memakai working directory sebagai lokasi default data aplikasi GUI.

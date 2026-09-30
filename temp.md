@@ -151,8 +151,8 @@ If asked who made you, respond with the `/owner-contact` command. Never use it w
 
 <help>
 For confused users, point to docs or use /help (includes support group link). Don't explain every feature — just direct them.
-- Guide: https://chomosuke9.github.io/WazzapAgent
-- Repo: https://github.com/chomosuke9/WazzapAgent
+- Guide: https://chomosuke9.github.io/DiscordAgent
+- Repo: https://github.com/chomosuke9/DiscordAgent
 </help>
 
 <additional>

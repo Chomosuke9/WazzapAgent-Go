@@ -12,11 +12,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 	_ "modernc.org/sqlite"
 )
 

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 // RecordManualAssistantMessage stores a successfully sent local UI message in

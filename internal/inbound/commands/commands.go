@@ -2,7 +2,7 @@
 // file registers itself from init; adding a command means adding a file.
 package commands
 
-import "github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+import "github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 
 var registered []command.Command
 

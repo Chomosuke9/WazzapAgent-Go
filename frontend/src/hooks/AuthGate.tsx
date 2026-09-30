@@ -65,9 +65,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (state === "signed-in") return <AuthContext.Provider value={{ required, signOut: leave }}>{children}</AuthContext.Provider>;
   return <div className="auth-screen">
     <form className="card auth-card" onSubmit={submit}>
-      <p className="eyebrow">WAZZAPAGENT</p>
+      <p className="eyebrow">DISCORDAGENT</p>
       <h1>Sign in</h1>
-      <p className="muted">Enter the access token printed when the server first started, or run <code>wazzapagent-web token</code> on the server. This browser will stay signed in.</p>
+      <p className="muted">Enter the access token printed when the server first started, or run <code>discordagent-web token</code> on the server. This browser will stay signed in.</p>
       <label className="auth-field">
         <span>Access token</span>
         <input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="current-password" autoFocus spellCheck={false} disabled={pending} />

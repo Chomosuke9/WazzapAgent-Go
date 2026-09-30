@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 )
 
 // namePattern is what a catalog name may look like: short, lowercase, and

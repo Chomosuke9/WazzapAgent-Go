@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/fallback"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/llm/fallback"
 )
 
 func TestFallbackOnlyAdvancesOnSafeModelFailures(t *testing.T) {

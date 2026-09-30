@@ -11,8 +11,8 @@ func TestResolvePathsInSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(storage, "wazzapagent", "data")
-	if paths.EffectiveDataRoot != want || paths.DefaultDataRoot != want || paths.BootstrapFile != filepath.Join(storage, "wazzapagent", "config", "bootstrap.json") {
+	want := filepath.Join(storage, "discordagent", "data")
+	if paths.EffectiveDataRoot != want || paths.DefaultDataRoot != want || paths.BootstrapFile != filepath.Join(storage, "discordagent", "config", "bootstrap.json") {
 		t.Fatalf("unexpected sandbox paths: %+v", paths)
 	}
 	if _, err := ResolvePathsInSandbox("relative/path"); err == nil {

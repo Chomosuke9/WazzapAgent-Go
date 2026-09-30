@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
 )
 
 const broadcastScheduleRetention = 30 * 24 * time.Hour

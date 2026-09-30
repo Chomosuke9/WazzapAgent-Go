@@ -32,7 +32,7 @@ func videoFrames(ctx context.Context, data []byte) (animation, error) {
 	}
 	// MP4 files often keep their index at the end, so ffmpeg needs a
 	// seekable file rather than a pipe.
-	input, err := os.CreateTemp("", "wazzapagent-sticker-*")
+	input, err := os.CreateTemp("", "discordagent-sticker-*")
 	if err != nil {
 		return animation{}, fmt.Errorf("create video temp file: %w", err)
 	}

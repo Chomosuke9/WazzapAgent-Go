@@ -14,11 +14,11 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
 
 const (
@@ -149,7 +149,7 @@ var errMediaTooLarge = errors.New("media is too large")
 // maxMediaDownloadBytes, so a message that understates its file length
 // cannot make the download take unbounded memory or disk.
 func (adapter *Adapter) downloadBounded(ctx context.Context, downloadable whatsmeow.DownloadableMessage) ([]byte, error) {
-	temp, err := os.CreateTemp("", "wazzapagent-media-*")
+	temp, err := os.CreateTemp("", "discordagent-media-*")
 	if err != nil {
 		return nil, err
 	}

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	_ "modernc.org/sqlite"
 )
 

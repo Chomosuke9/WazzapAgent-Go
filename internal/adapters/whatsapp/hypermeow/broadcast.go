@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types/events"

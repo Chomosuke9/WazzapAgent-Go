@@ -2,6 +2,6 @@
 
 package main
 
-import "github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+import "github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
 
 func resolveAppPaths() (platform.Paths, error) { return platform.ResolvePaths() }

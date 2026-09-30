@@ -1,6 +1,6 @@
-# WazzapAgent Go
+# DiscordAgent Go
 
-WazzapAgent Go is a complete rewrite of WazzapAgent: a self-hosted WhatsApp assistant with an AI Agent and a unified interface for managing conversations and settings.
+DiscordAgent Go is a complete rewrite of DiscordAgent: a self-hosted WhatsApp assistant with an AI Agent and a unified interface for managing conversations and settings.
 
 ## Features
 
@@ -23,11 +23,11 @@ WazzapAgent Go is a complete rewrite of WazzapAgent: a self-hosted WhatsApp assi
 
 ## Requirements
 
-WazzapAgent needs a WhatsApp account and an OpenAI-compatible chat-completions endpoint. Configure the application with your endpoint and access settings before connecting WhatsApp.
+DiscordAgent needs a WhatsApp account and an OpenAI-compatible chat-completions endpoint. Configure the application with your endpoint and access settings before connecting WhatsApp.
 
 ## Data and supported content
 
-The app starts building its conversation history when it receives messages; it does not import older WhatsApp history or automatically migrate data from the previous WazzapAgent application. Text conversations are supported; the Agent sees images, videos and stickers only as text markers. `/sticker` turns images and stickers into stickers on every platform; turning videos and GIFs into stickers needs [ffmpeg](https://ffmpeg.org) on the `PATH` of the computer running the app.
+The app starts building its conversation history when it receives messages; it does not import older WhatsApp history or automatically migrate data from the previous DiscordAgent application. Text conversations are supported; the Agent sees images, videos and stickers only as text markers. `/sticker` turns images and stickers into stickers on every platform; turning videos and GIFs into stickers needs [ffmpeg](https://ffmpeg.org) on the `PATH` of the computer running the app.
 
 ## Downloads and builds
 

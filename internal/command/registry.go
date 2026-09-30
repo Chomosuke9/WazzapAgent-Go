@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 )
 
 var tokenPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)

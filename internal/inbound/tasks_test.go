@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/inbound"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
 
 // startTaskChat sends one ordinary message so the chat exists, and returns

@@ -9,7 +9,7 @@ import (
 	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestRenderOutboundMentionsResolvesMarkup(t *testing.T) {

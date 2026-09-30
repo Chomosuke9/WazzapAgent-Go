@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
 )
 
 func TestControlSettingsRepositoryPersistsTypedValues(t *testing.T) {

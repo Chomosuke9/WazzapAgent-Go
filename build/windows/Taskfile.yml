@@ -5,7 +5,7 @@ includes:
 
 tasks:
   build:
-    summary: Build WazzapAgent.exe for Windows
+    summary: Build DiscordAgent.exe for Windows
     cmds:
       - task: common:generate:bindings
       - task: common:build:frontend

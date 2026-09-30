@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
-	whatsapp "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
+	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 )
 
 // Options contains process-owned dependencies which are intentionally kept out
@@ -82,7 +82,7 @@ func New(cfg config.Snapshot, logger *slog.Logger, options Options) *Application
 }
 
 // Run owns only the core runtime. It never binds the optional diagnostics HTTP
-// listener, even when WAZZAP_HTTP_ADDRESS is configured.
+// listener, even when DISCORDAGENT_HTTP_ADDRESS is configured.
 func (application *Application) Run(ctx context.Context) error {
 	return application.run(ctx, false, nil)
 }

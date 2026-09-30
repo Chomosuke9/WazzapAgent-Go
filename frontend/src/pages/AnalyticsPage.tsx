@@ -5,8 +5,8 @@ type ChartMetric = "messages" | "invocations";
 type ChartPeriod = 1 | 7 | 30;
 
 const numberFormat = new Intl.NumberFormat("en-US");
-const metricStorageKey = "wazzapagent.analytics.metric.v2";
-const periodStorageKey = "wazzapagent.analytics.period";
+const metricStorageKey = "discordagent.analytics.metric.v2";
+const periodStorageKey = "discordagent.analytics.period";
 
 function readPeriod(): ChartPeriod {
   try {

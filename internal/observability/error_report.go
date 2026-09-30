@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 )
 
 const maxErrorChainDepth = 32

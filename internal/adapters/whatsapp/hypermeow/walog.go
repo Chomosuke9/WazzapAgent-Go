@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 	waLog "github.com/polymorfa/hypermeow/util/log"
 )
 

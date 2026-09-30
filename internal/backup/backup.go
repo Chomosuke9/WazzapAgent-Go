@@ -68,7 +68,7 @@ func Create(ctx context.Context, sourceRoot, destinationParent string, now time.
 	if err != nil {
 		return "", err
 	}
-	name := "wazzapagent-backup-" + now.UTC().Format("20060102T150405Z") + "-" + suffix
+	name := "discordagent-backup-" + now.UTC().Format("20060102T150405Z") + "-" + suffix
 	finalPath := filepath.Join(parent, name)
 	temporaryPath := finalPath + ".partial"
 	if err := os.Mkdir(temporaryPath, 0o700); err != nil {

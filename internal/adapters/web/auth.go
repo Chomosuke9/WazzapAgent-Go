@@ -20,7 +20,7 @@ import (
 
 const (
 	// SessionCookie is the browser cookie that remembers a successful login.
-	SessionCookie = "wazzap_session"
+	SessionCookie = "discordagent_session"
 	// SessionLifetime is how long a login stays valid without entering the token again.
 	SessionLifetime = 180 * 24 * time.Hour
 	// MinTokenLength is the shortest token accepted from configuration.
@@ -50,7 +50,7 @@ func NewTokenAuth(token string) (*TokenAuth, error) {
 	if len(token) < MinTokenLength {
 		return nil, fmt.Errorf("access token must be at least %d characters", MinTokenLength)
 	}
-	key := sha256.Sum256([]byte("wazzapagent-web-session-v1\x00" + token))
+	key := sha256.Sum256([]byte("discordagent-web-session-v1\x00" + token))
 	return &TokenAuth{
 		tokenDigest: sha256.Sum256([]byte(token)),
 		key:         key[:],

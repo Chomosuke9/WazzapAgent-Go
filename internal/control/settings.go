@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
 )
 
 func (controller *Controller) GetSettings(ctx context.Context) (SettingsView, error) {
@@ -76,10 +76,10 @@ func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, 
 	merged.FallbackAPIKey = current.FallbackAPIKey
 	merged.LangSmithAPIKey = current.LangSmithAPIKey
 	merged.TypeSafeAPIKey = current.TypeSafeAPIKey
-	if err := mergeSecret(&merged.LLMAPIKey, patch.Secrets.LLMAPIKey, "WAZZAP_LLM_API_KEY"); err != nil {
+	if err := mergeSecret(&merged.LLMAPIKey, patch.Secrets.LLMAPIKey, "DISCORDAGENT_LLM_API_KEY"); err != nil {
 		return config.Settings{}, err
 	}
-	if err := mergeSecret(&merged.FallbackAPIKey, patch.Secrets.FallbackAPIKey, "WAZZAP_LLM_FALLBACK_API_KEY"); err != nil {
+	if err := mergeSecret(&merged.FallbackAPIKey, patch.Secrets.FallbackAPIKey, "DISCORDAGENT_LLM_FALLBACK_API_KEY"); err != nil {
 		return config.Settings{}, err
 	}
 	if err := mergeSecret(&merged.LangSmithAPIKey, patch.Secrets.LangSmithAPIKey, "LANGSMITH_API_KEY"); err != nil {

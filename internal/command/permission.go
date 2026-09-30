@@ -5,7 +5,7 @@ package command
 // wrappers keep the command-module API concise for descriptor tests and
 // command authors.
 
-import "github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+import "github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 
 func EvaluatePermission(expression string, facts PermissionFacts) (bool, error) {
 	return policy.EvaluatePermission(expression, facts)

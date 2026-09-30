@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 // compose wires the adapter into command.Platform; keep the port method sets

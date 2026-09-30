@@ -14,19 +14,19 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/ui"
 )
 
 func TestBrowserHandlerServesUIAndTypedCalls(t *testing.T) {
 	handler, err := NewHandler(ui.NewAppService(ui.Options{Version: "test"}), fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<h1>WazzapAgent</h1>")},
+		"index.html": &fstest.MapFile{Data: []byte("<h1>DiscordAgent</h1>")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/", nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "WazzapAgent") {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "DiscordAgent") {
 		t.Fatalf("unexpected page: %d %q", page.Code, page.Body.String())
 	}
 	for _, method := range []string{"GetAppInfo"} {

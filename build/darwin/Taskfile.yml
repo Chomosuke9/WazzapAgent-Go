@@ -5,7 +5,7 @@ includes:
 
 tasks:
   build:
-    summary: Build WazzapAgent for macOS on a macOS host
+    summary: Build DiscordAgent for macOS on a macOS host
     cmds:
       - task: common:generate:bindings
       - task: common:build:frontend

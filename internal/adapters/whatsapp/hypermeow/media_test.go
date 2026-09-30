@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 )
 
 func TestCommandMediaPrefersOwnMediaThenQuotedMedia(t *testing.T) {

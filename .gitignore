@@ -1,6 +1,6 @@
 /socket.exe
-/wazzapagent
-/wazzapagent.exe
+/discordagent
+/discordagent.exe
 /testing/*
 *.db
 *.db-shm
@@ -9,7 +9,7 @@
 /internal/config/embedded.env
 /data/
 /dist/
-/.idea/WazzapAgent-Go.iml
+/.idea/DiscordAgent-Go.iml
 /.idea/vcs.xml
 /.idea/modules.xml
 /.idea/discord.xml

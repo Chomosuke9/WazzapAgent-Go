@@ -46,8 +46,8 @@ func TestReadDotEnvFileDoesNotUseEmbeddedFallback(t *testing.T) {
 
 func TestSerializeDotEnvIsCanonicalAndSafeByDefault(t *testing.T) {
 	values := map[string]string{
-		"WAZZAP_LLM_API_KEY": "secret",
-		"WAZZAP_TENANT_ID":   "tenant",
+		"DISCORDAGENT_LLM_API_KEY": "secret",
+		"DISCORDAGENT_TENANT_ID":   "tenant",
 		"Z":                  "line\nquote \" slash \\$ unicode ✓",
 		"A":                  "",
 	}
@@ -70,7 +70,7 @@ func TestSerializeDotEnvIsCanonicalAndSafeByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serialize sensitive dotenv: %v", err)
 	}
-	if !strings.Contains(string(withSensitive), "WAZZAP_LLM_API_KEY=\"secret\"") || !strings.Contains(string(withSensitive), "WAZZAP_TENANT_ID=\"tenant\"") {
+	if !strings.Contains(string(withSensitive), "DISCORDAGENT_LLM_API_KEY=\"secret\"") || !strings.Contains(string(withSensitive), "DISCORDAGENT_TENANT_ID=\"tenant\"") {
 		t.Fatalf("opt-in export omitted sensitive values: %q", withSensitive)
 	}
 }

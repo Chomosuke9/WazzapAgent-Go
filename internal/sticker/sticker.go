@@ -27,7 +27,7 @@ const (
 	// MaxFrames bounds the memory an animation may use (each frame is 1 MiB).
 	MaxFrames = 120
 	// PackName and Emoji are written into every sticker's metadata.
-	PackName = "WazzapAgent"
+	PackName = "DiscordAgent"
 	Emoji    = "🤖"
 )
 

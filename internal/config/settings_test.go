@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestChatDefaultsPersistAndReachRuntime(t *testing.T) {
@@ -65,7 +65,7 @@ func TestDefaultSettingsCanBeSavedBeforeAgentSetup(t *testing.T) {
 		t.Fatal("incomplete default settings accepted as Agent-ready")
 	}
 	issues := AgentReadinessIssues(settings)
-	if len(issues) == 0 || !hasIssueField(issues, "ASSISTANT_NAME") || !hasIssueField(issues, "WAZZAP_LLM_API_KEY") {
+	if len(issues) == 0 || !hasIssueField(issues, "ASSISTANT_NAME") || !hasIssueField(issues, "DISCORDAGENT_LLM_API_KEY") {
 		t.Fatalf("Agent readiness issues = %#v", issues)
 	}
 }
@@ -133,31 +133,31 @@ func TestSettingsRejectMalformedValuesWithoutLeakingSecrets(t *testing.T) {
 	settings.LogLevel = "trace"
 	settings.LLMAPIKey = "must-not-leak"
 	err := ValidateDraft(settings)
-	if err == nil || !strings.Contains(err.Error(), "WAZZAP_LOG_LEVEL") || strings.Contains(err.Error(), settings.LLMAPIKey) {
+	if err == nil || !strings.Contains(err.Error(), "DISCORDAGENT_LOG_LEVEL") || strings.Contains(err.Error(), settings.LLMAPIKey) {
 		t.Fatalf("validation error = %v", err)
 	}
 
 	settings = DefaultSettings()
 	settings.WhatsAppEnabled = false
 	settings.AgentEnabled = true
-	if err := ValidateDraft(settings); err == nil || !strings.Contains(err.Error(), "WAZZAP_AGENT_ENABLED") {
+	if err := ValidateDraft(settings); err == nil || !strings.Contains(err.Error(), "DISCORDAGENT_AGENT_ENABLED") {
 		t.Fatalf("invalid mode error = %v", err)
 	}
 }
 
 func TestSettingsSchemaContainsAllPersistedAndRuntimeKeys(t *testing.T) {
 	want := []string{
-		"ASSISTANT_NAME", "WAZZAP_BASE_PROMPT", "WAZZAP_WHATSAPP_ENABLED", "WAZZAP_AGENT_ENABLED",
-		"WAZZAP_OWNER_JID", "WAZZAP_CHAT_ALLOWLIST", "WAZZAP_LLM_ENDPOINT", "WAZZAP_LLM_API_KEY",
-		"WAZZAP_LLM_MODEL", "WAZZAP_LLM_PROVIDER_ID", "WAZZAP_LLM_FALLBACK_ENDPOINT", "WAZZAP_LLM_FALLBACK_API_KEY",
-		"WAZZAP_LLM_TIMEOUT", "WAZZAP_LLM_CONCURRENCY", "WAZZAP_MAX_OUTPUT_TOKENS", "WAZZAP_MAX_RESPONSE_BYTES",
-		"WAZZAP_HISTORY_WINDOW", "WAZZAP_MAX_CONTEXT_BYTES", "WAZZAP_HISTORY_KEEP_LATEST", "WAZZAP_HISTORY_MAX_AGE",
-		"WAZZAP_INBOUND_QUEUE", "WAZZAP_INBOUND_WORKERS",
-		"WAZZAP_MESSAGE_DEBOUNCE", "WAZZAP_MESSAGE_BURST_CAP",
-		"WAZZAP_CONNECT_TIMEOUT",
-		"WAZZAP_SEND_TIMEOUT", "WAZZAP_SHUTDOWN_TIMEOUT", "WAZZAP_POLICY_ID", "WAZZAP_POLICY_REVISION",
-		"WAZZAP_LOG_LEVEL", "WAZZAP_LOG_FORMAT", "LANGSMITH_API_KEY", "WAZZAP_DATA_DIR", "WAZZAP_ENV_FILE",
-		"WAZZAP_HTTP_ADDRESS", "WAZZAP_PAIRING_OUTPUT", "WAZZAP_TENANT_ID", "WAZZAP_ACCOUNT_ID", "NO_COLOR", "FORCE_COLOR", "startOnLaunch",
+		"ASSISTANT_NAME", "DISCORDAGENT_BASE_PROMPT", "DISCORDAGENT_DISCORD_ENABLED", "DISCORDAGENT_AGENT_ENABLED",
+		"DISCORDAGENT_OWNER_ID", "DISCORDAGENT_CHAT_ALLOWLIST", "DISCORDAGENT_LLM_ENDPOINT", "DISCORDAGENT_LLM_API_KEY",
+		"DISCORDAGENT_LLM_MODEL", "DISCORDAGENT_LLM_PROVIDER_ID", "DISCORDAGENT_LLM_FALLBACK_ENDPOINT", "DISCORDAGENT_LLM_FALLBACK_API_KEY",
+		"DISCORDAGENT_LLM_TIMEOUT", "DISCORDAGENT_LLM_CONCURRENCY", "DISCORDAGENT_MAX_OUTPUT_TOKENS", "DISCORDAGENT_MAX_RESPONSE_BYTES",
+		"DISCORDAGENT_HISTORY_WINDOW", "DISCORDAGENT_MAX_CONTEXT_BYTES", "DISCORDAGENT_HISTORY_KEEP_LATEST", "DISCORDAGENT_HISTORY_MAX_AGE",
+		"DISCORDAGENT_INBOUND_QUEUE", "DISCORDAGENT_INBOUND_WORKERS",
+		"DISCORDAGENT_MESSAGE_DEBOUNCE", "DISCORDAGENT_MESSAGE_BURST_CAP",
+		"DISCORDAGENT_CONNECT_TIMEOUT",
+		"DISCORDAGENT_SEND_TIMEOUT", "DISCORDAGENT_SHUTDOWN_TIMEOUT", "DISCORDAGENT_POLICY_ID", "DISCORDAGENT_POLICY_REVISION",
+		"DISCORDAGENT_LOG_LEVEL", "DISCORDAGENT_LOG_FORMAT", "LANGSMITH_API_KEY", "DISCORDAGENT_DATA_DIR", "DISCORDAGENT_ENV_FILE",
+		"DISCORDAGENT_HTTP_ADDRESS", "DISCORDAGENT_PAIRING_OUTPUT", "DISCORDAGENT_TENANT_ID", "DISCORDAGENT_ACCOUNT_ID", "NO_COLOR", "FORCE_COLOR", "startOnLaunch",
 	}
 	fields := SettingsSchema()
 	seen := make(map[string]bool, len(fields))

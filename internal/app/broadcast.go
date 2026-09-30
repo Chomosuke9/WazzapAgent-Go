@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	whatsappadapter "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/whatsapp/hypermeow"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
+	whatsappadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
 )
 
 func NormalizeWhatsAppBroadcastPayload(payload string) (string, error) {

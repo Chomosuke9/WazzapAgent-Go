@@ -12,7 +12,7 @@ func ResolvePathsInSandbox(storageDir string) (Paths, error) {
 	if strings.TrimSpace(storageDir) == "" || !filepath.IsAbs(storageDir) {
 		return Paths{}, errors.New("absolute private storage directory is required")
 	}
-	base := filepath.Join(filepath.Clean(storageDir), "wazzapagent")
+	base := filepath.Join(filepath.Clean(storageDir), "discordagent")
 	configDir := filepath.Join(base, "config")
 	dataRoot := filepath.Join(base, "data")
 	return Paths{

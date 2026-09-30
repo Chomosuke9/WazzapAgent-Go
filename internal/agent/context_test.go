@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestContextMessageMapMatchesWrappedCompactHistoryIDs(t *testing.T) {

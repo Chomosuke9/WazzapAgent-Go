@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
 )
 
 type healthResponse struct {
@@ -48,44 +48,44 @@ func (application *Application) Handler() http.Handler {
 		if adapter := application.adapterState.Load(); adapter != nil {
 			queueDepth, queueCapacity = adapter.QueueUsage()
 		}
-		_, _ = fmt.Fprintf(writer, `# TYPE wazzap_inbound_claimed_total counter
-wazzap_inbound_claimed_total %d
-# TYPE wazzap_inbound_duplicate_total counter
-wazzap_inbound_duplicate_total %d
-# TYPE wazzap_inbound_ignored_total counter
-wazzap_inbound_ignored_total %d
-# TYPE wazzap_inbound_batches_total counter
-wazzap_inbound_batches_total %d
-# TYPE wazzap_inbound_batched_messages_total counter
-wazzap_inbound_batched_messages_total %d
-# TYPE wazzap_history_resets_total counter
-wazzap_history_resets_total %d
-# TYPE wazzap_model_calls_total counter
-wazzap_model_calls_total %d
-# TYPE wazzap_model_failures_total counter
-wazzap_model_failures_total %d
-# TYPE wazzap_model_timeouts_total counter
-wazzap_model_timeouts_total %d
-# TYPE wazzap_model_duration_seconds_sum counter
-wazzap_model_duration_seconds_sum %.6f
-# TYPE wazzap_delivery_dispatch_total counter
-wazzap_delivery_dispatch_total %d
-# TYPE wazzap_delivery_pending_total counter
-wazzap_delivery_pending_total %d
-# TYPE wazzap_delivery_succeeded_total counter
-wazzap_delivery_succeeded_total %d
-# TYPE wazzap_delivery_failed_total counter
-wazzap_delivery_failed_total %d
-# TYPE wazzap_delivery_unknown_total counter
-wazzap_delivery_unknown_total %d
-# TYPE wazzap_delivery_errors_total counter
-wazzap_delivery_errors_total %d
-# TYPE wazzap_inbound_queue_depth gauge
-wazzap_inbound_queue_depth %d
-# TYPE wazzap_inbound_queue_capacity gauge
-wazzap_inbound_queue_capacity %d
-# TYPE wazzap_process_goroutines gauge
-wazzap_process_goroutines %d
+		_, _ = fmt.Fprintf(writer, `# TYPE discordagent_inbound_claimed_total counter
+discordagent_inbound_claimed_total %d
+# TYPE discordagent_inbound_duplicate_total counter
+discordagent_inbound_duplicate_total %d
+# TYPE discordagent_inbound_ignored_total counter
+discordagent_inbound_ignored_total %d
+# TYPE discordagent_inbound_batches_total counter
+discordagent_inbound_batches_total %d
+# TYPE discordagent_inbound_batched_messages_total counter
+discordagent_inbound_batched_messages_total %d
+# TYPE discordagent_history_resets_total counter
+discordagent_history_resets_total %d
+# TYPE discordagent_model_calls_total counter
+discordagent_model_calls_total %d
+# TYPE discordagent_model_failures_total counter
+discordagent_model_failures_total %d
+# TYPE discordagent_model_timeouts_total counter
+discordagent_model_timeouts_total %d
+# TYPE discordagent_model_duration_seconds_sum counter
+discordagent_model_duration_seconds_sum %.6f
+# TYPE discordagent_delivery_dispatch_total counter
+discordagent_delivery_dispatch_total %d
+# TYPE discordagent_delivery_pending_total counter
+discordagent_delivery_pending_total %d
+# TYPE discordagent_delivery_succeeded_total counter
+discordagent_delivery_succeeded_total %d
+# TYPE discordagent_delivery_failed_total counter
+discordagent_delivery_failed_total %d
+# TYPE discordagent_delivery_unknown_total counter
+discordagent_delivery_unknown_total %d
+# TYPE discordagent_delivery_errors_total counter
+discordagent_delivery_errors_total %d
+# TYPE discordagent_inbound_queue_depth gauge
+discordagent_inbound_queue_depth %d
+# TYPE discordagent_inbound_queue_capacity gauge
+discordagent_inbound_queue_capacity %d
+# TYPE discordagent_process_goroutines gauge
+discordagent_process_goroutines %d
 `, snapshot.InboundClaimed, snapshot.InboundDuplicates, snapshot.InboundIgnored,
 			snapshot.InboundBatches, snapshot.InboundBatchedMessages, snapshot.HistoryResets,
 			snapshot.ModelCalls, snapshot.ModelFailures, snapshot.ModelTimeouts,

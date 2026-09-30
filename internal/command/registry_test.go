@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
 )
 
 func noop(context.Context, *command.Context) error { return nil }

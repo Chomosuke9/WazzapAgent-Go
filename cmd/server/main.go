@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/web"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	apphost "github.com/Chomosuke9/WazzapAgent-Go/internal/host"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	"github.com/Chomosuke9/DiscordAgent-Go/frontend"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/web"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	apphost "github.com/Chomosuke9/DiscordAgent-Go/internal/host"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
 )
 
 var version = "dev"
@@ -32,7 +32,7 @@ func main() {
 }
 
 func run() error {
-	address := os.Getenv("WAZZAP_WEB_ADDR")
+	address := os.Getenv("DISCORDAGENT_WEB_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
@@ -69,7 +69,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	handler, err := web.NewHandler(app.Service, assets, os.Getenv("WAZZAP_WEB_PUBLIC_ORIGIN"))
+	handler, err := web.NewHandler(app.Service, assets, os.Getenv("DISCORDAGENT_WEB_PUBLIC_ORIGIN"))
 	if err != nil {
 		return err
 	}

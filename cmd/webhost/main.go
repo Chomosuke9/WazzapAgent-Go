@@ -19,22 +19,22 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/web"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	apphost "github.com/Chomosuke9/WazzapAgent-Go/internal/host"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	"github.com/Chomosuke9/DiscordAgent-Go/frontend"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/web"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	apphost "github.com/Chomosuke9/DiscordAgent-Go/internal/host"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
 )
 
 var version = "dev"
 
 const (
 	tokenFile    = "web-token"
-	tokenEnv     = "WAZZAP_WEB_TOKEN"
+	tokenEnv     = "DISCORDAGENT_WEB_TOKEN"
 	defaultAddr  = "0.0.0.0:8080"
 	usageSummary = `Usage:
-  wazzapagent-web [flags]        serve the web UI
-  wazzapagent-web token [-rotate]  print the access token (-rotate makes a new one)
+  discordagent-web [flags]        serve the web UI
+  discordagent-web token [-rotate]  print the access token (-rotate makes a new one)
 
 Flags:`
 )
@@ -50,16 +50,16 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "token" {
 		return tokenCommand(args[1:])
 	}
-	flags := flag.NewFlagSet("wazzapagent-web", flag.ContinueOnError)
+	flags := flag.NewFlagSet("discordagent-web", flag.ContinueOnError)
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), usageSummary)
 		flags.PrintDefaults()
 		fmt.Fprintf(flags.Output(), "\nThe access token comes from $%s, or from the token file (created on first start).\n", tokenEnv)
 	}
-	address := flags.String("addr", envOr("WAZZAP_WEB_ADDR", defaultAddr), "listen address (env WAZZAP_WEB_ADDR)")
-	publicOrigin := flags.String("public-origin", os.Getenv("WAZZAP_WEB_PUBLIC_ORIGIN"), "HTTPS origin when behind a TLS reverse proxy (env WAZZAP_WEB_PUBLIC_ORIGIN)")
-	tlsCert := flags.String("tls-cert", os.Getenv("WAZZAP_WEB_TLS_CERT"), "TLS certificate file to serve HTTPS directly (env WAZZAP_WEB_TLS_CERT)")
-	tlsKey := flags.String("tls-key", os.Getenv("WAZZAP_WEB_TLS_KEY"), "TLS private key file (env WAZZAP_WEB_TLS_KEY)")
+	address := flags.String("addr", envOr("DISCORDAGENT_WEB_ADDR", defaultAddr), "listen address (env DISCORDAGENT_WEB_ADDR)")
+	publicOrigin := flags.String("public-origin", os.Getenv("DISCORDAGENT_WEB_PUBLIC_ORIGIN"), "HTTPS origin when behind a TLS reverse proxy (env DISCORDAGENT_WEB_PUBLIC_ORIGIN)")
+	tlsCert := flags.String("tls-cert", os.Getenv("DISCORDAGENT_WEB_TLS_CERT"), "TLS certificate file to serve HTTPS directly (env DISCORDAGENT_WEB_TLS_CERT)")
+	tlsKey := flags.String("tls-key", os.Getenv("DISCORDAGENT_WEB_TLS_KEY"), "TLS private key file (env DISCORDAGENT_WEB_TLS_KEY)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -86,7 +86,7 @@ func run(args []string) error {
 		return err
 	}
 	if created {
-		fmt.Fprintf(os.Stderr, "\nAccess token (saved to %s):\n\n    %s\n\nEnter it once in the browser; the login is remembered. Show it again with: wazzapagent-web token\n\n", tokenPath(paths), token)
+		fmt.Fprintf(os.Stderr, "\nAccess token (saved to %s):\n\n    %s\n\nEnter it once in the browser; the login is remembered. Show it again with: discordagent-web token\n\n", tokenPath(paths), token)
 	}
 
 	listener, err := net.Listen("tcp", *address)

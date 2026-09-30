@@ -11,7 +11,7 @@ import (
 	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
 )
 
 func TestButtonTapsBecomeMessageText(t *testing.T) {

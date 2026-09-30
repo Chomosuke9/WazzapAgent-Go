@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "io.github.chomosuke9.wazzapagent"
+        applicationId "io.github.chomosuke9.discordagent"
         minSdk 21
         targetSdk 35
         versionCode 1

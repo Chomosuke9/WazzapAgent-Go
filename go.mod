@@ -1,4 +1,4 @@
-module github.com/Chomosuke9/WazzapAgent-Go
+module github.com/Chomosuke9/DiscordAgent-Go
 
 go 1.26.8
 

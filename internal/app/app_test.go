@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 )
 
 func TestHealthEndpoints(t *testing.T) {
@@ -27,7 +27,7 @@ func TestHealthEndpoints(t *testing.T) {
 	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metricsResponse := httptest.NewRecorder()
 	application.Handler().ServeHTTP(metricsResponse, metricsRequest)
-	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "wazzap_model_calls_total 0") {
+	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "discordagent_model_calls_total 0") {
 		t.Fatalf("metrics response = %d/%q", metricsResponse.Code, metricsResponse.Body.String())
 	}
 
@@ -43,7 +43,7 @@ func TestCLIDiagnosticsAcrossFreshRuns(t *testing.T) {
 	dataDir := t.TempDir()
 	for range 3 {
 		application := testApplication(t, map[string]string{
-			"WAZZAP_DATA_DIR": dataDir, "WAZZAP_HTTP_ADDRESS": "127.0.0.1:0",
+			"DISCORDAGENT_DATA_DIR": dataDir, "DISCORDAGENT_HTTP_ADDRESS": "127.0.0.1:0",
 		})
 		address := make(chan string, 1)
 		application.logger = slog.New(slog.NewJSONHandler(diagnosticsLogWriter(func(data []byte) (int, error) {
@@ -96,9 +96,9 @@ func TestCLIDiagnosticsAcrossFreshRuns(t *testing.T) {
 func TestRunStopsAfterCancellation(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "runtime-data")
 	application := testApplication(t, map[string]string{
-		"WAZZAP_DATA_DIR":         dataDir,
-		"WAZZAP_HTTP_ADDRESS":     "127.0.0.1:0",
-		"WAZZAP_SHUTDOWN_TIMEOUT": "2s",
+		"DISCORDAGENT_DATA_DIR":         dataDir,
+		"DISCORDAGENT_HTTP_ADDRESS":     "127.0.0.1:0",
+		"DISCORDAGENT_SHUTDOWN_TIMEOUT": "2s",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -145,7 +145,7 @@ func TestRunDoesNotBindConfiguredDiagnosticsAddress(t *testing.T) {
 	}
 	defer occupied.Close()
 	application := testApplication(t, map[string]string{
-		"WAZZAP_HTTP_ADDRESS": occupied.Addr().String(),
+		"DISCORDAGENT_HTTP_ADDRESS": occupied.Addr().String(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -176,7 +176,7 @@ func TestRunCLIReportsDiagnosticsListenerFailure(t *testing.T) {
 	}
 	defer occupied.Close()
 	application := testApplication(t, map[string]string{
-		"WAZZAP_HTTP_ADDRESS": occupied.Addr().String(),
+		"DISCORDAGENT_HTTP_ADDRESS": occupied.Addr().String(),
 	})
 	err = application.RunCLI(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "listen on") {
@@ -193,8 +193,8 @@ func TestRunRejectsDataFile(t *testing.T) {
 		t.Fatalf("create data file: %v", err)
 	}
 	application := testApplication(t, map[string]string{
-		"WAZZAP_DATA_DIR":     dataPath,
-		"WAZZAP_HTTP_ADDRESS": "127.0.0.1:0",
+		"DISCORDAGENT_DATA_DIR":     dataPath,
+		"DISCORDAGENT_HTTP_ADDRESS": "127.0.0.1:0",
 	})
 	if err := application.Run(context.Background()); err == nil {
 		t.Fatal("application accepted file as data directory")
@@ -210,11 +210,11 @@ func testApplication(t *testing.T, values map[string]string) *Application {
 	for key, value := range values {
 		effectiveValues[key] = value
 	}
-	if _, configured := effectiveValues["WAZZAP_DATA_DIR"]; !configured {
-		effectiveValues["WAZZAP_DATA_DIR"] = t.TempDir()
+	if _, configured := effectiveValues["DISCORDAGENT_DATA_DIR"]; !configured {
+		effectiveValues["DISCORDAGENT_DATA_DIR"] = t.TempDir()
 	}
-	if _, configured := effectiveValues["WAZZAP_WHATSAPP_ENABLED"]; !configured {
-		effectiveValues["WAZZAP_WHATSAPP_ENABLED"] = "false"
+	if _, configured := effectiveValues["DISCORDAGENT_DISCORD_ENABLED"]; !configured {
+		effectiveValues["DISCORDAGENT_DISCORD_ENABLED"] = "false"
 	}
 	cfg, err := config.Load(func(key string) (string, bool) {
 		value, ok := effectiveValues[key]

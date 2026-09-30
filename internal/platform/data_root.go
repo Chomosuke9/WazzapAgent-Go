@@ -19,7 +19,7 @@ var (
 	ErrUnsupportedPlatform = errors.New("unsupported platform data root")
 )
 
-const lockFileName = ".wazzapagent.lock"
+const lockFileName = ".discordagent.lock"
 
 // DataRootLease holds the OS lock for the canonical data root. Closing it is
 // idempotent and releases ownership only after all callers stop using storage.
@@ -127,7 +127,7 @@ func DefaultDataRoot() (string, error) {
 			}
 			base = filepath.Join(home, "AppData", "Local")
 		}
-		return filepath.Join(base, "WazzapAgent"), nil
+		return filepath.Join(base, "DiscordAgent"), nil
 	case "linux":
 		base = os.Getenv("XDG_DATA_HOME")
 		if base == "" {
@@ -137,13 +137,13 @@ func DefaultDataRoot() (string, error) {
 			}
 			base = filepath.Join(home, ".local", "share")
 		}
-		return filepath.Join(base, "wazzapagent"), nil
+		return filepath.Join(base, "discordagent"), nil
 	case "darwin":
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve macOS home: %w", err)
 		}
-		return filepath.Join(home, "Library", "Application Support", "WazzapAgent"), nil
+		return filepath.Join(home, "Library", "Application Support", "DiscordAgent"), nil
 	default:
 		return "", ErrUnsupportedPlatform
 	}

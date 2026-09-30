@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 )
 
 type fakeRuntime struct {
@@ -37,7 +37,7 @@ func (runtime *fakeRuntime) close(context.Context) error {
 
 func TestRunCLITimeoutKeepsWorkersOwned(t *testing.T) {
 	application := testEnabledApplicationWith(t, map[string]string{
-		"WAZZAP_HTTP_ADDRESS": "127.0.0.1:0", "WAZZAP_SHUTDOWN_TIMEOUT": "20ms",
+		"DISCORDAGENT_HTTP_ADDRESS": "127.0.0.1:0", "DISCORDAGENT_SHUTDOWN_TIMEOUT": "20ms",
 	})
 	fake := &fakeRuntime{runStarted: make(chan struct{}), release: make(chan struct{})}
 	application.runtimeFactory = func(context.Context) (runtimeHandle, error) { return fake, nil }
@@ -68,7 +68,7 @@ func TestRunCLITimeoutKeepsWorkersOwned(t *testing.T) {
 }
 
 func TestRejectedCLIRunCannotCancelExistingOwner(t *testing.T) {
-	application := testApplication(t, map[string]string{"WAZZAP_DATA_DIR": t.TempDir()})
+	application := testApplication(t, map[string]string{"DISCORDAGENT_DATA_DIR": t.TempDir()})
 	result := make(chan error, 1)
 	go func() { result <- application.Run(context.Background()) }()
 	t.Cleanup(func() { _ = application.Close(context.Background()) })
@@ -263,17 +263,17 @@ func testEnabledApplicationWith(t *testing.T, overrides map[string]string) *Appl
 	t.Helper()
 	dataDir := t.TempDir()
 	values := map[string]string{
-		"WAZZAP_DATA_DIR":         dataDir,
-		"WAZZAP_WHATSAPP_ENABLED": "true",
-		"WAZZAP_AGENT_ENABLED":    "false",
-		"WAZZAP_TENANT_ID":        "11111111-1111-4111-8111-111111111111",
-		"WAZZAP_ACCOUNT_ID":       "22222222-2222-4222-8222-222222222222",
-		"WAZZAP_OWNER_JID":        "15550000001@s.whatsapp.net",
-		"WAZZAP_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
-		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"WAZZAP_LLM_API_KEY":      "test-key",
-		"WAZZAP_LLM_MODEL":        "test-model",
-		"WAZZAP_BASE_PROMPT":      "test prompt",
+		"DISCORDAGENT_DATA_DIR":         dataDir,
+		"DISCORDAGENT_DISCORD_ENABLED": "true",
+		"DISCORDAGENT_AGENT_ENABLED":    "false",
+		"DISCORDAGENT_TENANT_ID":        "11111111-1111-4111-8111-111111111111",
+		"DISCORDAGENT_ACCOUNT_ID":       "22222222-2222-4222-8222-222222222222",
+		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":      "test-key",
+		"DISCORDAGENT_LLM_MODEL":        "test-model",
+		"DISCORDAGENT_BASE_PROMPT":      "test prompt",
 		"ASSISTANT_NAME":          "Test Bot",
 	}
 	for key, value := range overrides {

@@ -3,8 +3,8 @@ package ui
 import (
 	"fmt"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 )
 
 // SessionLog records WhatsApp session status changes in the UI log. The UI

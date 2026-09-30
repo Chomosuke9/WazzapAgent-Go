@@ -5,7 +5,7 @@ includes:
 
 tasks:
   build:
-    summary: Build WazzapAgent for Linux on a Linux host
+    summary: Build DiscordAgent for Linux on a Linux host
     cmds:
       - task: common:generate:bindings
       - task: common:build:frontend

@@ -84,7 +84,7 @@ export function WhatsAppPage() {
   }
 
   function logout() {
-    if (window.confirm("Remove the WazzapAgent device from this WhatsApp account?")) {
+    if (window.confirm("Remove the DiscordAgent device from this WhatsApp account?")) {
       void runOperation(logoutWhatsAppSession);
     }
   }

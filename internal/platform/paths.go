@@ -31,7 +31,7 @@ func DefaultConfigDir() (string, error) {
 			}
 			base = filepath.Join(home, "AppData", "Local")
 		}
-		return filepath.Join(base, "WazzapAgent"), nil
+		return filepath.Join(base, "DiscordAgent"), nil
 	case "linux":
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
@@ -41,13 +41,13 @@ func DefaultConfigDir() (string, error) {
 			}
 			base = filepath.Join(home, ".config")
 		}
-		return filepath.Join(base, "wazzapagent"), nil
+		return filepath.Join(base, "discordagent"), nil
 	case "darwin":
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve macOS home: %w", err)
 		}
-		return filepath.Join(home, "Library", "Preferences", "WazzapAgent"), nil
+		return filepath.Join(home, "Library", "Preferences", "DiscordAgent"), nil
 	default:
 		return "", ErrUnsupportedPlatform
 	}

@@ -31,9 +31,9 @@ per file -> paket kerja dan acceptance gate -> format laporan pelaksana.
 ## Struktur
 
 ```text
-WazzapAgent-Go/
+DiscordAgent-Go/
 ├── cmd/
-│   ├── wazzapagent/             # CLI/headless yang sudah ada
+│   ├── discordagent/             # CLI/headless yang sudah ada
 │   ├── app/                     # Bootstrap Wails desktop/mobile (baru)
 │   └── server/                  # Reservasi mode web berikutnya (baru)
 ├── internal/
@@ -83,7 +83,7 @@ React -> generated Wails binding -> adapter Wails -> control use case
                                                SQLite / Hypermeow
 ```
 
-- `cmd/app` merakit shell dan dependency; `cmd/wazzapagent` tetap bootstrap CLI.
+- `cmd/app` merakit shell dan dependency; `cmd/discordagent` tetap bootstrap CLI.
 - `internal/app` menangani composition runtime, bukan detail UI.
 - `internal/control` menangani settings/session/runtime tanpa dependency Wails.
 - `internal/adapters/wails` adalah satu batas komunikasi Go dengan UI.
@@ -174,7 +174,7 @@ sebelum mengerjakan setiap paket, jangan mengulang perubahan yang sudah selesai.
 
 | ID | Keputusan |
 | --- | --- |
-| D01 | Satu Go module, satu React frontend. `cmd/app` menjadi shell Wails bersama; `cmd/wazzapagent` tetap CLI; `cmd/server` belum diimplementasikan. |
+| D01 | Satu Go module, satu React frontend. `cmd/app` menjadi shell Wails bersama; `cmd/discordagent` tetap CLI; `cmd/server` belum diimplementasikan. |
 | D02 | Domain tidak mengimpor Wails. `control` mendefinisikan port use case; `app` mengimplementasikan composition/runtime port itu. Entrypoint merakit keduanya, tanpa import cycle. |
 | D03 | GUI membaca `settings.db` + default Go, tanpa implicit override dari environment atau `.env` working directory. CLI tetap memakai precedence process env > file eksplisit/default `.env` > default Go. |
 | D04 | Nilai environment yang relevan dapat diimpor/diekspor secara eksplisit dari UI. Settings GUI tidak ditulis ulang ke process environment menggunakan `os.Setenv`. |
@@ -218,7 +218,7 @@ menjelaskan bentuk akhir tanpa memaksa satu paket bergantung pada kode masa depa
   berbeda adalah contoh tuning, bukan default UI. Impor mempertahankan nilainya.
 - `ASSISTANT_NAME` yang kosong boleh disimpan sebagai draft, tetapi bot mode harus
   menolaknya jika context builder tidak dapat menggunakan nama kosong.
-- `WAZZAP_BASE_PROMPT` tetap editable; system policy ter-embed yang tidak dapat
+- `DISCORDAGENT_BASE_PROMPT` tetap editable; system policy ter-embed yang tidak dapat
   di-override tetap menjadi file terpisah dan tidak ditawarkan sebagai setting.
 
 ### 3.2 Inventaris field: tidak boleh ada setting yang hilang
@@ -229,25 +229,25 @@ aktif harus ditandai demikian di UI. Field secret menggunakan aksi khusus.
 
 | Kategori | Key yang harus dipetakan | Perilaku |
 | --- | --- | --- |
-| Assistant | `ASSISTANT_NAME`, `WAZZAP_BASE_PROMPT` | R |
-| Aktivasi | `WAZZAP_WHATSAPP_ENABLED`, `WAZZAP_AGENT_ENABLED` | R |
-| Akses chat | `WAZZAP_OWNER_JID`, `WAZZAP_CHAT_ALLOWLIST` | R; gunakan parser/semantik allowlist existing |
-| Provider utama | `WAZZAP_LLM_ENDPOINT`, `WAZZAP_LLM_API_KEY`, `WAZZAP_LLM_MODEL`, `WAZZAP_LLM_PROVIDER_ID` | R; API key secret |
-| Fallback | `WAZZAP_LLM_FALLBACK_ENDPOINT`, `WAZZAP_LLM_FALLBACK_API_KEY` | R; model mengikuti provider utama seperti kontrak sekarang |
-| LLM limits | `WAZZAP_LLM_TIMEOUT`, `WAZZAP_LLM_CONCURRENCY`, `WAZZAP_MAX_OUTPUT_TOKENS`, `WAZZAP_MAX_RESPONSE_BYTES` | R |
-| Konteks | `WAZZAP_HISTORY_WINDOW`, `WAZZAP_MAX_CONTEXT_BYTES` | R |
-| Retention | `WAZZAP_HISTORY_KEEP_LATEST`, `WAZZAP_HISTORY_MAX_AGE` | R; jelaskan efek pengurangan retention sebelum Apply |
-| Inbound | `WAZZAP_INBOUND_QUEUE`, `WAZZAP_INBOUND_WORKERS` | R |
-| Batching | `WAZZAP_MESSAGE_DEBOUNCE`, `WAZZAP_MESSAGE_BURST_CAP` | R |
-| Koneksi | `WAZZAP_CONNECT_TIMEOUT`, `WAZZAP_SEND_TIMEOUT`, `WAZZAP_SHUTDOWN_TIMEOUT` | R |
-| Policy | `WAZZAP_POLICY_ID`, `WAZZAP_POLICY_REVISION` | R; bukan moderation level per-chat |
-| Observability | `WAZZAP_LOG_LEVEL`, `WAZZAP_LOG_FORMAT`, `LANGSMITH_API_KEY` | R; LangSmith key kosong berarti tracing nonaktif |
+| Assistant | `ASSISTANT_NAME`, `DISCORDAGENT_BASE_PROMPT` | R |
+| Aktivasi | `DISCORDAGENT_DISCORD_ENABLED`, `DISCORDAGENT_AGENT_ENABLED` | R |
+| Akses chat | `DISCORDAGENT_OWNER_ID`, `DISCORDAGENT_CHAT_ALLOWLIST` | R; gunakan parser/semantik allowlist existing |
+| Provider utama | `DISCORDAGENT_LLM_ENDPOINT`, `DISCORDAGENT_LLM_API_KEY`, `DISCORDAGENT_LLM_MODEL`, `DISCORDAGENT_LLM_PROVIDER_ID` | R; API key secret |
+| Fallback | `DISCORDAGENT_LLM_FALLBACK_ENDPOINT`, `DISCORDAGENT_LLM_FALLBACK_API_KEY` | R; model mengikuti provider utama seperti kontrak sekarang |
+| LLM limits | `DISCORDAGENT_LLM_TIMEOUT`, `DISCORDAGENT_LLM_CONCURRENCY`, `DISCORDAGENT_MAX_OUTPUT_TOKENS`, `DISCORDAGENT_MAX_RESPONSE_BYTES` | R |
+| Konteks | `DISCORDAGENT_HISTORY_WINDOW`, `DISCORDAGENT_MAX_CONTEXT_BYTES` | R |
+| Retention | `DISCORDAGENT_HISTORY_KEEP_LATEST`, `DISCORDAGENT_HISTORY_MAX_AGE` | R; jelaskan efek pengurangan retention sebelum Apply |
+| Inbound | `DISCORDAGENT_INBOUND_QUEUE`, `DISCORDAGENT_INBOUND_WORKERS` | R |
+| Batching | `DISCORDAGENT_MESSAGE_DEBOUNCE`, `DISCORDAGENT_MESSAGE_BURST_CAP` | R |
+| Koneksi | `DISCORDAGENT_CONNECT_TIMEOUT`, `DISCORDAGENT_SEND_TIMEOUT`, `DISCORDAGENT_SHUTDOWN_TIMEOUT` | R |
+| Policy | `DISCORDAGENT_POLICY_ID`, `DISCORDAGENT_POLICY_REVISION` | R; bukan moderation level per-chat |
+| Observability | `DISCORDAGENT_LOG_LEVEL`, `DISCORDAGENT_LOG_FORMAT`, `LANGSMITH_API_KEY` | R; LangSmith key kosong berarti tracing nonaktif |
 | TypeSafe | `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT`, `TYPESAFE_MODEL` | R; key kosong berarti trigger Smart nonaktif; endpoint default `https://api.typesafe.ai/v1/systemone`; model default `jev-latest` |
-| Storage | `WAZZAP_DATA_DIR` | B; tampilkan lokasi efektif, ubah lewat operasi data-root khusus |
-| Sumber file | `WAZZAP_ENV_FILE` | C; pemilih file impor pada GUI, bukan field yang mengubah sumber GUI |
-| HTTP | `WAZZAP_HTTP_ADDRESS` | C; boleh diedit/disimpan untuk ekspor, tidak membuka listener GUI |
-| Pairing output | `WAZZAP_PAIRING_OUTPUT` | C; GUI selalu UI, terminal/disabled tetap pilihan CLI |
-| Identitas | `WAZZAP_TENANT_ID`, `WAZZAP_ACCOUNT_ID` | I; loader runtime sekarang memakai identity file, jangan impor ID ini sebagai edit settings |
+| Storage | `DISCORDAGENT_DATA_DIR` | B; tampilkan lokasi efektif, ubah lewat operasi data-root khusus |
+| Sumber file | `DISCORDAGENT_ENV_FILE` | C; pemilih file impor pada GUI, bukan field yang mengubah sumber GUI |
+| HTTP | `DISCORDAGENT_HTTP_ADDRESS` | C; boleh diedit/disimpan untuk ekspor, tidak membuka listener GUI |
+| Pairing output | `DISCORDAGENT_PAIRING_OUTPUT` | C; GUI selalu UI, terminal/disabled tetap pilihan CLI |
+| Identitas | `DISCORDAGENT_TENANT_ID`, `DISCORDAGENT_ACCOUNT_ID` | I; loader runtime sekarang memakai identity file, jangan impor ID ini sebagai edit settings |
 | Warna log | `NO_COLOR`, `FORCE_COLOR` | C; tetap opsi terminal, tidak mengubah tema UI |
 | Preferensi aplikasi | `startOnLaunch` | Settings GUI baru, tanpa menciptakan env alias yang tidak diperlukan |
 
@@ -408,12 +408,12 @@ jangan mengedit intent durable agar cocok dengan model/prompt baru.
 | --- | --- | --- |
 | `go.mod`, `go.sum` | Ubah | Tambahkan versi Wails v3 yang dipin. Pertahankan Go minimum dan versi Hypermeow/SQLite kecuali spike membuktikan konflik. Tidak membuat nested module. |
 | `Taskfile.yml` | Baru | Task frontend install/typecheck/build, generate bindings, desktop dev/build, Android build/run. Arahkan package ke `./cmd/app`; semua GUI task menyertakan tag `gui` bersama tag resmi template. Catat command yang benar-benar diuji. |
-| `build/config.yml`, `build/Taskfile.yml` | Baru dari template | Nama WazzapAgent, metadata aplikasi, entrypoint, output `bin`, asset path, serta versi tooling yang sama. Isi field sesuai schema versi template; jangan menebak schema YAML. |
+| `build/config.yml`, `build/Taskfile.yml` | Baru dari template | Nama DiscordAgent, metadata aplikasi, entrypoint, output `bin`, asset path, serta versi tooling yang sama. Isi field sesuai schema versi template; jangan menebak schema YAML. |
 | `cmd/app/main.go` | Baru, `gui` | Bootstrap lifecycle Wails; resolve app data, acquire lease, open settings, buat controller, register service, buat window, load asset. Window/setup harus terbuka walaupun settings tidak lengkap. |
 | `cmd/app/bootstrap.go` | Baru, `gui` | Constructor composition untuk shell: logger, settings repository, runtime factory, event adapter, native file adapter. Error storage menghasilkan layar recovery tanpa membuat DB kosong pengganti. |
 | `frontend/assets.go` | Baru, `gui` | Package Go `frontend`, embed `all:dist`, expose asset FS untuk shell. Build frontend terlebih dahulu. Jangan memakai `//go:embed ../../frontend/dist` karena parent path tidak valid. |
-| `cmd/wazzapagent/main.go` | Ubah | Tetap environment/file loader dan signal-aware CLI; resolve root tanpa efek samping, acquire lease, baru load/create identity dan store. Gunakan core runtime baru, terminal pairing adapter, shared system policy, dan diagnostics server khusus CLI. Backup command juga memakai lease. |
-| `cmd/wazzapagent/main_test.go` | Ubah | Pertahankan exit code invalid config/offline command; pindahkan prompt-render tests ke pemilik prompt bersama. |
+| `cmd/discordagent/main.go` | Ubah | Tetap environment/file loader dan signal-aware CLI; resolve root tanpa efek samping, acquire lease, baru load/create identity dan store. Gunakan core runtime baru, terminal pairing adapter, shared system policy, dan diagnostics server khusus CLI. Backup command juga memakai lease. |
+| `cmd/discordagent/main_test.go` | Ubah | Pertahankan exit code invalid config/offline command; pindahkan prompt-render tests ke pemilik prompt bersama. |
 | `cmd/server/README.md` | Pertahankan | Web belum aktif. Jangan isi server, auth framework, atau transport HTTP frontend pada tahap ini. |
 | `.gitignore` | Ubah seperlunya | Ignore output/cache/local SDK config. Tetap track template build, package lock, dan generated bindings sesuai kebijakan CI; jangan ignore seluruh `build/`. |
 
@@ -430,7 +430,7 @@ berbeda, catat perubahan path yang diperlukan sebelum memindahkan file.
 | `internal/app/runtime.go` | Baru | Pemilik Run/Close, mode session-only/bot, cancellation, status, resource cleanup dan shutdown ordering. Close idempotent; rebuild menghasilkan instance baru. |
 | `internal/app/compose.go` | Baru | Pindahkan `composeRuntime` tanpa menulis ulang domain. Bot branch merakit pipeline existing; session-only branch tidak membuat LLM/registry/recovery/dispatch/maintenance. |
 | `internal/app/diagnostics.go` | Baru | Pindahkan Handler, health response, metrics handler dan HTTP server lifecycle existing. Listener hanya dimulai CLI; GUI membaca status lewat controller. |
-| `internal/app/systemprompt.txt` | Pindah | Pindahkan isi persis dari `cmd/wazzapagent/systemprompt.txt`; satu sumber prompt untuk CLI dan GUI. Jangan mengubah policy text dalam refactor ini. |
+| `internal/app/systemprompt.txt` | Pindah | Pindahkan isi persis dari `cmd/discordagent/systemprompt.txt`; satu sumber prompt untuk CLI dan GUI. Jangan mengubah policy text dalam refactor ini. |
 | `internal/app/system_policy.go` | Baru | Embed/render policy; dependency waktu/nama eksplisit. Hapus `SetSystemPolicy` dan mutable package global, bukan menambah wrapper compatibility. |
 | `internal/app/app_test.go`, `runtime_test.go`, `system_policy_test.go` | Ubah/baru | Health CLI tetap benar, GUI runtime tidak bind HTTP, constructor failure menutup resource, restart berulang, cancellation, dan literal prompt placeholders tidak berubah. |
 | `internal/account/runtime.go`, `runtime_test.go` | Ubah | Integrasikan progress pairing dan state terbaru lewat satu pemilik event; Closed channel tidak boleh membuat busy loop. Pertahankan Ready hanya untuk koneksi valid. |
@@ -582,7 +582,7 @@ Redux, atau model provider discovery yang belum diminta.
 | `build/android/Taskfile.yml` dan native files hasil template | Baru | Application ID stabil, min/target SDK, SDK/NDK/JDK dan ABI eksplisit, internal files dir, internet permission, WebView asset loader. Catat nama path native hasil generator di README setelah scaffold. |
 | Android Activity/host hasil template | Ubah saat diperlukan | Lifecycle resume/stop, file stream, shared Go runtime; tidak menciptakan client WhatsApp kedua saat Activity recreate. Nama file mengikuti versi generator, bukan tebakan. |
 | Android service/manifest files hasil template | Baru/ubah pada tahap background | Foreground service + notification dan lifecycle ownership yang telah diuji; pilih service type berdasarkan aturan Android yang berlaku. Jika tidak layak, laporkan batas dukungan. |
-| `.github/workflows/ci.yml` | Ubah | Pertahankan core generation/test/vet/race. CLI cross-build memakai target eksplisit `./cmd/wazzapagent`, bukan semua cmd termasuk GUI. Directory `cmd/whatsapp-capability` saat audit tidak memiliki source Go tracked; jangan jadikan target build. |
+| `.github/workflows/ci.yml` | Ubah | Pertahankan core generation/test/vet/race. CLI cross-build memakai target eksplisit `./cmd/discordagent`, bukan semua cmd termasuk GUI. Directory `cmd/whatsapp-capability` saat audit tidak memiliki source Go tracked; jangan jadikan target build. |
 | `.github/workflows/app.yml` | Baru | npm ci/typecheck/test/build, binding regen/diff, GUI Go tests dengan tag gui, native build Windows/Linux/macOS dan Android APK sesuai toolchain. Jangan menyebut go cross-build sebagai pengujian native UI. |
 | `README.md` dan README folder scaffold | Ubah setelah fitur tersedia | Perbarui status/command nyata, prerequisites, lokasi data, semantics Save/Apply/Stop/Logout, batas background Android; hapus klaim placeholder yang sudah usang. |
 
@@ -593,8 +593,8 @@ binding generation juga. Jangan menimpa tag resmi seperti production/Android
 dengan tag gui; keduanya diperlukan sesuai template. Jangan membuat dist palsu
 atau checked-in empty HTML untuk melewati kegagalan asset embedding.
 
-Gunakan product name `WazzapAgent` dan application/bundle ID baru
-`io.github.chomosuke9.wazzapagent`, kecuali ditemukan ID aplikasi existing yang
+Gunakan product name `DiscordAgent` dan application/bundle ID baru
+`io.github.chomosuke9.discordagent`, kecuali ditemukan ID aplikasi existing yang
 harus dipertahankan. Release signing tetap input lokal/CI secret. Native template
 path final dicatat setelah P0. Jangan mengganti application ID pada update karena
 dapat memisahkan sandbox data Android dari instalasi sebelumnya.
@@ -648,7 +648,7 @@ repository. Tidak perlu menjalankan test aplikasi untuk edit dokumentasi saja.
 ```text
 go test -count=1 ./...
 go vet ./...
-go build ./cmd/wazzapagent
+go build ./cmd/discordagent
 git diff --check
 ```
 
@@ -744,7 +744,7 @@ P2 dicatat pada bagian 8 dan 9. Controller dan paket P3-P9 masih tersisa.
 | `frontend/package*.json`, `tsconfig.json`, `vite.config.ts`, `vitest.config.ts` | Versi dependency dipin, npm lock, typecheck/test/build | Pertahankan lock dan jalankan audit saat mengganti dependency |
 | `Taskfile.yml`, `build/**/Taskfile.yml`, `build/config.yml` | Build desktop, dev config, gate Android eksplisit | P7 packaging native; Android masih perlu generated host dan toolchain |
 | `.github/workflows/app.yml` | Job Windows: frontend checks, binding drift, GUI compile, artifact executable | Workflow ditulis tetapi belum dijalankan di GitHub Actions |
-| `.github/workflows/ci.yml` | Build core diarahkan eksplisit ke `./cmd/wazzapagent` | Pertahankan core tests/race/cross-build tanpa dependency GUI |
+| `.github/workflows/ci.yml` | Build core diarahkan eksplisit ke `./cmd/discordagent` | Pertahankan core tests/race/cross-build tanpa dependency GUI |
 | `internal/control/`, `cmd/server/` | Controller settings P2 tersedia; runtime/session port masih reservasi | Jangan menganggap UI memiliki operasi runtime/session |
 | `internal/platform/` | Canonical data-root, OS-backed lease, fixed config directory, dan atomic `bootstrap.json` pointer | P6 menambah backup/restore/move-root operations; lease sudah dipasang pada CLI/GUI bootstrap |
 
@@ -759,7 +759,7 @@ wails3 task package
 wails3 task run
 ```
 
-Output Windows: `bin/WazzapAgent.exe`. `package` saat ini membuat executable
+Output Windows: `bin/DiscordAgent.exe`. `package` saat ini membuat executable
 production, belum installer/signing. Untuk development gunakan `wails3 task dev`;
 alur hot reload belum diuji interaktif. Browser Vite biasa tidak menyediakan
 bridge Go; verifikasi method/event dilakukan di window Wails.
@@ -776,7 +776,7 @@ Tidak ada absolute path komputer pengembang yang ditulis ke konfigurasi build.
 | `npm audit` | 0 vulnerability setelah Vitest diperbarui ke `4.1.11` |
 | Generator `wails3 generate bindings -f '-tags gui' -clean=true -ts -i ./cmd/app` | Lulus; binding menyertakan event bertipe, tanpa DTO manual frontend |
 | `go test -tags gui ./...`, `go vet -tags gui ./...`, `go test ./...`, `go vet ./...` | Lulus di Windows |
-| `go build ./cmd/wazzapagent` | Lulus; CLI tidak menjalankan runtime saat build |
+| `go build ./cmd/discordagent` | Lulus; CLI tidak menjalankan runtime saat build |
 | `wails3 task package` | Terblokir di precondition npm PATH host; `frontend` build dan `go build -tags gui,production ... ./cmd/app` lulus |
 | Native Windows/WebView2 | Window dibuka dari working directory sementara, GetAppInfo menampilkan `windows / dev`, tombol ping menampilkan `pong #1` melalui event Go |
 | `git diff --check` | Lulus |
@@ -846,7 +846,7 @@ core dari diagnostik CLI, tanpa mengaktifkan koneksi WhatsApp melalui UI P0.
 | `internal/app/app.go`, `runtime.go`, `diagnostics.go` | Ownership Run/Close, core tanpa HTTP, CLI diagnostics, cleanup worker | Controller P2/P3 mengelola operasi dan status UI; jangan menambah owner runtime kedua |
 | `internal/app/compose.go` | Composition bot existing dipisahkan, policy/pairing di-inject, cleanup kegagalan constructor | P3 menambah branch session-only tanpa pipeline Agent |
 | `internal/app/system_policy.go`, `systemprompt.txt` | Satu embedded policy bersama, placeholder spesifik, tanpa setter global | Konten policy tidak berubah pada P1 |
-| `cmd/wazzapagent/main.go` | Explicit Options, terminal pairing, RunCLI | P2 mengganti loader settings/identity sesuai desain |
+| `cmd/discordagent/main.go` | Explicit Options, terminal pairing, RunCLI | P2 mengganti loader settings/identity sesuai desain |
 | `internal/account/runtime.go` | Readiness valid, channel tertutup, propagasi error shutdown | P3 menambah progres pairing terstruktur |
 | `internal/adapters/whatsapp/hypermeow/adapter.go` | Stop idempotent dengan completion bersama; tunggu worker sebelum tutup device store | P3 session lifecycle resmi; tanpa protokol WhatsApp buatan |
 
@@ -858,8 +858,8 @@ core dari diagnostik CLI, tanpa mengaktifkan koneksi WhatsApp melalui UI P0.
 | `go test -count=1 ./...` | Lulus seluruh package |
 | `go vet ./...` | Lulus |
 | `go test -race -count=1 ./internal/app ./internal/account ./internal/adapters/whatsapp/hypermeow` | Lulus; package app diulang setelah perbaikan integrasi terakhir |
-| Build `./cmd/wazzapagent` | Lulus; output lokal `bin/wazzapagent-headless.exe` |
-| Build `-tags gui,production ./cmd/app` | Lulus; output lokal `bin/WazzapAgent.exe`; UI tidak berubah pada P1 |
+| Build `./cmd/discordagent` | Lulus; output lokal `bin/discordagent-headless.exe` |
+| Build `-tags gui,production ./cmd/app` | Lulus; output lokal `bin/DiscordAgent.exe`; UI tidak berubah pada P1 |
 | Prompt lama vs sumber baru | Git blob identik `7ce27f73330488cd6ecb0d611feeed2894b96abf`; placeholder lain tidak diubah |
 | `git diff --check` | Lulus |
 
@@ -1044,7 +1044,7 @@ owner dan allowlist sesuai, serta pesan baru sesudah Agent aktif.
 | `go vet ./...` dan `go vet -tags gui ./cmd/app ./internal/adapters/wails/...` | Lulus |
 | Wails TypeScript bindings (`-tags gui`) | Lulus; 17 methods dan 19 models |
 | TypeScript check, Vitest, dan Vite production build | Lulus; 4 test frontend |
-| Windows GUI production build | Lulus; `bin/WazzapAgent-P4-test.exe` |
+| Windows GUI production build | Lulus; `bin/DiscordAgent-P4-test.exe` |
 | `git diff --check` | Lulus; hanya peringatan line-ending Git |
 
 ## Referensi Wails

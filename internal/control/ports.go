@@ -3,8 +3,8 @@ package control
 import (
 	"context"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 // SettingsRepository is the only persistence dependency needed by the

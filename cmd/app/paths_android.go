@@ -5,7 +5,7 @@ package main
 import (
 	"errors"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

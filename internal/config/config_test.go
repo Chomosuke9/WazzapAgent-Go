@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(mapLookup(map[string]string{"WAZZAP_WHATSAPP_ENABLED": "false"}))
+	cfg, err := Load(mapLookup(map[string]string{"DISCORDAGENT_DISCORD_ENABLED": "false"}))
 	if err != nil {
 		t.Fatalf("load defaults: %v", err)
 	}
@@ -45,11 +45,11 @@ func TestLoadRuntimeReadsDefaultDotEnv(t *testing.T) {
 	t.Chdir(directory)
 	contents := strings.Join([]string{
 		"# runtime configuration",
-		"WAZZAP_WHATSAPP_ENABLED=false",
-		"export WAZZAP_HTTP_ADDRESS = 127.0.0.1:9090",
-		"WAZZAP_LOG_LEVEL=debug",
-		"WAZZAP_BASE_PROMPT=Jawab pesan = dengan ringkas.",
-		`WAZZAP_LLM_API_KEY="secret=with=equals"`,
+		"DISCORDAGENT_DISCORD_ENABLED=false",
+		"export DISCORDAGENT_HTTP_ADDRESS = 127.0.0.1:9090",
+		"DISCORDAGENT_LOG_LEVEL=debug",
+		"DISCORDAGENT_BASE_PROMPT=Jawab pesan = dengan ringkas.",
+		`DISCORDAGENT_LLM_API_KEY="secret=with=equals"`,
 		"",
 	}, "\r\n")
 	if err := os.WriteFile(filepath.Join(directory, defaultDotEnvPath), []byte(contents), 0o600); err != nil {
@@ -74,15 +74,15 @@ func TestLoadRuntimeReadsDefaultDotEnv(t *testing.T) {
 func TestLoadRuntimeProcessEnvironmentOverridesDotEnv(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	contents := "WAZZAP_HTTP_ADDRESS=127.0.0.1:9090\nWAZZAP_LOG_LEVEL=debug\n"
+	contents := "DISCORDAGENT_HTTP_ADDRESS=127.0.0.1:9090\nDISCORDAGENT_LOG_LEVEL=debug\n"
 	if err := os.WriteFile(filepath.Join(directory, defaultDotEnvPath), []byte(contents), 0o600); err != nil {
 		t.Fatalf("write dotenv: %v", err)
 	}
 
 	cfg, err := LoadRuntime(mapLookup(map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "false",
-		"WAZZAP_HTTP_ADDRESS":     "127.0.0.1:7070",
-		"WAZZAP_LOG_LEVEL":        "",
+		"DISCORDAGENT_DISCORD_ENABLED": "false",
+		"DISCORDAGENT_HTTP_ADDRESS":     "127.0.0.1:7070",
+		"DISCORDAGENT_LOG_LEVEL":        "",
 	}))
 	if err != nil {
 		t.Fatalf("load runtime config: %v", err)
@@ -97,7 +97,7 @@ func TestLoadRuntimeProcessEnvironmentOverridesDotEnv(t *testing.T) {
 
 func TestLoadRuntimeAllowsMissingDefaultDotEnv(t *testing.T) {
 	t.Chdir(t.TempDir())
-	cfg, err := LoadRuntime(mapLookup(map[string]string{"WAZZAP_WHATSAPP_ENABLED": "false", "WAZZAP_AGENT_ENABLED": "false"}))
+	cfg, err := LoadRuntime(mapLookup(map[string]string{"DISCORDAGENT_DISCORD_ENABLED": "false", "DISCORDAGENT_AGENT_ENABLED": "false"}))
 	if err != nil {
 		t.Fatalf("load runtime defaults: %v", err)
 	}
@@ -111,9 +111,9 @@ func TestLoadDataDirRuntimeIgnoresInvalidLiveRuntimeSettings(t *testing.T) {
 	t.Chdir(directory)
 	dataDir := filepath.Join(directory, "offline-data")
 	if err := os.WriteFile(filepath.Join(directory, defaultDotEnvPath), []byte(strings.Join([]string{
-		"WAZZAP_DATA_DIR=" + dataDir,
-		"WAZZAP_LLM_ENDPOINT=not-a-url",
-		"WAZZAP_LLM_API_KEY=",
+		"DISCORDAGENT_DATA_DIR=" + dataDir,
+		"DISCORDAGENT_LLM_ENDPOINT=not-a-url",
+		"DISCORDAGENT_LLM_API_KEY=",
 	}, "\n")), 0o600); err != nil {
 		t.Fatalf("write dotenv: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestLoadRuntimeGeneratesAndReusesStableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read runtime identity: %v", err)
 	}
-	if strings.Contains(string(contents), values["WAZZAP_LLM_API_KEY"]) {
+	if strings.Contains(string(contents), values["DISCORDAGENT_LLM_API_KEY"]) {
 		t.Fatal("runtime identity persisted an API key")
 	}
 
@@ -191,9 +191,9 @@ func TestLoadRuntimeDisabledModeDoesNotCreateIdentity(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dataDir := filepath.Join(t.TempDir(), "runtime-data")
 	cfg, err := LoadRuntime(mapLookup(map[string]string{
-		"WAZZAP_DATA_DIR":         dataDir,
-		"WAZZAP_WHATSAPP_ENABLED": "false",
-		"WAZZAP_AGENT_ENABLED":    "false",
+		"DISCORDAGENT_DATA_DIR":         dataDir,
+		"DISCORDAGENT_DISCORD_ENABLED": "false",
+		"DISCORDAGENT_AGENT_ENABLED":    "false",
 	}))
 	if err != nil {
 		t.Fatalf("load disabled runtime: %v", err)
@@ -218,7 +218,7 @@ func TestLoadRuntimeRejectsMalformedDotEnvWithoutLeakingValue(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "broken.env")
 	secret := "secret-that-must-not-leak"
-	if err := os.WriteFile(path, []byte("WAZZAP_LLM_API_KEY=\""+secret+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("DISCORDAGENT_LLM_API_KEY=\""+secret+"\n"), 0o600); err != nil {
 		t.Fatalf("write dotenv: %v", err)
 	}
 
@@ -234,34 +234,34 @@ func TestLoadRuntimeRejectsMalformedDotEnvWithoutLeakingValue(t *testing.T) {
 func TestLoadRuntimeRejectsDuplicateDotEnvVariables(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "duplicate.env")
-	if err := os.WriteFile(path, []byte("WAZZAP_LOG_LEVEL=info\nWAZZAP_LOG_LEVEL=debug\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("DISCORDAGENT_LOG_LEVEL=info\nDISCORDAGENT_LOG_LEVEL=debug\n"), 0o600); err != nil {
 		t.Fatalf("write dotenv: %v", err)
 	}
 
 	_, err := LoadRuntime(mapLookup(map[string]string{dotEnvPathKey: path}))
-	if err == nil || !strings.Contains(err.Error(), "duplicate variable WAZZAP_LOG_LEVEL") {
+	if err == nil || !strings.Contains(err.Error(), "duplicate variable DISCORDAGENT_LOG_LEVEL") {
 		t.Fatalf("duplicate dotenv error = %v", err)
 	}
 }
 
 func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
-	if _, err := Load(mapLookup(map[string]string{"WAZZAP_AGENT_ENABLED": "true"})); err == nil {
+	if _, err := Load(mapLookup(map[string]string{"DISCORDAGENT_AGENT_ENABLED": "true"})); err == nil {
 		t.Fatal("enabled mode accepted missing identity, owner, model, and allowlist")
 	}
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	values := map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "true",
-		"WAZZAP_AGENT_ENABLED":    "true",
-		"WAZZAP_TENANT_ID":        tenantID.String(),
-		"WAZZAP_ACCOUNT_ID":       accountID.String(),
-		"WAZZAP_OWNER_JID":        "15550000001@s.whatsapp.net",
-		"WAZZAP_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net,120363000000000001@g.us",
-		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"WAZZAP_LLM_API_KEY":      "very-secret-key",
-		"WAZZAP_LLM_MODEL":        "test-model",
+		"DISCORDAGENT_DISCORD_ENABLED": "true",
+		"DISCORDAGENT_AGENT_ENABLED":    "true",
+		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net,120363000000000001@g.us",
+		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":      "very-secret-key",
+		"DISCORDAGENT_LLM_MODEL":        "test-model",
 		"ASSISTANT_NAME":          "Vivy",
-		"WAZZAP_BASE_PROMPT":      "private base prompt",
+		"DISCORDAGENT_BASE_PROMPT":      "private base prompt",
 	}
 	cfg, err := Load(mapLookup(values))
 	if err != nil {
@@ -277,7 +277,7 @@ func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
 	}
 	redactedJSON, _ := json.Marshal(cfg.Redacted())
 	redacted := string(redactedJSON)
-	for _, sensitive := range []string{values["WAZZAP_LLM_API_KEY"], values["WAZZAP_OWNER_JID"], "15550000002", values["WAZZAP_BASE_PROMPT"]} {
+	for _, sensitive := range []string{values["DISCORDAGENT_LLM_API_KEY"], values["DISCORDAGENT_OWNER_ID"], "15550000002", values["DISCORDAGENT_BASE_PROMPT"]} {
 		if strings.Contains(redacted, sensitive) {
 			t.Fatalf("redacted config contains sensitive value %q: %s", sensitive, redacted)
 		}
@@ -288,20 +288,20 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	base := map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "true",
-		"WAZZAP_AGENT_ENABLED":    "true",
-		"WAZZAP_TENANT_ID":        tenantID.String(),
-		"WAZZAP_ACCOUNT_ID":       accountID.String(),
-		"WAZZAP_OWNER_JID":        "15550000001@s.whatsapp.net",
-		"WAZZAP_LLM_ENDPOINT":     "https://example.invalid/chat/completions",
-		"WAZZAP_LLM_API_KEY":      "secret",
-		"WAZZAP_LLM_MODEL":        "model",
+		"DISCORDAGENT_DISCORD_ENABLED": "true",
+		"DISCORDAGENT_AGENT_ENABLED":    "true",
+		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":     "https://example.invalid/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":      "secret",
+		"DISCORDAGENT_LLM_MODEL":        "model",
 		"ASSISTANT_NAME":          "Vivy",
 	}
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted an empty allowlist")
 	}
-	base["WAZZAP_CHAT_ALLOWLIST"] = "bad address with spaces"
+	base["DISCORDAGENT_CHAT_ALLOWLIST"] = "bad address with spaces"
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted malformed provider address")
 	}
@@ -313,11 +313,11 @@ func TestEnvRuntimeRequiresAgentSettingsEvenWithAgentOff(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	_, err := Load(mapLookup(map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "true",
-		"WAZZAP_AGENT_ENABLED":    "false",
-		"WAZZAP_TENANT_ID":        tenantID.String(),
-		"WAZZAP_ACCOUNT_ID":       accountID.String(),
-		"WAZZAP_PAIRING_OUTPUT":   "terminal",
+		"DISCORDAGENT_DISCORD_ENABLED": "true",
+		"DISCORDAGENT_AGENT_ENABLED":    "false",
+		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_PAIRING_OUTPUT":   "terminal",
 	}))
 	if err == nil {
 		t.Fatal("WhatsApp runtime accepted missing agent settings")
@@ -328,18 +328,18 @@ func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	cfg, err := Load(mapLookup(map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "true",
-		"WAZZAP_AGENT_ENABLED":    "false",
-		"WAZZAP_TENANT_ID":        tenantID.String(),
-		"WAZZAP_ACCOUNT_ID":       accountID.String(),
-		"WAZZAP_OWNER_JID":        "15550000001@s.whatsapp.net",
-		"WAZZAP_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
-		"WAZZAP_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"WAZZAP_LLM_API_KEY":      "secret",
-		"WAZZAP_LLM_MODEL":        "test-model",
+		"DISCORDAGENT_DISCORD_ENABLED": "true",
+		"DISCORDAGENT_AGENT_ENABLED":    "false",
+		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":      "secret",
+		"DISCORDAGENT_LLM_MODEL":        "test-model",
 		"ASSISTANT_NAME":          "Vivy",
-		"WAZZAP_PAIRING_OUTPUT":   "terminal",
-		"WAZZAP_BASE_PROMPT":      "test prompt",
+		"DISCORDAGENT_PAIRING_OUTPUT":   "terminal",
+		"DISCORDAGENT_BASE_PROMPT":      "test prompt",
 	}))
 	if err != nil {
 		t.Fatalf("load pairing-only runtime: %v", err)
@@ -347,7 +347,7 @@ func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
 	if !cfg.WhatsAppEnabled() || cfg.AgentEnabled() {
 		t.Fatalf("runtime/kill-switch state = %v/%v", cfg.WhatsAppEnabled(), cfg.AgentEnabled())
 	}
-	if _, err := Load(mapLookup(map[string]string{"WAZZAP_AGENT_ENABLED": "true"})); err == nil {
+	if _, err := Load(mapLookup(map[string]string{"DISCORDAGENT_AGENT_ENABLED": "true"})); err == nil {
 		t.Fatal("agent was enabled without the WhatsApp runtime")
 	}
 }
@@ -357,14 +357,14 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{name: "root data directory", env: map[string]string{"WAZZAP_DATA_DIR": filepath.VolumeName(filepath.Clean(string(filepath.Separator))) + string(filepath.Separator)}},
-		{name: "invalid address", env: map[string]string{"WAZZAP_HTTP_ADDRESS": "localhost"}},
-		{name: "invalid log level", env: map[string]string{"WAZZAP_LOG_LEVEL": "trace"}},
-		{name: "invalid log format", env: map[string]string{"WAZZAP_LOG_FORMAT": "yaml"}},
-		{name: "invalid shutdown timeout", env: map[string]string{"WAZZAP_SHUTDOWN_TIMEOUT": "0s"}},
-		{name: "excessive shutdown timeout", env: map[string]string{"WAZZAP_SHUTDOWN_TIMEOUT": "6m"}},
-		{name: "zero response limit", env: map[string]string{"WAZZAP_MAX_RESPONSE_BYTES": "0"}},
-		{name: "excessive response limit", env: map[string]string{"WAZZAP_MAX_RESPONSE_BYTES": "16385"}},
+		{name: "root data directory", env: map[string]string{"DISCORDAGENT_DATA_DIR": filepath.VolumeName(filepath.Clean(string(filepath.Separator))) + string(filepath.Separator)}},
+		{name: "invalid address", env: map[string]string{"DISCORDAGENT_HTTP_ADDRESS": "localhost"}},
+		{name: "invalid log level", env: map[string]string{"DISCORDAGENT_LOG_LEVEL": "trace"}},
+		{name: "invalid log format", env: map[string]string{"DISCORDAGENT_LOG_FORMAT": "yaml"}},
+		{name: "invalid shutdown timeout", env: map[string]string{"DISCORDAGENT_SHUTDOWN_TIMEOUT": "0s"}},
+		{name: "excessive shutdown timeout", env: map[string]string{"DISCORDAGENT_SHUTDOWN_TIMEOUT": "6m"}},
+		{name: "zero response limit", env: map[string]string{"DISCORDAGENT_MAX_RESPONSE_BYTES": "0"}},
+		{name: "excessive response limit", env: map[string]string{"DISCORDAGENT_MAX_RESPONSE_BYTES": "16385"}},
 	}
 
 	for _, test := range tests {
@@ -381,10 +381,10 @@ func TestSnapshotRedactsSecret(t *testing.T) {
 	secret := "secret-value-that-must-not-leak"
 	langSmithSecret := "ls-secret-value-that-must-not-leak"
 	cfg, err := Load(mapLookup(map[string]string{
-		"WAZZAP_WHATSAPP_ENABLED": "false",
-		"WAZZAP_LLM_API_KEY":      secret,
+		"DISCORDAGENT_DISCORD_ENABLED": "false",
+		"DISCORDAGENT_LLM_API_KEY":      secret,
 		"LANGSMITH_API_KEY":       langSmithSecret,
-		"WAZZAP_SHUTDOWN_TIMEOUT": "12s",
+		"DISCORDAGENT_SHUTDOWN_TIMEOUT": "12s",
 	}))
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -416,13 +416,13 @@ func TestOptionalFallbackRequiresCompletePairAndRedactsItsSecret(t *testing.T) {
 	values := enabledRuntimeValues(t.TempDir())
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
-	values["WAZZAP_TENANT_ID"] = tenantID.String()
-	values["WAZZAP_ACCOUNT_ID"] = accountID.String()
-	values["WAZZAP_LLM_FALLBACK_ENDPOINT"] = "https://fallback.example.invalid/v1/chat/completions"
+	values["DISCORDAGENT_TENANT_ID"] = tenantID.String()
+	values["DISCORDAGENT_ACCOUNT_ID"] = accountID.String()
+	values["DISCORDAGENT_LLM_FALLBACK_ENDPOINT"] = "https://fallback.example.invalid/v1/chat/completions"
 	if _, err := Load(mapLookup(values)); err == nil {
 		t.Fatal("incomplete fallback configuration was accepted")
 	}
-	values["WAZZAP_LLM_FALLBACK_API_KEY"] = "fallback-secret"
+	values["DISCORDAGENT_LLM_FALLBACK_API_KEY"] = "fallback-secret"
 	cfg, err := Load(mapLookup(values))
 	if err != nil {
 		t.Fatalf("load fallback configuration: %v", err)
@@ -439,14 +439,14 @@ func TestOptionalFallbackRequiresCompletePairAndRedactsItsSecret(t *testing.T) {
 
 func enabledRuntimeValues(dataDir string) map[string]string {
 	return map[string]string{
-		"WAZZAP_DATA_DIR":       dataDir,
-		"WAZZAP_OWNER_JID":      "15550000001@s.whatsapp.net",
-		"WAZZAP_CHAT_ALLOWLIST": "15550000002@s.whatsapp.net",
-		"WAZZAP_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
-		"WAZZAP_LLM_API_KEY":    "very-secret-key",
-		"WAZZAP_LLM_MODEL":      "test-model",
+		"DISCORDAGENT_DATA_DIR":       dataDir,
+		"DISCORDAGENT_OWNER_ID":      "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_CHAT_ALLOWLIST": "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":    "very-secret-key",
+		"DISCORDAGENT_LLM_MODEL":      "test-model",
 		"ASSISTANT_NAME":        "Vivy",
-		"WAZZAP_BASE_PROMPT":    "test prompt",
+		"DISCORDAGENT_BASE_PROMPT":    "test prompt",
 	}
 }
 

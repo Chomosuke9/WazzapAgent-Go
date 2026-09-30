@@ -8,7 +8,7 @@ includes:
   android: ./build/android/Taskfile.yml
 
 vars:
-  APP_NAME: WazzapAgent
+  APP_NAME: DiscordAgent
   BIN_DIR: bin
   NPM: '{{.NPM | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
@@ -40,17 +40,17 @@ tasks:
       - task: common:install:frontend:deps
       - cmd: '{{.NPM}} run build:web'
         dir: frontend
-      - go build -tags web -o {{.BIN_DIR}}/WazzapAgent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/server
+      - go build -tags web -o {{.BIN_DIR}}/DiscordAgent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/server
 
   webhost:build:
-    summary: Build the token-protected web host (wazzapagent-web) for Linux servers
+    summary: Build the token-protected web host (discordagent-web) for Linux servers
     cmds:
       - task: common:install:frontend:deps
       - cmd: '{{.NPM}} run build:web'
         dir: frontend
-      - go build -tags web -trimpath -ldflags '-s -w' -o {{.BIN_DIR}}/wazzapagent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/webhost
+      - go build -tags web -trimpath -ldflags '-s -w' -o {{.BIN_DIR}}/discordagent-web{{if eq OS "windows"}}.exe{{end}} ./cmd/webhost
 
   web:run:
     summary: Run the browser server on a loopback address
     cmds:
-      - '{{.BIN_DIR}}/WazzapAgent-web{{if eq OS "windows"}}.exe{{end}}'
+      - '{{.BIN_DIR}}/DiscordAgent-web{{if eq OS "windows"}}.exe{{end}}'

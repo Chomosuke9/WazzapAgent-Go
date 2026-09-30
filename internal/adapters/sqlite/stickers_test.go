@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/maintenance"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
 
 func TestStickerCatalogIsPerChatAndReplacesByName(t *testing.T) {

@@ -7,9 +7,9 @@ import (
 
 	"github.com/polymorfa/hypermeow/types"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
 // MarkRead is automatic AI-lane feedback. It is intentionally not exposed as

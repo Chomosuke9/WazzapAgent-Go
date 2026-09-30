@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	langSmithProjectName = "wazzapagent"
-	langSmithServiceName = "wazzapagent"
+	langSmithProjectName = "discordagent"
+	langSmithServiceName = "discordagent"
 )
 
 // LangSmith owns the optional LangSmith tracer used by the model HTTP client.

@@ -27,9 +27,9 @@ The output is in `build/android/app/build/outputs/apk/{debug,release}/`. See the
 
 Pushing a version tag beginning with `v` runs the application builds and prepares a draft GitHub Release containing:
 
-- `WazzapAgent-windows-amd64.exe`
-- `WazzapAgent-linux-amd64.tar.gz`
-- `WazzapAgent-android-arm64-debug.apk`
+- `DiscordAgent-windows-amd64.exe`
+- `DiscordAgent-linux-amd64.tar.gz`
+- `DiscordAgent-android-arm64-debug.apk`
 - `SHA256SUMS`
 
 The Android release artifact is debug-signed. Linux releases contain the application executable and require GTK4 and WebKitGTK on the target system.

@@ -19,14 +19,14 @@ import (
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
-	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
 
 const sendStripeCount = 64

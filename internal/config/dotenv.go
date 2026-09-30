@@ -12,7 +12,7 @@ import (
 
 const (
 	defaultDotEnvPath = ".env"
-	dotEnvPathKey     = "WAZZAP_ENV_FILE"
+	dotEnvPathKey     = "DISCORDAGENT_ENV_FILE"
 	MaxDotEnvBytes    = 1 << 20
 	maxDotEnvBytes    = MaxDotEnvBytes
 )

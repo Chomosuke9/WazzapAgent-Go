@@ -3,7 +3,7 @@ package policy_test
 import (
 	"testing"
 
-	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
+	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 )
 
 func TestEvaluatePermissionSupportsNegatedBotOrigin(t *testing.T) {

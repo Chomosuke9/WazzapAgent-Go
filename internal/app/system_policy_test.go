@@ -6,8 +6,8 @@ import (
 )
 
 func TestRenderSystemPolicyRendersNameAndLeavesDateForEachRequest(t *testing.T) {
-	rendered := RenderSystemPolicy("Wazzap")
-	for _, value := range []string{"The assistant is Wazzap", "Today's date: {{current_date}}", "@Wazzap (Bot)"} {
+	rendered := RenderSystemPolicy("DiscordAgent")
+	for _, value := range []string{"The assistant is DiscordAgent", "Today's date: {{current_date}}", "@DiscordAgent (Bot)"} {
 		if !strings.Contains(rendered, value) {
 			t.Fatalf("rendered policy lacks %q", value)
 		}
@@ -22,7 +22,7 @@ func TestRenderSystemPolicyRendersNameAndLeavesDateForEachRequest(t *testing.T) 
 
 func TestRenderSystemPolicyPreservesUnknownBraces(t *testing.T) {
 	const unknown = "{{literal_example}}"
-	rendered := renderSystemPolicy("name={{assistant_name}} literal="+unknown, "Wazzap")
+	rendered := renderSystemPolicy("name={{assistant_name}} literal="+unknown, "DiscordAgent")
 	if !strings.Contains(rendered, unknown) {
 		t.Fatalf("unknown placeholder %q was changed", unknown)
 	}
