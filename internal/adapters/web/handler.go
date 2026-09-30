@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
@@ -147,6 +148,7 @@ func NewHandlerWithOptions(service *ui.AppService, assets fs.FS, options Options
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		boundWrite(w)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
@@ -178,7 +180,19 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, into any) bool {
 	return true
 }
 
+// responseWriteTimeout bounds how long one response may take to reach the
+// client. It is set per response, after the operation ran, because a server
+// wide WriteTimeout would also cut off long-running UI operations.
+const responseWriteTimeout = 30 * time.Second
+
+// boundWrite gives w a fresh write deadline so a client that stops reading
+// cannot hold the connection open.
+func boundWrite(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(responseWriteTimeout))
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
+	boundWrite(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)

@@ -37,7 +37,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }, []);
 
   const leave = useCallback(async () => {
-    await signOut().catch(() => undefined);
+    // Only show the signed-out state once the server has removed the cookie;
+    // otherwise a reload would silently restore the session.
+    await signOut();
     setToken("");
     setState("signed-out");
   }, []);
