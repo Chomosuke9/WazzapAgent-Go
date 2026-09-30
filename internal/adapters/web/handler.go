@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
@@ -25,13 +26,42 @@ type response struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Options configures the browser handler.
+type Options struct {
+	// PublicOrigin is the HTTPS origin a reverse proxy serves the UI from.
+	PublicOrigin string
+	// Auth, when set, requires a login for every call and lets the UI be
+	// reached under any Host name. Without it only loopback hosts and
+	// PublicOrigin are served, so the caller must keep the listener private.
+	Auth *TokenAuth
+}
+
+type authStatus struct {
+	Required      bool `json:"required"`
+	Authenticated bool `json:"authenticated"`
+}
+
+type loginRequest struct {
+	Token string `json:"token"`
+}
+
+// NewHandler serves the UI without a login; see NewHandlerWithOptions.
 func NewHandler(service *ui.AppService, assets fs.FS, publicOrigin ...string) (http.Handler, error) {
+	options := Options{}
+	if len(publicOrigin) > 0 {
+		options.PublicOrigin = publicOrigin[0]
+	}
+	return NewHandlerWithOptions(service, assets, options)
+}
+
+func NewHandlerWithOptions(service *ui.AppService, assets fs.FS, options Options) (http.Handler, error) {
 	if service == nil || assets == nil {
 		return nil, errors.New("web service and assets are required")
 	}
+	auth := options.Auth
 	trustedHost := ""
-	if len(publicOrigin) > 0 && publicOrigin[0] != "" {
-		u, err := url.Parse(publicOrigin[0])
+	if options.PublicOrigin != "" {
+		u, err := url.Parse(options.PublicOrigin)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 			return nil, errors.New("public web origin must be an HTTPS origin without a path")
 		}
@@ -39,38 +69,77 @@ func NewHandler(service *ui.AppService, assets fs.FS, publicOrigin ...string) (h
 	}
 	static := http.FileServer(http.FS(assets))
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/call", func(w http.ResponseWriter, r *http.Request) {
-		if !allowedBrowserRequest(r, trustedHost) {
+	allowed := func(r *http.Request) bool {
+		return allowedBrowserRequest(r, trustedHost, auth != nil)
+	}
+	// secure marks the cookie Secure only where the browser reached us over
+	// HTTPS; a Secure cookie set over plain HTTP would never be stored.
+	secure := func(r *http.Request) bool {
+		return r.TLS != nil || trustedHost != "" && strings.EqualFold(r.Host, trustedHost)
+	}
+	mux.HandleFunc("GET /api/auth/status", func(w http.ResponseWriter, r *http.Request) {
+		if !allowed(r) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			http.Error(w, "application/json required", http.StatusUnsupportedMediaType)
+		writeJSON(w, http.StatusOK, authStatus{Required: auth != nil, Authenticated: auth == nil || auth.Authenticated(r)})
+	})
+	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if !allowed(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if auth == nil {
+			writeJSON(w, http.StatusOK, authStatus{})
+			return
+		}
+		var input loginRequest
+		if !decodeJSONBody(w, r, &input) {
+			return
+		}
+		cookie, retryAfter, ok := auth.Login(r, strings.TrimSpace(input.Token), secure(r))
+		if retryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
+			writeJSON(w, http.StatusTooManyRequests, response{Error: "Too many failed attempts. Try again later."})
+			return
+		}
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, response{Error: "The access token is not correct."})
+			return
+		}
+		http.SetCookie(w, cookie)
+		writeJSON(w, http.StatusOK, authStatus{Required: true, Authenticated: true})
+	})
+	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if !allowed(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		http.SetCookie(w, expiredSessionCookie(secure(r)))
+		writeJSON(w, http.StatusOK, authStatus{Required: auth != nil})
+	})
+	mux.HandleFunc("POST /api/call", func(w http.ResponseWriter, r *http.Request) {
+		if !allowed(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if auth != nil && !auth.Authenticated(r) {
+			writeJSON(w, http.StatusUnauthorized, response{Error: "Sign in with the access token."})
 			return
 		}
 		var input request
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			http.Error(w, "request must contain one JSON object", http.StatusBadRequest)
+		if !decodeJSONBody(w, r, &input) {
 			return
 		}
 		result, err := invoke(service, input)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(response{Error: publicError(err)})
+			writeJSON(w, http.StatusBadRequest, response{Error: publicError(err)})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(response{Result: result})
+		writeJSON(w, http.StatusOK, response{Result: result})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if !allowedHost(r.Host, trustedHost) {
+		if auth == nil && !allowedHost(r.Host, trustedHost) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -89,6 +158,33 @@ func NewHandler(service *ui.AppService, assets fs.FS, publicOrigin ...string) (h
 	return mux, nil
 }
 
+// decodeJSONBody reads exactly one JSON object from a same-origin request and
+// writes the error response itself when the body is not acceptable.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, into any) bool {
+	if r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "application/json required", http.StatusUnsupportedMediaType)
+		return false
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return false
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		http.Error(w, "request must contain one JSON object", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
 func allowedHost(hostport, trustedHost string) bool {
 	if trustedHost != "" && strings.EqualFold(hostport, trustedHost) {
 		return true
@@ -104,8 +200,11 @@ func allowedHost(hostport, trustedHost string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func allowedBrowserRequest(r *http.Request, trustedHost string) bool {
-	if !allowedHost(r.Host, trustedHost) || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+// allowedBrowserRequest keeps requests same-origin. With anyHost (a login is
+// required) the Host name is not restricted: a rebinding page never holds the
+// session cookie, which is scoped to the real host name.
+func allowedBrowserRequest(r *http.Request, trustedHost string, anyHost bool) bool {
+	if !anyHost && !allowedHost(r.Host, trustedHost) || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
 		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {

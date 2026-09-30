@@ -26,3 +26,6 @@ The browser polls WhatsApp session status while the page is open. The server and
 Agent continue running when the browser closes; stopping the server shuts down
 the Agent and session and preserves their data. Browser mode is independent of
 native Android packaging and background service work.
+
+To host the UI on a server for other devices, with a login token, use
+[`cmd/webhost`](../webhost/README.md) instead.

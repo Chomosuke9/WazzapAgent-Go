@@ -11,17 +11,39 @@ type Result<M extends Method> = Awaited<ReturnType<Service[M]>>;
 
 const webMode = import.meta.env.MODE === "web";
 
-async function webCall<T>(method: string, args: unknown[]): Promise<T> {
-  const response = await fetch("/api/call", {
+// Fired when the server no longer accepts the browser's login (for example
+// after the access token was rotated), so the sign-in screen can come back.
+export const unauthorizedEvent = "wazzapagent:unauthorized";
+
+async function webPost<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
-    body: JSON.stringify({ method, args }),
+    body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({})) as { result?: T; error?: string };
+  if (response.status === 401 && path === "/api/call") window.dispatchEvent(new Event(unauthorizedEvent));
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
-  return payload.result as T;
+  return payload as T;
 }
+
+async function webCall<T>(method: string, args: unknown[]): Promise<T> {
+  return (await webPost<{ result?: T }>("/api/call", { method, args })).result as T;
+}
+
+// Browser-only sign-in with the server's access token. The server answers with
+// a session cookie, so the token is typed once and never kept by the page.
+export type AuthStatus = { required: boolean; authenticated: boolean };
+export const isWebMode = webMode;
+
+export async function getAuthStatus(): Promise<AuthStatus> {
+  const response = await fetch("/api/auth/status", { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Request failed (${response.status}).`);
+  return response.json() as Promise<AuthStatus>;
+}
+export const signIn = (token: string) => webPost<AuthStatus>("/api/auth/login", { token });
+export const signOut = () => webPost<AuthStatus>("/api/auth/logout", {});
 
 function call<M extends Method>(method: M, ...args: Parameters<Service[M]>): Promise<Result<M>> {
   if (webMode) return webCall<Result<M>>(method, args);

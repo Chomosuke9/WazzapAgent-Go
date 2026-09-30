@@ -76,6 +76,14 @@ jobs:
         run: go vet -tags web ./...
       - name: Build web server
         run: go build -tags web ./cmd/server
+      - name: Build web host
+        run: go build -tags web ./cmd/webhost
+      - name: Cross-build web host for Debian
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOOS=linux GOARCH=amd64 go build -tags web -o /dev/null ./cmd/webhost
+          GOOS=linux GOARCH=arm64 go build -tags web -o /dev/null ./cmd/webhost
 
   cross-build:
     runs-on: ubuntu-latest
