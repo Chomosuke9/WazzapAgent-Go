@@ -138,7 +138,7 @@ func (authority ChatAuthority) Validate() error {
 }
 
 // ChatAuthorityReader is implemented by the provider edge. Policy receives
-// only typed authority facts, never a WhatsApp client or group metadata DTO.
+// only typed authority facts, never a Discord client or group metadata DTO.
 type ChatAuthorityReader interface {
 	ReadChatAuthority(context.Context, Principal) (ChatAuthority, error)
 }

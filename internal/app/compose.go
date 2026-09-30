@@ -11,10 +11,10 @@ import (
 
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	llmopenai "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/llm/openai"
 	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/typesafe"
-	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
@@ -150,7 +150,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Allowlist: application.config.Allowlist(), QueueCapacity: application.config.InboundQueue(),
 		Workers: application.config.InboundWorkers(), ConnectTimeout: application.config.ConnectTimeout(),
 		SendTimeout: application.config.SendTimeout(),
-		Targets: store.Inbound(), ChannelNames: store.Inbound(), Broadcasts: store,
+		Targets:     store.Inbound(), ChannelNames: store.Inbound(), Broadcasts: store,
 		Sent: store.Sent(), Logger: application.logger,
 	})
 	if err != nil {

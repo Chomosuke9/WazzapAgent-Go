@@ -15,49 +15,49 @@ import (
 
 func init() {
 	register(command.Command{
-		Name: "group",
-		// For the bot, admin means the bot is a group admin; runGroup also
-		// holds it to the chat's moderation level.
+		Name: "mod",
+		// For the bot, admin means it may manage messages in the channel;
+		// runMod also holds it to the chat's moderation level.
 		Permission:  "admin and group",
-		Description: "Manages group status, description, messages, mutes, and members.",
-		DeniedReply: "The /group command can only be used by a group admin.",
-		Run:         runGroup,
+		Description: "Locks or unlocks the channel, sets its topic, and deletes messages, mutes, or kicks members.",
+		DeniedReply: "The /mod command can only be used by a server moderator.",
+		Run:         runMod,
 	})
 }
 
-const groupUsage = "Usage: /group close, /group open, /group description <text>, /group delete as a reply to a message, /group mute @Name (senderRef) <minutes>, or /group kick @Name (senderRef)."
+const modUsage = "Usage: /mod lock, /mod unlock, /mod topic <text>, /mod delete as a reply to a message, /mod mute @Name (senderRef) <minutes>, or /mod kick @Name (senderRef)."
 
-type groupAction struct {
-	kind        string // close, open, description, delete, mute, kick
+type modAction struct {
+	kind        string // lock, unlock, topic, delete, mute, kick
 	description string
 	member      identity.SenderRef
 	minutes     uint32
 }
 
-func runGroup(ctx context.Context, c *command.Context) error {
+func runMod(ctx context.Context, c *command.Context) error {
 	moderator, err := c.Group()
 	if err != nil {
 		return err
 	}
-	parsed, err := parseGroupArgs(c.Args)
+	parsed, err := parseModArgs(c.Args)
 	if err != nil {
-		return c.Reply(ctx, groupUsage)
+		return c.Reply(ctx, modUsage)
 	}
 	if level := c.Config.Permission.ModerationLevel; c.Facts.FromMe && level < parsed.botLevel() {
-		return c.Reply(ctx, fmt.Sprintf("My moderation level here is %d, so I can't %s. A group admin can raise it with /permission.", level, parsed.verb()))
+		return c.Reply(ctx, fmt.Sprintf("My moderation level here is %d, so I can't %s. A server moderator can raise it with /permission.", level, parsed.verb()))
 	}
 	var target identity.MessageID
 	if parsed.kind == "delete" {
 		if c.Message.Quote == nil || c.Message.Quote.ID.IsZero() {
-			return c.Reply(ctx, groupUsage)
+			return c.Reply(ctx, modUsage)
 		}
 		target = c.Message.Quote.ID
 	}
 	key := c.Key()
 	switch parsed.kind {
-	case "close", "open":
-		err = moderator.SetGroupAnnounce(ctx, key, parsed.kind == "close")
-	case "description":
+	case "lock", "unlock":
+		err = moderator.SetGroupAnnounce(ctx, key, parsed.kind == "lock")
+	case "topic":
 		err = moderator.SetGroupDescription(ctx, key, parsed.description)
 	case "delete":
 		err = moderator.RevokeGroupMessage(ctx, key, target)
@@ -70,15 +70,15 @@ func runGroup(ctx context.Context, c *command.Context) error {
 		return err
 	}
 	if parsed.kind == "delete" || parsed.kind == "kick" {
-		// The result is visible in the group; a confirmation would be noise.
+		// The result is visible in the channel; a confirmation would be noise.
 		return nil
 	}
-	return c.Reply(ctx, fmt.Sprintf("The /group %s command completed successfully.", parsed.kind))
+	return c.Reply(ctx, fmt.Sprintf("The /mod %s command completed successfully.", parsed.kind))
 }
 
 // botLevel is the moderation level the bot needs for the action. People are
 // held only to the command's permission.
-func (parsed groupAction) botLevel() agent.ModerationLevel {
+func (parsed modAction) botLevel() agent.ModerationLevel {
 	switch parsed.kind {
 	case "delete":
 		return agent.ModerationDelete
@@ -90,7 +90,7 @@ func (parsed groupAction) botLevel() agent.ModerationLevel {
 	return agent.ModerationNone
 }
 
-func (parsed groupAction) verb() string {
+func (parsed modAction) verb() string {
 	switch parsed.kind {
 	case "delete":
 		return "delete messages"
@@ -100,50 +100,50 @@ func (parsed groupAction) verb() string {
 	return "remove members"
 }
 
-func parseGroupArgs(args string) (groupAction, error) {
+func parseModArgs(args string) (modAction, error) {
 	if len(args) > 1024 {
-		return groupAction{}, errors.New("command exceeds maximum length")
+		return modAction{}, errors.New("command exceeds maximum length")
 	}
 	fields := strings.Fields(args)
 	if len(fields) == 0 {
-		return groupAction{}, errors.New("subcommand is required")
+		return modAction{}, errors.New("subcommand is required")
 	}
 	switch kind := fields[0]; kind {
-	case "close", "open", "delete":
+	case "lock", "unlock", "delete":
 		if len(fields) != 1 {
-			return groupAction{}, errors.New("subcommand does not accept arguments")
+			return modAction{}, errors.New("subcommand does not accept arguments")
 		}
-		return groupAction{kind: kind}, nil
-	case "description":
-		value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "description"))
+		return modAction{kind: kind}, nil
+	case "topic":
+		value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "topic"))
 		if value == "" {
-			return groupAction{}, errors.New("description is required")
+			return modAction{}, errors.New("topic is required")
 		}
-		return groupAction{kind: kind, description: value}, nil
+		return modAction{kind: kind, description: value}, nil
 	case "mute":
 		if len(fields) < 3 {
-			return groupAction{}, errors.New("member and duration are required")
+			return modAction{}, errors.New("member and duration are required")
 		}
 		member, err := parseMemberRef(fields[len(fields)-2])
 		if err != nil {
-			return groupAction{}, err
+			return modAction{}, err
 		}
 		minutes, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
 		if err != nil || minutes > 43200 {
-			return groupAction{}, errors.New("duration must be 0-43200 minutes")
+			return modAction{}, errors.New("duration must be 0-43200 minutes")
 		}
-		return groupAction{kind: kind, member: member, minutes: uint32(minutes)}, nil
+		return modAction{kind: kind, member: member, minutes: uint32(minutes)}, nil
 	case "kick":
 		if len(fields) < 2 {
-			return groupAction{}, errors.New("member is required")
+			return modAction{}, errors.New("member is required")
 		}
 		member, err := parseMemberRef(fields[len(fields)-1])
 		if err != nil {
-			return groupAction{}, err
+			return modAction{}, err
 		}
-		return groupAction{kind: kind, member: member}, nil
+		return modAction{kind: kind, member: member}, nil
 	default:
-		return groupAction{}, errors.New("subcommand is unsupported")
+		return modAction{}, errors.New("subcommand is unsupported")
 	}
 }
 

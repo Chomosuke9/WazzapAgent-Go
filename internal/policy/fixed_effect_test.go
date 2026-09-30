@@ -136,7 +136,7 @@ func fixedInvocationMessage(t *testing.T, key agent.Key, kind conversation.ChatK
 	causationID, _ := identity.NewCausationID()
 	participantID, _ := identity.NewParticipantID()
 	senderRef, _ := identity.NewSenderRef()
-	lid, _ := identity.ParseUserID("10000000009@lid")
+	lid, _ := identity.ParseUserID("10000000009")
 	now := time.Now().UTC()
 	return conversation.IncomingMessage{
 		ID: messageID, InvocationID: invocationID, CausationID: causationID,

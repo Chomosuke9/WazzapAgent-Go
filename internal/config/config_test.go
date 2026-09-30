@@ -35,9 +35,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DiscordEnabled() || cfg.AgentEnabled() {
 		t.Fatalf("explicitly disabled runtime = %v/%v, want false/false", cfg.DiscordEnabled(), cfg.AgentEnabled())
 	}
-	if cfg.PairingOutput() != defaultPairingOutput {
-		t.Fatalf("pairing output = %q, want %q", cfg.PairingOutput(), defaultPairingOutput)
-	}
 }
 
 func TestLoadRuntimeReadsDefaultDotEnv(t *testing.T) {
@@ -137,9 +134,6 @@ func TestLoadRuntimeGeneratesAndReusesStableIdentity(t *testing.T) {
 	}
 	if !first.DiscordEnabled() || !first.AgentEnabled() {
 		t.Fatalf("default runtime state = %v/%v, want true/true", first.DiscordEnabled(), first.AgentEnabled())
-	}
-	if first.PairingOutput() != "terminal" {
-		t.Fatalf("default pairing output = %q, want terminal", first.PairingOutput())
 	}
 	if first.TenantID().IsZero() || first.AccountID().IsZero() {
 		t.Fatal("runtime identity was not generated")
@@ -255,8 +249,8 @@ func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
 		"DISCORDAGENT_AGENT_ENABLED":   "true",
 		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
 		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
-		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002@s.whatsapp.net,120363000000000001@g.us",
+		"DISCORDAGENT_OWNER_ID":        "15550000001",
+		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002,120363000000000001",
 		"DISCORDAGENT_LLM_ENDPOINT":    "https://llm.example.invalid/v1/chat/completions",
 		"DISCORDAGENT_LLM_API_KEY":     "very-secret-key",
 		"DISCORDAGENT_LLM_MODEL":       "test-model",
@@ -292,24 +286,37 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 		"DISCORDAGENT_AGENT_ENABLED":   "true",
 		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
 		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
-		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_OWNER_ID":        "15550000001",
 		"DISCORDAGENT_LLM_ENDPOINT":    "https://example.invalid/chat/completions",
 		"DISCORDAGENT_LLM_API_KEY":     "secret",
 		"DISCORDAGENT_LLM_MODEL":       "model",
 		"ASSISTANT_NAME":               "Vivy",
+		"DISCORDAGENT_BASE_PROMPT":     "test prompt",
 	}
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted an empty allowlist")
 	}
-	base["DISCORDAGENT_CHAT_ALLOWLIST"] = "bad address with spaces"
+	for _, bad := range []string{"bad address with spaces", "general", "0123", "123456789012345678901", "*@lid"} {
+		base["DISCORDAGENT_CHAT_ALLOWLIST"] = bad
+		if _, err := Load(mapLookup(base)); err == nil {
+			t.Fatalf("enabled mode accepted allowlist entry %q", bad)
+		}
+	}
+	for _, good := range []string{"*", "dm:*", "server:*", "123456789012345678"} {
+		base["DISCORDAGENT_CHAT_ALLOWLIST"] = good
+		if _, err := Load(mapLookup(base)); err != nil {
+			t.Fatalf("enabled mode rejected allowlist entry %q: %v", good, err)
+		}
+	}
+	base["DISCORDAGENT_OWNER_ID"] = "owner@example"
 	if _, err := Load(mapLookup(base)); err == nil {
-		t.Fatal("enabled mode accepted malformed provider address")
+		t.Fatal("enabled mode accepted a non-numeric owner")
 	}
 }
 
 func TestEnvRuntimeRequiresAgentSettingsEvenWithAgentOff(t *testing.T) {
-	// The environment-driven runtime composes the agent whenever WhatsApp is
-	// on, so pairing-only values must not pass with the agent switched off.
+	// The environment-driven runtime composes the agent whenever Discord is
+	// on, so link-only values must not pass with the agent switched off.
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	_, err := Load(mapLookup(map[string]string{
@@ -317,10 +324,9 @@ func TestEnvRuntimeRequiresAgentSettingsEvenWithAgentOff(t *testing.T) {
 		"DISCORDAGENT_AGENT_ENABLED":   "false",
 		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
 		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
-		"DISCORDAGENT_PAIRING_OUTPUT":  "terminal",
 	}))
 	if err == nil {
-		t.Fatal("WhatsApp runtime accepted missing agent settings")
+		t.Fatal("Discord runtime accepted missing agent settings")
 	}
 }
 
@@ -332,23 +338,22 @@ func TestDiscordRuntimeCanLinkWhileAgentKillSwitchIsOff(t *testing.T) {
 		"DISCORDAGENT_AGENT_ENABLED":   "false",
 		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
 		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
-		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_OWNER_ID":        "15550000001",
+		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002",
 		"DISCORDAGENT_LLM_ENDPOINT":    "https://llm.example.invalid/v1/chat/completions",
 		"DISCORDAGENT_LLM_API_KEY":     "secret",
 		"DISCORDAGENT_LLM_MODEL":       "test-model",
 		"ASSISTANT_NAME":               "Vivy",
-		"DISCORDAGENT_PAIRING_OUTPUT":  "terminal",
 		"DISCORDAGENT_BASE_PROMPT":     "test prompt",
 	}))
 	if err != nil {
-		t.Fatalf("load pairing-only runtime: %v", err)
+		t.Fatalf("load link-only runtime: %v", err)
 	}
 	if !cfg.DiscordEnabled() || cfg.AgentEnabled() {
 		t.Fatalf("runtime/kill-switch state = %v/%v", cfg.DiscordEnabled(), cfg.AgentEnabled())
 	}
 	if _, err := Load(mapLookup(map[string]string{"DISCORDAGENT_AGENT_ENABLED": "true"})); err == nil {
-		t.Fatal("agent was enabled without the WhatsApp runtime")
+		t.Fatal("agent was enabled without the Discord runtime")
 	}
 }
 
@@ -440,8 +445,8 @@ func TestOptionalFallbackRequiresCompletePairAndRedactsItsSecret(t *testing.T) {
 func enabledRuntimeValues(dataDir string) map[string]string {
 	return map[string]string{
 		"DISCORDAGENT_DATA_DIR":       dataDir,
-		"DISCORDAGENT_OWNER_ID":       "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST": "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_OWNER_ID":       "15550000001",
+		"DISCORDAGENT_CHAT_ALLOWLIST": "15550000002",
 		"DISCORDAGENT_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
 		"DISCORDAGENT_LLM_API_KEY":    "very-secret-key",
 		"DISCORDAGENT_LLM_MODEL":      "test-model",

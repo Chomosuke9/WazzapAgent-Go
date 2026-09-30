@@ -30,7 +30,7 @@ type HistoryReader interface {
 	ListIfConfigVersion(context.Context, agent.Key, agent.ConfigVersion, agent.HistoryQuery) (agent.HistoryPage, error)
 }
 
-// ResponseJudge decides whether a group message that matched no mention,
+// ResponseJudge decides whether a channel message that matched no mention,
 // reply or name trigger is worth a response. TypeSafe answers narrow yes/no
 // questions about the message and the chat's recent transcript; the rule
 // that combines them lives in Decide.
@@ -109,7 +109,7 @@ func ruleQuestion(rule string) Question {
 	return Question{
 		Type: "noul",
 		Instructions: map[string]string{
-			"task": "Is `new_message` itself a case of this rule set by the group admins?",
+			"task": "Is `new_message` itself a case of this rule set by the server moderators?",
 			"rule": rule,
 			"scope": "Judge only `new_message`. `earlier_messages` were already judged and handled: a case of the rule " +
 				"there does not count, and neither does `new_message` only talking about or reacting to that earlier case.",
@@ -159,7 +159,7 @@ func (judge *ResponseJudge) ShouldRespond(ctx context.Context, message conversat
 		return false, err
 	}
 	state := map[string]any{
-		"assistant":        map[string]string{"name": judge.assistantName, "role": "AI assistant (a bot) taking part in this WhatsApp group"},
+		"assistant":        map[string]string{"name": judge.assistantName, "role": "AI assistant (a bot) taking part in this Discord channel"},
 		"earlier_messages": judge.recent(page.Entries, message),
 		"new_message":      judge.newMessage(message),
 	}
@@ -205,12 +205,12 @@ func (judge *ResponseJudge) recent(entries []agent.HistoryEntry, current convers
 
 func (judge *ResponseJudge) newMessage(message conversation.IncomingMessage) newMessage {
 	result := newMessage{
-		From:     nonEmpty(message.SenderName, "a group member"),
+		From:     nonEmpty(message.SenderName, "a channel member"),
 		Text:     truncate(conversation.AuthoredText(message.Text), maxNewTextLen),
 		Mentions: len(message.Mentions),
 	}
 	if message.Quote != nil {
-		from := "another group member"
+		from := "another channel member"
 		if message.Quote.Role == conversation.QuoteAssistant {
 			from = judge.assistantLabel()
 		}
@@ -224,9 +224,9 @@ func (judge *ResponseJudge) speaker(entry agent.HistoryEntry) string {
 		return judge.assistantLabel()
 	}
 	if entry.Sender != nil {
-		return nonEmpty(entry.Sender.DisplayName, "a group member")
+		return nonEmpty(entry.Sender.DisplayName, "a channel member")
 	}
-	return "a group member"
+	return "a channel member"
 }
 
 func (judge *ResponseJudge) assistantLabel() string {

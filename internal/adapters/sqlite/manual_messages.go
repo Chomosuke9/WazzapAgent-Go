@@ -16,7 +16,7 @@ func (store *Store) RecordManualAssistantMessage(ctx context.Context, key agent.
 	if err := key.Validate(); err != nil || entry.Role != agent.HistoryAssistant ||
 		entry.Delivery != agent.DeliverySucceeded || entry.Causation.Kind != agent.CausationRequest ||
 		strings.TrimSpace(providerReceipt) == "" {
-		return agent.NewError(agent.ErrorInvalidArgument, "record manual WhatsApp message", errors.New("valid sent assistant message and provider receipt are required"))
+		return agent.NewError(agent.ErrorInvalidArgument, "record manual Discord message", errors.New("valid sent assistant message and provider receipt are required"))
 	}
 	if err := agent.ValidateHistoryEntry(entry); err != nil {
 		return err
@@ -36,7 +36,7 @@ func (store *Store) RecordManualAssistantMessage(ctx context.Context, key agent.
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
-			return agent.NewError(agent.ErrorConflict, "record manual WhatsApp message", errors.New("message receipt is already bound"))
+			return agent.NewError(agent.ErrorConflict, "record manual Discord message", errors.New("message receipt is already bound"))
 		}
 		return storageError("record manual message target", err)
 	}
@@ -48,7 +48,7 @@ func (store *Store) RecordManualAssistantMessage(ctx context.Context, key agent.
 
 func (store *Store) IsMessageDeleted(ctx context.Context, key agent.Key, messageID identity.MessageID) (bool, error) {
 	if err := key.Validate(); err != nil || messageID.IsZero() {
-		return false, agent.NewError(agent.ErrorInvalidArgument, "read WhatsApp message deletion state", errors.New("valid chat and message IDs are required"))
+		return false, agent.NewError(agent.ErrorInvalidArgument, "read Discord message deletion state", errors.New("valid chat and message IDs are required"))
 	}
 	var deleted int
 	err := store.read.QueryRowContext(ctx, `SELECT EXISTS(
@@ -60,7 +60,7 @@ func (store *Store) IsMessageDeleted(ctx context.Context, key agent.Key, message
 		uint8(effect.KindDeleteMessage), uint8(effect.StateSucceeded),
 	).Scan(&deleted)
 	if err != nil {
-		return false, storageError("read WhatsApp message deletion state", err)
+		return false, storageError("read Discord message deletion state", err)
 	}
 	return deleted == 1, nil
 }

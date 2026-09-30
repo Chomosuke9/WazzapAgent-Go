@@ -24,7 +24,7 @@ import (
 
 func TestFakeEndToEndEligibleDMIsSentExactlyOnce(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("dm-1", "15550000002@s.whatsapp.net", conversation.ChatDirect, "hello")
+	candidate := fixture.candidate("dm-1", "15550000002", conversation.ChatDirect, "hello")
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 		t.Fatalf("handle DM: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFakeEndToEndEligibleDMIsSentExactlyOnce(t *testing.T) {
 
 func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "120363000000000001@g.us"
+	chat := "120363000000000001"
 	ignored := fixture.candidate("group-1", chat, conversation.ChatGroup, "without mention")
 	if err := fixture.handler.Handle(context.Background(), ignored); err != nil {
 		t.Fatalf("handle non-mention: %v", err)
@@ -71,9 +71,9 @@ func TestFakeEndToEndGroupRequiresMention(t *testing.T) {
 
 func TestTriggerCommandConfiguresCustomRegexForGroupInvocation(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "120363000000000015@g.us"
+	chat := "120363000000000015"
 	dmFixture := newFixture(t)
-	ownerDM := dmFixture.candidate("trigger-owner-dm", "155500000015@s.whatsapp.net", conversation.ChatDirect, "/trigger mention off")
+	ownerDM := dmFixture.candidate("trigger-owner-dm", "155500000015", conversation.ChatDirect, "/trigger mention off")
 	ownerDM.Owner = true
 	if err := dmFixture.handler.Handle(context.Background(), ownerDM); err != nil {
 		t.Fatalf("handle owner trigger command in DM: %v", err)
@@ -81,7 +81,7 @@ func TestTriggerCommandConfiguresCustomRegexForGroupInvocation(t *testing.T) {
 	if dmFixture.sender.count() != 1 {
 		t.Fatalf("owner trigger DM response count = %d", dmFixture.sender.count())
 	}
-	if reply := dmFixture.sender.last().Text; !strings.Contains(reply, "in a group") {
+	if reply := dmFixture.sender.last().Text; !strings.Contains(reply, "in a server channel") {
 		t.Fatalf("owner trigger DM response = %q", reply)
 	}
 
@@ -119,7 +119,7 @@ func TestTriggerCommandConfiguresCustomRegexForGroupInvocation(t *testing.T) {
 
 func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
 	fixture := newFixture(t)
-	command := fixture.candidate("group-command", "120363000000000001@g.us", conversation.ChatGroup, "/help")
+	command := fixture.candidate("group-command", "120363000000000001", conversation.ChatGroup, "/help")
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
 		t.Fatalf("handle group command: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRegisteredCommandDoesNotRequireGroupMention(t *testing.T) {
 
 func TestBotOriginatedPublicCommandUsesTheSameCommandLane(t *testing.T) {
 	fixture := newFixture(t)
-	command := fixture.candidate("bot-prompt", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/prompt")
+	command := fixture.candidate("bot-prompt", "15550000002", conversation.ChatDirect, "/prompt")
 	command.FromMe = true
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
 		t.Fatalf("handle bot command: %v", err)
@@ -148,7 +148,7 @@ func TestBotOriginatedPublicCommandUsesTheSameCommandLane(t *testing.T) {
 
 func TestBotOriginatedOwnerCommandIsBlockedByFromMePermission(t *testing.T) {
 	fixture := newFixture(t)
-	command := fixture.candidate("bot-dump", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")
+	command := fixture.candidate("bot-dump", "15550000002", conversation.ChatDirect, "/dump")
 	command.FromMe = true
 	command.Owner = true
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
@@ -164,7 +164,7 @@ func TestBotOriginatedOwnerCommandIsBlockedByFromMePermission(t *testing.T) {
 
 func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 	fixture := newFixture(t)
-	dump := fixture.candidate("dump-1", "15550000002@s.whatsapp.net", conversation.ChatDirect, "/dump")
+	dump := fixture.candidate("dump-1", "15550000002", conversation.ChatDirect, "/dump")
 	dump.Owner = true
 	if err := fixture.handler.Handle(context.Background(), dump); err != nil {
 		t.Fatalf("handle dump: %v", err)
@@ -186,7 +186,7 @@ func TestOwnerDumpReturnsTheAgentBuiltInputWithoutInvokingModel(t *testing.T) {
 
 func TestFullGroupTranscriptIncludesPassiveMessagesInNextInvocation(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "120363000000000002@g.us"
+	chat := "120363000000000002"
 	passive := fixture.candidate("group-passive", chat, conversation.ChatGroup, "context before mention")
 	if err := fixture.handler.Handle(context.Background(), passive); err != nil {
 		t.Fatalf("handle passive group message: %v", err)
@@ -235,7 +235,7 @@ func TestRapidMessagesAreDurablyDebouncedIntoOneBoundedBatch(t *testing.T) {
 	// The window must outlast the second Handle's store writes, which can
 	// take tens of milliseconds under the race detector on a slow runner.
 	fixture := newFixtureWithBatching(t, 500*time.Millisecond, 8)
-	chat := "15550000012@s.whatsapp.net"
+	chat := "15550000012"
 	first := fixture.candidate("batch-1", chat, conversation.ChatDirect, "first")
 	second := fixture.candidate("batch-2", chat, conversation.ChatDirect, "second")
 	second.OccurredAt = first.OccurredAt.Add(time.Millisecond)
@@ -290,7 +290,7 @@ func TestRapidMessagesAreDurablyDebouncedIntoOneBoundedBatch(t *testing.T) {
 
 func TestMessageBurstCapSplitsOversizedBurstWithoutLosingRemainder(t *testing.T) {
 	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 2)
-	chat := "15550000014@s.whatsapp.net"
+	chat := "15550000014"
 	var wait sync.WaitGroup
 	errors := make(chan error, 3)
 	for index := 0; index < 3; index++ {
@@ -319,7 +319,7 @@ func TestMessageBurstCapSplitsOversizedBurstWithoutLosingRemainder(t *testing.T)
 func TestMessagesBeyondTheMemoryBoundAreReadBackFromTheInbox(t *testing.T) {
 	defer inbound.SetMaxPending(2)()
 	fixture := newFixtureWithBatching(t, 30*time.Millisecond, 2)
-	chat := "15550000015@s.whatsapp.net"
+	chat := "15550000015"
 	var wait sync.WaitGroup
 	errors := make(chan error, 6)
 	for index := 0; index < 6; index++ {
@@ -387,7 +387,7 @@ func TestAFailedInboxReadBackIsTriedAgain(t *testing.T) {
 	fixture.handler.dispatcher = dispatcher
 	// Two messages fit in memory; the other two wait in the inbox, and the
 	// first read-back fails.
-	chat := "15550000017@s.whatsapp.net"
+	chat := "15550000017"
 	for index := 0; index < 4; index++ {
 		candidate := fixture.candidate(fmt.Sprintf("flaky-inbox-%d", index), chat, conversation.ChatDirect, fmt.Sprintf("message-%d", index))
 		if err := dispatcher.Handle(context.Background(), candidate); err != nil {
@@ -434,7 +434,7 @@ func TestAFailedClaimIsTriedAgain(t *testing.T) {
 		t.Fatalf("create inbound dispatcher: %v", err)
 	}
 	fixture.handler.dispatcher = dispatcher
-	candidate := fixture.candidate("flaky-claim", "15550000016@s.whatsapp.net", conversation.ChatDirect, "hello")
+	candidate := fixture.candidate("flaky-claim", "15550000016", conversation.ChatDirect, "hello")
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 		t.Fatalf("handle after a failed claim: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestAFailedClaimIsTriedAgain(t *testing.T) {
 
 func TestGroupReplyToBotTriggersAndCarriesCanonicalQuote(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "120363000000000012@g.us"
+	chat := "120363000000000012"
 	first := fixture.candidate("quote-source", chat, conversation.ChatGroup, "first")
 	first.MentionsBot = true
 	if err := fixture.handler.Handle(context.Background(), first); err != nil {
@@ -476,7 +476,7 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	firstRuntime := newFixtureAtPath(t, path, tenantID, accountID, 0, 1)
-	chat := "15550000016@s.whatsapp.net"
+	chat := "15550000016"
 	first := firstRuntime.candidate("restart-context-1", chat, conversation.ChatDirect, "remember blue")
 	if err := firstRuntime.handler.Handle(context.Background(), first); err != nil {
 		t.Fatalf("handle first message: %v", err)
@@ -503,7 +503,7 @@ func TestHistoryContextSurvivesStoreAndAgentRecreation(t *testing.T) {
 
 func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "15550000013@s.whatsapp.net"
+	chat := "15550000013"
 	if err := fixture.handler.Handle(context.Background(), fixture.candidate("control-history", chat, conversation.ChatDirect, "remember")); err != nil {
 		t.Fatalf("seed history: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), denied); err != nil {
 		t.Fatalf("denied reset: %v", err)
 	}
-	if !strings.Contains(fixture.sender.last().Text, "can only be used by group admins or the owner") {
+	if !strings.Contains(fixture.sender.last().Text, "can only be used by server moderators or the owner") {
 		t.Fatalf("reset denial = %q", fixture.sender.last().Text)
 	}
 	reset := fixture.candidate("control-reset", chat, conversation.ChatDirect, "/reset")
@@ -552,7 +552,7 @@ func TestHelpInfoAndOwnerOnlyReset(t *testing.T) {
 
 func TestKnownMalformedCommandDoesNotFallThroughToModel(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("control-malformed", "15550000017@s.whatsapp.net", conversation.ChatDirect, "/help unexpected")
+	candidate := fixture.candidate("control-malformed", "15550000017", conversation.ChatDirect, "/help unexpected")
 	if err := fixture.handler.Handle(context.Background(), candidate); err != nil {
 		t.Fatalf("handle malformed command: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestKnownMalformedCommandDoesNotFallThroughToModel(t *testing.T) {
 
 func TestCommandAuthorizationRereadsDurableUserIDBoundOwner(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("current-owner-only", "15550000018@s.whatsapp.net", conversation.ChatDirect, "/reset")
+	candidate := fixture.candidate("current-owner-only", "15550000018", conversation.ChatDirect, "/reset")
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim command: %v", err)
@@ -578,14 +578,14 @@ func TestCommandAuthorizationRereadsDurableUserIDBoundOwner(t *testing.T) {
 	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
 		t.Fatalf("resume command: %v", err)
 	}
-	if got := fixture.sender.last().Text; got != "The /reset command can only be used by group admins or the owner." {
+	if got := fixture.sender.last().Text; got != "The /reset command can only be used by server moderators or the owner." {
 		t.Fatalf("forged owner command response = %q", got)
 	}
 }
 
 func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "15550000003@s.whatsapp.net"
+	chat := "15550000003"
 	set := fixture.candidate("prompt-1", chat, conversation.ChatDirect, "/prompt set speak concisely")
 	set.Owner = true
 	if err := fixture.handler.Handle(context.Background(), set); err != nil {
@@ -612,7 +612,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if err := fixture.handler.Handle(context.Background(), view); err != nil {
 		t.Fatalf("view prompt: %v", err)
 	}
-	if got := fixture.sender.last().Text; !strings.HasPrefix(got, "*Custom instructions*, added to the main prompt:\nspeak concisely\n") {
+	if got := fixture.sender.last().Text; !strings.HasPrefix(got, "**Custom instructions**, added to the main prompt:\nspeak concisely\n") {
 		t.Fatalf("view response = %q", got)
 	}
 
@@ -625,7 +625,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 	if afterDenied.Version != snapshot.Version || afterDenied.PromptOverride.Text != "speak concisely" {
 		t.Fatalf("non-owner changed config: %#v", afterDenied)
 	}
-	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by group admins or the owner." {
+	if got := fixture.sender.last().Text; got != "The /prompt command can only be used by server moderators or the owner." {
 		t.Fatalf("denial response = %q", got)
 	}
 
@@ -646,7 +646,7 @@ func TestPromptCommandsAreOwnerOnlyPersistedAndBypassModel(t *testing.T) {
 func TestUnknownSendOutcomeIsNotAutomaticallySentAgain(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.sender.err = agent.NewError(agent.ErrorTimeout, "fake send", context.DeadlineExceeded)
-	candidate := fixture.candidate("unknown-1", "15550000004@s.whatsapp.net", conversation.ChatDirect, "hello")
+	candidate := fixture.candidate("unknown-1", "15550000004", conversation.ChatDirect, "hello")
 	err := fixture.handler.Handle(context.Background(), candidate)
 	if !agent.IsCode(err, agent.ErrorUnknownOutcome) {
 		t.Fatalf("first send error = %v, want unknown_outcome", err)
@@ -673,7 +673,7 @@ func TestUnknownSendOutcomeIsNotAutomaticallySentAgain(t *testing.T) {
 
 func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("prompt-crash", "15550000005@s.whatsapp.net", conversation.ChatDirect, "/prompt set crash-safe")
+	candidate := fixture.candidate("prompt-crash", "15550000005", conversation.ChatDirect, "/prompt set crash-safe")
 	candidate.Owner = true
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
@@ -710,7 +710,7 @@ func TestPromptMutationRecoversCrashAfterConfigCommitWithoutApplyingTwice(t *tes
 
 func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReaction(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "15550000019@s.whatsapp.net"
+	chat := "15550000019"
 	command := fixture.candidate("permission-1", chat, conversation.ChatDirect, "/permission 3")
 	command.Owner = true
 	if err := fixture.handler.Handle(context.Background(), command); err != nil {
@@ -754,14 +754,14 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 	if err != nil || afterDenied.Permission.ModerationLevel != agent.ModerationDeleteMuteKick {
 		t.Fatalf("non-owner changed moderation level: %#v, %v", afterDenied.Permission, err)
 	}
-	if got := fixture.sender.last().Text; got != "The /permission command can only be used by group admins or the owner." {
+	if got := fixture.sender.last().Text; got != "The /permission command can only be used by server moderators or the owner." {
 		t.Fatalf("permission denial response = %q", got)
 	}
 }
 
 func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("permission-crash", "15550000020@s.whatsapp.net", conversation.ChatDirect, "/permission 2")
+	candidate := fixture.candidate("permission-crash", "15550000020", conversation.ChatDirect, "/permission 2")
 	candidate.Owner = true
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
@@ -792,7 +792,7 @@ func TestPermissionCommandRecoveryDoesNotApplyTwice(t *testing.T) {
 
 func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 	fixture := newFixture(t)
-	candidate := fixture.candidate("inbound-crash", "15550000006@s.whatsapp.net", conversation.ChatDirect, "resume me")
+	candidate := fixture.candidate("inbound-crash", "15550000006", conversation.ChatDirect, "resume me")
 	candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
 	candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -816,7 +816,7 @@ func TestDurablyClaimedInboundCanResumeWithoutProviderReplay(t *testing.T) {
 
 func TestDispatcherRechecksCurrentAllowlistBeforeEverySend(t *testing.T) {
 	fixture := newFixture(t)
-	chat := "15550000008@s.whatsapp.net"
+	chat := "15550000008"
 	original := fixture.candidate("policy-send-1", chat, conversation.ChatDirect, "plan while disconnected")
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), original)
 	if err != nil {
@@ -921,7 +921,7 @@ type failingText struct {
 
 func (sender *failingText) SendText(context.Context, action.SendTextRequest) (action.SendTextResult, error) {
 	sender.calls.Add(1)
-	return action.SendTextResult{}, agent.NewError(sender.code, "send WhatsApp text", errors.New("send failed"))
+	return action.SendTextResult{}, agent.NewError(sender.code, "send Discord message", errors.New("send failed"))
 }
 
 func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
@@ -945,7 +945,7 @@ func TestFailedCommandIsClosedAndNotRetried(t *testing.T) {
 				t.Fatalf("create inbound dispatcher: %v", err)
 			}
 			fixture.handler.dispatcher = dispatcher
-			candidate := fixture.candidate("failing-help", "15550000007@s.whatsapp.net", conversation.ChatDirect, "/help")
+			candidate := fixture.candidate("failing-help", "15550000007", conversation.ChatDirect, "/help")
 			candidate.ReceivedAt = time.Now().UTC().Add(-time.Minute)
 			candidate.OccurredAt = candidate.ReceivedAt.Add(-time.Second)
 			if err := fixture.handler.Handle(context.Background(), candidate); !agent.IsCode(err, test.code) {
@@ -1039,7 +1039,7 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	ingress := &directIngress{}
-	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report, Stickers: store.Stickers()}
+	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report, Stickers: serverStickers{"wave"}}
 	ingress.dispatcher, err = inbound.NewDispatcher(
 		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender}, dispatcherOptions,
 	)
@@ -1066,10 +1066,10 @@ func newFixtureAtPath(
 
 func (fixture *fixture) candidate(id, chat string, kind conversation.ChatKind, text string) conversation.IncomingCandidate {
 	now := time.Now().UTC()
-	lid, _ := identity.ParseUserID("10000000001@lid")
+	lid, _ := identity.ParseUserID("10000000001")
 	return conversation.IncomingCandidate{
 		TenantID: fixture.tenantID, AccountID: fixture.accountID,
-		ProviderMessageID: id, ProviderChatAddress: chat, SenderUserID: lid, ProviderSenderPhone: "15550000001@s.whatsapp.net",
+		ProviderMessageID: id, ProviderChatAddress: chat, SenderUserID: lid,
 		SenderName: "Tester", ChatKind: kind, Text: text, Allowlisted: true,
 		OccurredAt: now.Add(-time.Second), ReceivedAt: now,
 	}
@@ -1143,10 +1143,6 @@ func (authority staticChatAuthority) ReadChatAuthority(ctx context.Context, prin
 
 func (sender *recordingSender) Ready() bool { return sender.ready.Load() }
 
-func (sender *recordingSender) SendCopyCode(context.Context, action.SendCopyCodeRequest) error {
-	return nil
-}
-
 func (sender *recordingSender) SendText(_ context.Context, request action.SendTextRequest) (action.SendTextResult, error) {
 	sender.mu.Lock()
 	sender.requests = append(sender.requests, request)
@@ -1168,4 +1164,11 @@ func (sender *recordingSender) last() action.SendTextRequest {
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
 	return sender.requests[len(sender.requests)-1]
+}
+
+// serverStickers is a fixed list of the server stickers the model may send.
+type serverStickers []string
+
+func (stickers serverStickers) StickerNames(context.Context, agent.Key) ([]string, error) {
+	return append([]string(nil), stickers...), nil
 }

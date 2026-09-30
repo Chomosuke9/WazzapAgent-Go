@@ -1,4 +1,4 @@
-// Package effect owns typed native WhatsApp effects. It exposes no string
+// Package effect owns typed native Discord effects. It exposes no string
 // command, provider address, or provider DTO to the rest of the application.
 package effect
 

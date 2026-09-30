@@ -453,7 +453,7 @@ func (s *AppService) SendDiscordBroadcast(request SendDiscordBroadcastRequestDTO
 	if format != "text" && format != "payload" {
 		format = "invalid"
 	}
-	s.recordChatActionDetails("INFO", "WhatsApp broadcast send started", fmt.Sprintf("groups=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
+	s.recordChatActionDetails("INFO", "Discord broadcast send started", fmt.Sprintf("groups=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
 	var results []control.AgentBroadcastGroupResult
 	err := s.withBroadcastActions(broadcastActionTimeout(len(request.GroupIDs), request.BatchSize, request.BatchDelaySeconds), func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -471,9 +471,9 @@ func (s *AppService) SendDiscordBroadcast(request SendDiscordBroadcastRequestDTO
 			sent++
 		}
 	}
-	level, message := "INFO", "WhatsApp broadcast completed"
+	level, message := "INFO", "Discord broadcast completed"
 	if sent != len(results) {
-		level, message = "WARN", "WhatsApp broadcast completed with delivery failures"
+		level, message = "WARN", "Discord broadcast completed with delivery failures"
 	}
 	s.recordChatActionDetails(level, message, broadcastResultLogDetails(results, sent))
 	return result, nil
@@ -521,7 +521,7 @@ func (s *AppService) ScheduleDiscordBroadcast(request ScheduleDiscordBroadcastRe
 	if err != nil {
 		return DiscordBroadcastScheduleDTO{}, err
 	}
-	s.recordChatAction("INFO", "WhatsApp broadcast scheduled", nil)
+	s.recordChatAction("INFO", "Discord broadcast scheduled", nil)
 	return broadcastScheduleDTO(schedule), nil
 }
 
@@ -549,7 +549,7 @@ func (s *AppService) CancelDiscordBroadcastSchedule(id string) error {
 	if err != nil {
 		return err
 	}
-	s.recordChatAction("INFO", "WhatsApp broadcast schedule cancelled", nil)
+	s.recordChatAction("INFO", "Discord broadcast schedule cancelled", nil)
 	return nil
 }
 
@@ -611,7 +611,7 @@ func (s *AppService) ResetDiscordChatSettings(request ResetDiscordChatSettingsRe
 func (s *AppService) SaveDiscordChatSettings(request SaveDiscordChatSettingsRequestDTO) (DiscordChatSettingsDTO, error) {
 	expectedVersion, err := strconv.ParseUint(request.ExpectedVersion, 10, 64)
 	if err != nil || expectedVersion == 0 {
-		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("settings revision is invalid")))
+		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save Discord chat settings", errors.New("settings revision is invalid")))
 	}
 	mode := agent.PromptOverrideMode(0)
 	switch strings.TrimSpace(request.PromptOverrideMode) {
@@ -621,7 +621,7 @@ func (s *AppService) SaveDiscordChatSettings(request SaveDiscordChatSettingsRequ
 	case "replace":
 		mode = agent.PromptReplace
 	default:
-		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("prompt mode is invalid")))
+		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save Discord chat settings", errors.New("prompt mode is invalid")))
 	}
 	var settings control.AgentChatSettings
 	err = s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
@@ -731,7 +731,7 @@ func (s *AppService) SendDiscordMessage(chatID, text, replyToMessageID string) (
 	if err != nil {
 		return DiscordMessageDTO{}, err
 	}
-	s.recordChatAction("INFO", "WhatsApp message sent from Chat", nil)
+	s.recordChatAction("INFO", "Discord message sent from Chat", nil)
 	return discordMessage(message), nil
 }
 
@@ -740,10 +740,10 @@ func (s *AppService) DeleteDiscordMessage(chatID, messageID string) error {
 		return runtime.DeleteChatMessage(ctx, chatID, messageID)
 	})
 	if err != nil {
-		s.recordChatAction("WARN", "Could not delete WhatsApp message", err)
+		s.recordChatAction("WARN", "Could not delete Discord message", err)
 		return err
 	}
-	s.recordChatAction("INFO", "WhatsApp message deleted", nil)
+	s.recordChatAction("INFO", "Discord message deleted", nil)
 	return nil
 }
 
@@ -755,7 +755,7 @@ func (s *AppService) KickDiscordGroupMember(chatID, memberID string) error {
 		s.recordChatAction("WARN", "Could not remove group member", err)
 		return err
 	}
-	s.recordChatAction("INFO", "Group member removed from WhatsApp", nil)
+	s.recordChatAction("INFO", "Group member removed from Discord", nil)
 	return nil
 }
 
@@ -764,11 +764,11 @@ func (s *AppService) withChatActions(action func(control.ManagedAgentChatActions
 }
 
 func (s *AppService) withChatActionsTimeout(timeout time.Duration, action func(control.ManagedAgentChatActions, context.Context) error) error {
-	return s.withManagedChatActions(timeout, "WhatsApp action from Chat failed", action)
+	return s.withManagedChatActions(timeout, "Discord action from Chat failed", action)
 }
 
 func (s *AppService) withBroadcastActions(timeout time.Duration, action func(control.ManagedAgentChatActions, context.Context) error) error {
-	return s.withManagedChatActions(timeout, "WhatsApp broadcast action failed", action)
+	return s.withManagedChatActions(timeout, "Discord broadcast action failed", action)
 }
 
 func (s *AppService) withManagedChatActions(timeout time.Duration, failureLogMessage string, action func(control.ManagedAgentChatActions, context.Context) error) error {
@@ -813,32 +813,40 @@ func safeChatActionError(err error) error {
 			switch operation.Operation() {
 			case "use Agent chat actions":
 				return errors.New("The Agent is not running. Start it from Overview.")
-			case "use WhatsApp chat actions", "send WhatsApp text", "list WhatsApp group members", "kick WhatsApp group member":
-				return errors.New("The Agent is running, but its WhatsApp connection is not ready. Check the WhatsApp status on Overview and try again.")
-			case "list WhatsApp broadcast groups", "send WhatsApp broadcast", "schedule WhatsApp broadcast":
-				return errors.New("The Agent is running, but its WhatsApp connection is not ready. Check the WhatsApp status on Overview and try again.")
+			case "use Discord chat actions", "send Discord message", "list Discord members", "kick Discord member", "moderate Discord channel",
+				"list Discord broadcast channels", "send Discord broadcast", "schedule Discord broadcast":
+				return errors.New("The Agent is running, but its Discord connection is not ready. Check the Discord status on Overview and try again.")
 			}
 		}
-		return errors.New("The Agent or WhatsApp connection is not ready. Check both statuses and try again.")
+		return errors.New("The Agent or Discord connection is not ready. Check both statuses and try again.")
 	case agent.ErrorPermissionDenied:
 		var operation interface{ Operation() string }
-		if errors.As(err, &operation) && operation.Operation() == "authorize WhatsApp message deletion" {
-			return errors.New("The bot's WhatsApp account must be a group admin to delete members' messages.")
+		if errors.As(err, &operation) {
+			switch operation.Operation() {
+			case "check Discord permission", "delete Discord message", "kick Discord member", "list Discord members":
+				// These explain which Discord permission or intent is missing,
+				// and carry no IDs.
+				if typed, ok := operation.(error); ok {
+					if cause := errors.Unwrap(typed); cause != nil {
+						return errors.New(sentence(cause.Error()))
+					}
+				}
+			}
 		}
 		return errors.New("This action is not allowed in this conversation.")
 	case agent.ErrorNotFound:
 		var operation interface{ Operation() string }
 		if errors.As(err, &operation) {
 			switch operation.Operation() {
-			case "kick WhatsApp group member":
-				return errors.New("The group member list has changed. Refresh it and try again.")
-			case "send WhatsApp broadcast":
-				return errors.New("The selected group list expired. Refresh the groups and try again.")
-			case "schedule WhatsApp broadcast":
-				return errors.New("The selected group list changed. Refresh the groups and try again.")
+			case "kick Discord member":
+				return errors.New("The member list has changed. Refresh it and try again.")
+			case "send Discord broadcast":
+				return errors.New("The selected channel list expired. Refresh the channels and try again.")
+			case "schedule Discord broadcast":
+				return errors.New("The selected channel list changed. Refresh the channels and try again.")
 			case "resolve chat target":
 				return errors.New("This chat is not available on the current Agent connection. Reload the chat list.")
-			case "resolve message target", "resolve WhatsApp effect target", "delete WhatsApp chat message", "delete WhatsApp message":
+			case "resolve message target", "resolve Discord message", "delete Discord chat message", "delete Discord message":
 				return errors.New("This message is no longer available for that action. Reload the chat history.")
 			case "compare and swap config":
 				return errors.New("Chat settings are not available. Close and reopen the settings panel.")
@@ -851,11 +859,13 @@ func safeChatActionError(err error) error {
 		var operation interface{ Operation() string }
 		if errors.As(err, &operation) {
 			switch operation.Operation() {
-			case "validate WhatsApp broadcast payload":
-				return errors.New("The JSON must match the WhatsApp waE2E.Message payload format.")
-			case "validate WhatsApp broadcast timing":
+			case "validate Discord broadcast payload":
+				return errors.New("The JSON must be a Discord message object, such as {\"content\": \"Hello\"}.")
+			case "validate Discord broadcast timing":
 				return errors.New("Batch size must be 1–100 and the pause must be 0–300 seconds.")
-			case "schedule WhatsApp broadcast":
+			case "moderate Discord channel":
+				return errors.New("Members can only be managed in server channels.")
+			case "schedule Discord broadcast":
 				return errors.New("Choose a future date within the next year.")
 			case "add chat task":
 				return errors.New("Choose a time in the future.")
@@ -871,16 +881,29 @@ func safeChatActionError(err error) error {
 		}
 		return errors.New("The action failed. Check the Logs page for details.")
 	case agent.ErrorTimeout:
-		return errors.New("WhatsApp did not respond before the timeout.")
+		return errors.New("Discord did not respond before the timeout.")
 	case agent.ErrorConflict:
 		var operation interface{ Operation() string }
-		if errors.As(err, &operation) && operation.Operation() == "cancel WhatsApp broadcast schedule" {
+		if errors.As(err, &operation) && operation.Operation() == "cancel Discord broadcast schedule" {
 			return errors.New("This schedule has already started or was cancelled.")
 		}
 		return errors.New("Chat settings have changed. Close and reopen the Chat settings panel.")
 	default:
 		return errors.New("The action failed. Check the Logs page for details.")
 	}
+}
+
+// sentence capitalizes a message and ends it with a period.
+func sentence(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return message
+	}
+	message = strings.ToUpper(message[:1]) + message[1:]
+	if !strings.HasSuffix(message, ".") {
+		message += "."
+	}
+	return message
 }
 
 func (s *AppService) recordChatAction(level, message string, err error) {
@@ -994,7 +1017,7 @@ func (s *AppService) effectiveDataRoot(fallback string) string {
 
 func (s *AppService) GetDiscordSessionStatus() (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	status, err := s.sessions.GetStatus(context.Background())
 	if err != nil {
@@ -1076,7 +1099,7 @@ func (s *AppService) withSessionControl(action func() error) error {
 
 func (s *AppService) BeginDiscordLink(request BeginDiscordLinkRequestDTO) (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1094,7 +1117,7 @@ func (s *AppService) BeginDiscordLink(request BeginDiscordLinkRequestDTO) (Disco
 
 func (s *AppService) ResumeDiscordSession() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1103,16 +1126,16 @@ func (s *AppService) ResumeDiscordSession() (DiscordSessionOperationDTO, error) 
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not resume WhatsApp session", err)
+		s.recordLog("ERROR", "Could not resume Discord session", err)
 		return DiscordSessionOperationDTO{}, err
 	}
-	s.recordLog("INFO", "Resuming WhatsApp session", nil)
+	s.recordLog("INFO", "Resuming Discord session", nil)
 	return discordSessionOperationDTO(operation), nil
 }
 
 func (s *AppService) StopDiscordSession() (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var status control.SessionStatus
 	err := s.withSessionControl(func() error {
@@ -1121,16 +1144,16 @@ func (s *AppService) StopDiscordSession() (DiscordSessionStatusDTO, error) {
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not stop WhatsApp session", err)
+		s.recordLog("ERROR", "Could not stop Discord session", err)
 		return DiscordSessionStatusDTO{}, err
 	}
-	s.recordLog("INFO", "WhatsApp session stopped", nil)
+	s.recordLog("INFO", "Discord session stopped", nil)
 	return discordSessionStatusDTO(status), nil
 }
 
 func (s *AppService) CancelDiscordLink(operationID string) (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var status control.SessionStatus
 	err := s.withSessionControl(func() error {
@@ -1148,7 +1171,7 @@ func (s *AppService) CancelDiscordLink(operationID string) (DiscordSessionStatus
 
 func (s *AppService) ReconnectDiscordSession() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1157,16 +1180,16 @@ func (s *AppService) ReconnectDiscordSession() (DiscordSessionOperationDTO, erro
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not reconnect WhatsApp session", err)
+		s.recordLog("ERROR", "Could not reconnect Discord session", err)
 		return DiscordSessionOperationDTO{}, err
 	}
-	s.recordLog("INFO", "WhatsApp reconnection started", nil)
+	s.recordLog("INFO", "Discord reconnection started", nil)
 	return discordSessionOperationDTO(operation), nil
 }
 
 func (s *AppService) UnlinkDiscordBot() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("Discord session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {

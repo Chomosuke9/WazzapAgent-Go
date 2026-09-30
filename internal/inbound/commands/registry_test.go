@@ -15,7 +15,7 @@ func TestEveryCommandFileRegistersItself(t *testing.T) {
 		"/help":        "help",
 		"/menu":        "help",
 		"/info":        "info",
-		"/group":       "group",
+		"/mod":         "mod",
 		"/dump":        "dump",
 		"/catch":       "catch",
 		"/reset":       "reset",

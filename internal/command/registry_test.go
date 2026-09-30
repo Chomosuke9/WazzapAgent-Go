@@ -194,7 +194,7 @@ type rejectingButtons struct {
 
 func (sender *rejectingButtons) SendButtons(context.Context, action.SendButtonsRequest) (action.SendTextResult, error) {
 	sender.calls++
-	return action.SendTextResult{}, agent.NewError(sender.code, "send WhatsApp buttons", errors.New("server returned error 405"))
+	return action.SendTextResult{}, agent.NewError(sender.code, "send Discord buttons", errors.New("server returned error 405"))
 }
 
 func TestRejectedButtonsFallBackToText(t *testing.T) {
@@ -251,7 +251,7 @@ func TestMenusRouteOptionsToTheirCommandsAndFallBackToText(t *testing.T) {
 
 	text := &textRecorder{}
 	err = registry.Dispatch(context.Background(), command.Request{Name: "settings"}, command.Invocation{Platform: command.Platform{Text: text, Buttons: &rejectingButtons{code: agent.ErrorUnsupported}}})
-	if err != nil || len(text.sent) != 1 || text.sent[0] != "Current: level 1\n\n*Moderation*\n• Level 0: /permission 0\n• Show all: /permission" {
+	if err != nil || len(text.sent) != 1 || text.sent[0] != "Current: level 1\n\n**Moderation**\n• Level 0: /permission 0\n• Show all: /permission" {
 		t.Fatalf("text fallback = %q, %v", text.sent, err)
 	}
 }

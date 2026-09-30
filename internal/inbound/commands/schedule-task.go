@@ -128,7 +128,7 @@ func parseScheduleTaskArgs(args string) (time.Duration, string, bool) {
 	return delay, prompt, true
 }
 
-// scheduleTaskMentions rewrites the raw WhatsApp mentions a person typed
+// scheduleTaskMentions rewrites the raw Discord mentions a person typed
 // into the @Name (senderRef) form the model uses to tag someone.
 func scheduleTaskMentions(prompt string, bindings []conversation.MentionBinding, assistantName string) string {
 	replacements := make(map[string]string, len(bindings))

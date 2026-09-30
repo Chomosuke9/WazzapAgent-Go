@@ -88,8 +88,8 @@ func TestSettingsSnapshotValidAgentHasNoExternalReads(t *testing.T) {
 	settings := DefaultSettings()
 	settings.AssistantName = "Vivy"
 	settings.BasePrompt = "Jawab singkat."
-	settings.OwnerID = "15550000001@s.whatsapp.net"
-	settings.ChatAllowlist = []string{"15550000002@s.whatsapp.net"}
+	settings.OwnerID = "15550000001"
+	settings.ChatAllowlist = []string{"15550000002"}
 	settings.LLMEndpoint = "https://llm.example.invalid/v1/chat/completions"
 	settings.LLMAPIKey = "test-secret"
 	settings.LLMModel = "test-model"
@@ -157,7 +157,7 @@ func TestSettingsSchemaContainsAllPersistedAndRuntimeKeys(t *testing.T) {
 		"DISCORDAGENT_CONNECT_TIMEOUT",
 		"DISCORDAGENT_SEND_TIMEOUT", "DISCORDAGENT_SHUTDOWN_TIMEOUT", "DISCORDAGENT_POLICY_ID", "DISCORDAGENT_POLICY_REVISION",
 		"DISCORDAGENT_LOG_LEVEL", "DISCORDAGENT_LOG_FORMAT", "LANGSMITH_API_KEY", "DISCORDAGENT_DATA_DIR", "DISCORDAGENT_ENV_FILE",
-		"DISCORDAGENT_HTTP_ADDRESS", "DISCORDAGENT_PAIRING_OUTPUT", "DISCORDAGENT_TENANT_ID", "DISCORDAGENT_ACCOUNT_ID", "NO_COLOR", "FORCE_COLOR", "startOnLaunch",
+		"DISCORDAGENT_HTTP_ADDRESS", "DISCORDAGENT_TENANT_ID", "DISCORDAGENT_ACCOUNT_ID", "NO_COLOR", "FORCE_COLOR", "startOnLaunch",
 	}
 	fields := SettingsSchema()
 	seen := make(map[string]bool, len(fields))

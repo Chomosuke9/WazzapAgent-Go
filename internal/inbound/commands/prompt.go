@@ -16,7 +16,7 @@ func init() {
 		Permission: "owner or (admin and group) or fromMe",
 		Description: "Shows and changes this chat's custom instructions, which add to the main prompt: " +
 			"/prompt shows them; /prompt set <text> sets them; /prompt clear deletes them.",
-		DeniedReply: "The /prompt command can only be used by group admins or the owner.",
+		DeniedReply: "The /prompt command can only be used by server moderators or the owner.",
 		Run:         runPrompt,
 	})
 }
@@ -58,11 +58,11 @@ func replyPrompt(ctx context.Context, c *command.Context, prefix string, overrid
 func formatPrompt(override *agent.PromptOverride) string {
 	switch {
 	case override == nil:
-		return "*Custom instructions*: none. I follow the main prompt."
+		return "**Custom instructions**: none. I follow the main prompt."
 	case override.Mode == agent.PromptReplace:
-		return "*Custom instructions*, used instead of the main prompt"
+		return "**Custom instructions**, used instead of the main prompt"
 	default:
-		return "*Custom instructions*, added to the main prompt"
+		return "**Custom instructions**, added to the main prompt"
 	}
 }
 

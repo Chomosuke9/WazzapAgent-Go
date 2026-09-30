@@ -73,7 +73,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 	want := []ModelMessage{
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
-		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Group name: Tim\n- Group description: Diskusi proyek\n- Chat state: group\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
+		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Channel: Tim\n- Channel topic: Diskusi proyek\n- Chat type: server channel\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
 		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nTimes here and in the chat transcript are in the bot's time zone, UTC.\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time:\n- none\n</chat_state>"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
@@ -347,7 +347,7 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 	want := "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\n" +
 		"Settings of this chat (the command in brackets changes it):\n" +
 		"- Triggers [/trigger]: mention on, name off, reply to bot on, smart off\n" +
-		"  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
+		"  Moderator rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
 		"  1. delete scam links\n  2. no spam\n" +
 		"- Moderation level [/permission]: 1 (delete messages)\n" +
 		"- Custom instructions [/prompt]: set, replacing the chat prompt (the text is in <prompt_override>)\n" +
@@ -359,7 +359,7 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
 	}
 	config.Triggers.Smart = true
-	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Group admin rules (a message matching one wakes you, and you follow it):\n  1.") {
+	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Moderator rules (a message matching one wakes you, and you follow it):\n  1.") {
 		t.Fatalf("chat state with smart on:\n%s", got)
 	}
 	private := formatChatState(ChatContext{Kind: "private"}, ConfigSnapshot{})

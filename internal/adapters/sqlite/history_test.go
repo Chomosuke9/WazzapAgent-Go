@@ -113,7 +113,7 @@ func TestReplyToPreResetAssistantKeepsTriggerWithoutResurrectingText(t *testing.
 	ctx := context.Background()
 	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
 	store := openTestStoreWithClock(t, clock)
-	source := testCandidate(t, "quote-before-reset", "120363000000000099@g.us")
+	source := testCandidate(t, "quote-before-reset", "120363000000000099")
 	source.ChatKind = conversation.ChatGroup
 	source.MentionsBot = true
 	source.OccurredAt = clock.now.Add(-time.Second)

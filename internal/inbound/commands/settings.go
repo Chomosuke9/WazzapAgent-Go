@@ -15,7 +15,7 @@ func init() {
 		Aliases:     []string{"setting", "config"},
 		Permission:  "(owner or (admin and group)) and !fromMe",
 		Description: "Shows this chat's settings in one message, with a menu to change each part.",
-		DeniedReply: "Only a group admin or the owner can see this chat's settings.",
+		DeniedReply: "Only a server moderator or the owner can see this chat's settings.",
 		Run:         runSettings,
 	})
 }
@@ -27,7 +27,7 @@ func runSettings(ctx context.Context, c *command.Context) error {
 	if c.HasArgs {
 		return c.Reply(ctx, "Send /settings on its own to see this chat's settings.")
 	}
-	lines := []string{"⚙️ *Chat settings*", "", "Current:"}
+	lines := []string{"⚙️ **Chat settings**", "", "Current:"}
 	var menus []command.Menu
 	if c.Facts.IsGroup {
 		triggers, level := c.Config.Triggers, c.Config.Permission.ModerationLevel

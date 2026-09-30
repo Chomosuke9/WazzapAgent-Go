@@ -292,7 +292,7 @@ func TestReactionOnlyToolCallDoesNotRequireReplyText(t *testing.T) {
 func TestToolCallCannotEscalateOrChooseArbitraryTarget(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	tests := []string{
-		`{"id":"call_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[\"000001\"]}"}}`,
+		`{"id":"call_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"x\",\"command\":[\"/mod delete\"],\"command_context_msg_id\":[\"000001\"]}"}}`,
 		`{"id":"call_2","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"attacker\",\"emoji\":\"✅\"}"}}`,
 		`{"id":"call_3","type":"function","function":{"name":"react_to_message","arguments":"{\"context_msg_id\":\"000001\",\"emoji\":\"✅\"} {}"}}`,
 	}
@@ -319,7 +319,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	request := modelRequest(t, providerID)
 	target := request.ContextMessages["000001"]
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
-	request.Commands = []string{"group"}
+	request.Commands = []string{"mod"}
 
 	tools, err := completionTools(request, inbound.CommandRegistry())
 	if err != nil {
@@ -333,7 +333,7 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 		t.Fatalf("reply tool bot mention guidance = %s", tools[0].Function.Parameters)
 	}
 
-	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/group delete\",\"/group mute @Alice (abcdef) 15\",\"/group kick @Bob (123456)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
+	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"done\",\"command\":[\"/mod delete\",\"/mod mute @Alice (abcdef) 15\",\"/mod kick @Bob (123456)\"],\"command_context_msg_id\":[\"000001\",\"none\",\"none\"]}"}}]`)
 	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil {
 		t.Fatalf("decode reply command: %v", err)
@@ -344,23 +344,23 @@ func TestReplyMessageCarriesAuthorizedGroupCommandsWithoutStandaloneModerationTo
 	}
 }
 
-func TestReplyMessageCarriesAuthorizedGroupDescription(t *testing.T) {
+func TestReplyMessageCarriesAuthorizedChannelTopic(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
-	request.Commands = []string{"group"}
+	request.Commands = []string{"mod"}
 	tests := []struct {
 		name    string
 		command string
 		raw     json.RawMessage
 	}{
-		{name: "with slash", command: "/group description Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"/group description Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
-		{name: "without slash", command: "group description Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_no_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"group description Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
+		{name: "with slash", command: "/mod topic Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"/mod topic Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
+		{name: "without slash", command: "mod topic Aturan baru", raw: json.RawMessage(`[{"id":"reply_description_no_slash","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"updated\",\"command\":[\"mod topic Aturan baru\"],\"command_context_msg_id\":[\"none\"]}"}}]`)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			text, replyTo, effects, err := decodeModelOutput("", test.raw, request, inbound.CommandRegistry())
-			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != "/group description Aturan baru" || effects[0].Intent.Kind != agent.EffectRunCommand {
+			if err != nil || text != "updated" || !replyTo.IsZero() || len(effects) != 1 || effects[0].Intent.Command != "/mod topic Aturan baru" || effects[0].Intent.Kind != agent.EffectRunCommand {
 				t.Fatalf("decoded description command %q = %q, %v, %#v", test.command, text, err, effects)
 			}
 		})
@@ -380,17 +380,17 @@ func TestReplyMessageUsesAnyRegisteredCommandWithoutPerCommandSchema(t *testing.
 	}
 }
 
-func TestReplyMessageSkipsMalformedGroupCommandAndKeepsReply(t *testing.T) {
+func TestReplyMessageSkipsMalformedModCommandAndKeepsReply(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
-	request.Commands = []string{"group"}
-	raw := json.RawMessage(`[{"id":"reply_invalid_command","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"none\",\"/group description\",\"/group description Aturan baru\"],\"command_context_msg_id\":[\"none\",\"none\",\"none\"]}"}}]`)
+	request.Commands = []string{"mod"}
+	raw := json.RawMessage(`[{"id":"reply_invalid_command","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"none\",\"text\":\"trying\",\"command\":[\"none\",\"/mod topic\",\"/mod topic Aturan baru\"],\"command_context_msg_id\":[\"none\",\"none\",\"none\"]}"}}]`)
 	text, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil || text != "trying" || !replyTo.IsZero() {
 		t.Fatalf("reply with malformed commands = %q, %v, %v", text, replyTo, err)
 	}
-	if len(effects) != 2 || effects[0].Intent.Command != "/group description" || effects[1].CallID != "reply_invalid_command:2" || effects[1].Intent.Command != "/group description Aturan baru" {
+	if len(effects) != 2 || effects[0].Intent.Command != "/mod topic" || effects[1].CallID != "reply_invalid_command:2" || effects[1].Intent.Command != "/mod topic Aturan baru" {
 		t.Fatalf("registered effects after unknown command = %#v", effects)
 	}
 }
@@ -399,8 +399,8 @@ func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *t
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
-	request.Commands = []string{"group"}
-	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
+	request.Commands = []string{"mod"}
+	raw := json.RawMessage(`[{"id":"reply_1","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/mod delete\"],\"command_context_msg_id\":null}"}}]`)
 	_, replyTo, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
 	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("default command anchor = %#v, %v", effects, err)
@@ -412,7 +412,7 @@ func TestReplyMessageDefaultsDeleteAnchorAndIgnoresUnknownPlainReplyContext(t *t
 		t.Fatalf("unknown plain reply context = %q, %#v, %v", text, effects, err)
 	}
 
-	delete := json.RawMessage(`[{"id":"reply_3","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":[\"/group delete\"],\"command_context_msg_id\":null}"}}]`)
+	delete := json.RawMessage(`[{"id":"reply_3","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"999999\",\"text\":\"x\",\"command\":[\"/mod delete\"],\"command_context_msg_id\":null}"}}]`)
 	if _, _, _, err := decodeModelOutput("", delete, request, inbound.CommandRegistry()); !agent.IsCode(err, agent.ErrorProviderFailure) {
 		t.Fatalf("unknown delete anchor error = %v", err)
 	}
@@ -422,7 +422,7 @@ func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
 	request.Capabilities, _ = agent.NewCapabilitySet("message.react")
-	request.Commands = []string{"group"}
+	request.Commands = []string{"mod"}
 
 	empty := json.RawMessage(`[{"id":"reply_empty","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"plain reply\",\"command\":[],\"command_context_msg_id\":[]}"}}]`)
 	text, replyTo, effects, err := decodeModelOutput("", empty, request, inbound.CommandRegistry())
@@ -430,7 +430,7 @@ func TestReplyMessageAcceptsEmptyAndUnevenCommandContextArrays(t *testing.T) {
 		t.Fatalf("empty command arrays = %q, %#v, %v", text, effects, err)
 	}
 
-	shortContexts := json.RawMessage(`[{"id":"reply_short","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/group delete\"],\"command_context_msg_id\":[]}"}}]`)
+	shortContexts := json.RawMessage(`[{"id":"reply_short","type":"function","function":{"name":"reply_message","arguments":"{\"context_msg_id\":\"000001\",\"text\":\"deleted\",\"command\":[\"/mod delete\"],\"command_context_msg_id\":[]}"}}]`)
 	_, replyTo, effects, err = decodeModelOutput("", shortContexts, request, inbound.CommandRegistry())
 	if err != nil || replyTo != request.ContextMessages["000001"] || len(effects) != 1 || effects[0].Intent.TargetMessageID != request.ContextMessages["000001"] {
 		t.Fatalf("short command contexts = %#v, %v", effects, err)

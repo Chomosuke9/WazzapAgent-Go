@@ -10,31 +10,31 @@ import (
 
 func TestInboundGateFailsClosedOnEmptyAllowlist(t *testing.T) {
 	for _, allowlist := range [][]string{nil, {}, {""}} {
-		if _, err := policy.NewInboundGate("15550000001@s.whatsapp.net", allowlist); err == nil {
+		if _, err := policy.NewInboundGate("15550000001", allowlist); err == nil {
 			t.Fatalf("empty allowlist %q was accepted", allowlist)
 		}
 	}
 }
 
 func TestInboundGateAllowlistIsDeduplicatedAndSorted(t *testing.T) {
-	gate, err := policy.NewInboundGate("", []string{"b@lid", "a@lid", "b@lid"})
+	gate, err := policy.NewInboundGate("", []string{"222", "111", "222"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := gate.Allowlist(); !slices.Equal(got, []string{"a@lid", "b@lid"}) {
+	if got := gate.Allowlist(); !slices.Equal(got, []string{"111", "222"}) {
 		t.Fatalf("allowlist = %q", got)
 	}
 }
 
 func TestInboundGateOwnerMatchesAnyKnownAddress(t *testing.T) {
-	gate, err := policy.NewInboundGate("15550000011@s.whatsapp.net", []string{policy.ChatAllowlistAll})
+	gate, err := policy.NewInboundGate("15550000011", []string{policy.ChatAllowlistAll})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !gate.IsOwner("10000000001@lid", "15550000011@s.whatsapp.net") {
+	if !gate.IsOwner("10000000001", "15550000011") {
 		t.Fatal("owner alias was not matched")
 	}
-	if gate.IsOwner("10000000001@lid", "") {
+	if gate.IsOwner("10000000001", "") {
 		t.Fatal("non-owner was matched")
 	}
 	unowned, _ := policy.NewInboundGate("", []string{policy.ChatAllowlistAll})
@@ -43,24 +43,29 @@ func TestInboundGateOwnerMatchesAnyKnownAddress(t *testing.T) {
 	}
 }
 
-func TestInboundGateAlternativesDoNotAdmitGroups(t *testing.T) {
-	phone := "15550000011@s.whatsapp.net"
-	gate, err := policy.NewInboundGate("", []string{phone})
+func TestInboundGateScopesAdmitTheChatsTheyContain(t *testing.T) {
+	server, parent, user := "300000000000000001", "300000000000000002", "300000000000000003"
+	gate, err := policy.NewInboundGate("", []string{server, parent, user})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !gate.ChatAllowlisted(conversation.ChatDirect, "10000000001@lid", phone) {
-		t.Fatal("direct chat phone alias was not honored")
+	if !gate.ChatAllowlisted(conversation.ChatGroup, "300000000000000010", server, "") {
+		t.Fatal("a channel of an allowlisted server was not admitted")
 	}
-	if gate.ChatAllowlisted(conversation.ChatGroup, "120363000000000001@g.us", phone) {
-		t.Fatal("group was admitted through a sender alias")
+	if !gate.ChatAllowlisted(conversation.ChatGroup, "300000000000000011", "300000000000000099", parent) {
+		t.Fatal("a thread of an allowlisted channel was not admitted")
+	}
+	if !gate.ChatAllowlisted(conversation.ChatDirect, "300000000000000012", user) {
+		t.Fatal("a direct chat with an allowlisted user was not admitted")
+	}
+	if gate.ChatAllowlisted(conversation.ChatGroup, "300000000000000013", "300000000000000098", "") {
+		t.Fatal("a channel outside every scope was admitted")
 	}
 }
 
 func TestAllowlistWildcardsMatchExpectedChatKinds(t *testing.T) {
-	direct := "10000000001@lid"
-	group := "120363000000000001@g.us"
-	status := "status@broadcast"
+	direct := "10000000001"
+	group := "120363000000000001"
 	tests := []struct {
 		name    string
 		pattern string
@@ -70,7 +75,6 @@ func TestAllowlistWildcardsMatchExpectedChatKinds(t *testing.T) {
 	}{
 		{name: "all direct", pattern: policy.ChatAllowlistAll, kind: conversation.ChatDirect, address: direct, want: true},
 		{name: "all group", pattern: policy.ChatAllowlistAll, kind: conversation.ChatGroup, address: group, want: true},
-		{name: "all excludes status", pattern: policy.ChatAllowlistAll, kind: conversation.ChatStatus, address: status, want: false},
 		{name: "direct wildcard direct", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatDirect, address: direct, want: true},
 		{name: "direct wildcard group", pattern: policy.ChatAllowlistDirect, kind: conversation.ChatGroup, address: group, want: false},
 		{name: "group wildcard group", pattern: policy.ChatAllowlistGroup, kind: conversation.ChatGroup, address: group, want: true},

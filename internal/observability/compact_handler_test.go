@@ -43,7 +43,7 @@ func TestCompactHandlerWithChatName(t *testing.T) {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
 
-	logger.With("chat_name", "HC (Hobi Coding)").Info("message received", "chatId", "120363429302106476@g.us")
+	logger.With("chat_name", "HC (Hobi Coding)").Info("message received", "chatId", "120363429302106476")
 	output := buf.String()
 
 	if !strings.Contains(output, "[HC (Hobi Coding)  ]") {
@@ -52,7 +52,7 @@ func TestCompactHandlerWithChatName(t *testing.T) {
 	if !strings.Contains(output, "message received") {
 		t.Errorf("output should contain message, got: %s", output)
 	}
-	if strings.Contains(output, "120363429302106476@g.us") {
+	if strings.Contains(output, "120363429302106476") {
 		t.Errorf("output should omit chatId when chat name is available, got: %s", output)
 	}
 }
@@ -121,9 +121,9 @@ func TestCompactHandlerUsesChatIDWhenNameIsUnavailable(t *testing.T) {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
 
-	logger.Info("downloaded", "chat_id", "120363427296079434@g.us")
+	logger.Info("downloaded", "chat_id", "120363427296079434")
 	output := buf.String()
-	if !strings.Contains(output, "INF [120363427296079...] downloaded") {
+	if !strings.Contains(output, "INF [120363427296079434] downloaded") {
 		t.Fatalf("chat ID context = %q", output)
 	}
 	if strings.Contains(output, "chat_id=") {
@@ -139,10 +139,10 @@ func TestCompactHandlerPrintsFullNativeError(t *testing.T) {
 	}
 
 	native := detailedTestError{summary: "socket closed", detail: "socket closed\nnative stack frame"}
-	wrapped := fmt.Errorf("send WhatsApp media: %w", native)
+	wrapped := fmt.Errorf("send Discord media: %w", native)
 	logger.Error("delivery failed", "error", wrapped)
 	output := buf.String()
-	if !strings.Contains(output, "error=send WhatsApp media: socket closed") || !strings.Contains(output, "native stack frame") {
+	if !strings.Contains(output, "error=send Discord media: socket closed") || !strings.Contains(output, "native stack frame") {
 		t.Fatalf("full error detail was not printed: %q", output)
 	}
 	if !errors.Is(wrapped, native) {

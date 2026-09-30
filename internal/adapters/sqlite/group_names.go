@@ -11,14 +11,14 @@ import (
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
-// SaveGroupName updates metadata for a group already known to this account.
-// Groups with no stored bot history do not create a new chat row.
+// SaveGroupName updates the name of a server channel already known to this
+// account. Channels with no stored bot history do not create a new chat row.
 func (store *InboundStore) SaveGroupName(ctx context.Context, tenantID identity.TenantID, accountID identity.AccountID, address, name string) error {
 	if store == nil || store.Store == nil || store.db == nil {
 		return agent.NewError(agent.ErrorUnavailable, "save group name", errors.New("chat store is unavailable"))
 	}
 	name = strings.TrimSpace(name)
-	if tenantID.IsZero() || accountID.IsZero() || !strings.HasSuffix(address, "@g.us") || len(address) > 512 ||
+	if _, err := identity.ParseUserID(address); err != nil || tenantID.IsZero() || accountID.IsZero() ||
 		name == "" || !utf8.ValidString(name) || len(name) > 512 {
 		return agent.NewError(agent.ErrorInvalidArgument, "save group name", errors.New("group metadata is invalid"))
 	}

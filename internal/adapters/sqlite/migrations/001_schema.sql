@@ -187,7 +187,9 @@ CREATE TABLE participants (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
     id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
+    -- user_id is the Discord user; internal senders, such as a scheduled
+    -- task, have none.
+    user_id TEXT,
     owner INTEGER NOT NULL DEFAULT 0 CHECK (owner IN (0, 1)),
     created_at_ms INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, id),
@@ -359,7 +361,7 @@ CREATE INDEX broadcast_schedules_recent
     ON broadcast_schedules(status, updated_at_ms DESC);
 
 CREATE UNIQUE INDEX participants_user_id_idx
-    ON participants(tenant_id, account_id, user_id);
+    ON participants(tenant_id, account_id, user_id) WHERE user_id IS NOT NULL;
 
 CREATE INDEX inbound_events_retention_idx
     ON inbound_events(tenant_id, turn_state, updated_at_ms);

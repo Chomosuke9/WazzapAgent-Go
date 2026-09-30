@@ -34,15 +34,15 @@ func TestErrorOutputDemo(t *testing.T) {
 
 func TestErrorPreservesOriginal(t *testing.T) {
 	// Simulasi error dari native library
-	nativeErr := fmt.Errorf("WhatsApp send failed: connection timeout")
+	nativeErr := fmt.Errorf("Discord send failed: connection timeout")
 
 	// Wrapping dengan context
-	wrappedErr := agent.NewError(agent.ErrorProviderFailure, "send WhatsApp text", nativeErr)
+	wrappedErr := agent.NewError(agent.ErrorProviderFailure, "send Discord text", nativeErr)
 
 	fmt.Println("\n=== Native Error Preservation ===")
 	fmt.Printf("Error: %v\n", wrappedErr)
 	fmt.Println("=================================")
 
-	// Output: "send WhatsApp text: WhatsApp send failed: connection timeout"
-	// Sekarang kita bisa lihat error asli dari WhatsApp library!
+	// Output: "send Discord text: Discord send failed: connection timeout"
+	// Now the original error from the Discord library is visible!
 }

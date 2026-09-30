@@ -248,10 +248,10 @@ func (handler *logBufferHandler) WithGroup(_ string) slog.Handler {
 }
 
 // hiddenFullAttribute names the fields kept out of the full details because
-// they are opaque provider payloads or pairing state, not diagnostics.
+// they are opaque provider payloads or credentials, not diagnostics.
 func hiddenFullAttribute(key string) bool {
 	switch strings.ToLower(key) {
-	case "instance_id", "raw", "continuation", "qr", "qr_code", "pairing_code", "code_payload", "payload":
+	case "instance_id", "raw", "payload", "token", "bot_token":
 		return true
 	default:
 		return false
@@ -325,7 +325,7 @@ func sanitizeFullText(value string) string {
 // free text, such as a library error message.
 func RedactDiscordIdentifiers(value string) string {
 	value = discordToken.ReplaceAllString(value, "<token>")
-	value = discordMention.ReplaceAllString(value, "<$1redacted>")
+	value = discordMention.ReplaceAllString(value, "<${1}redacted>")
 	return discordSnowflake.ReplaceAllString(value, "<id>")
 }
 

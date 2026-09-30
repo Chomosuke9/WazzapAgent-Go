@@ -209,7 +209,7 @@ func (controller *AgentController) Stop(ctx context.Context) (AgentRuntimeStatus
 }
 
 // IsActive is used by the Wails adapter to prevent session-only controls from
-// operating against a device store currently owned by bot mode.
+// operating on a bot token currently used by bot mode.
 func (controller *AgentController) IsActive() bool {
 	if controller == nil {
 		return false

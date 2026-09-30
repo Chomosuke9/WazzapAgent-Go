@@ -110,7 +110,7 @@ func deleteDailyTask(ctx context.Context, c *command.Context, code string) error
 	return c.Reply(ctx, "Daily task "+code+" deleted.")
 }
 
-// dailyTaskMentions rewrites the raw WhatsApp mentions a person typed into
+// dailyTaskMentions rewrites the raw Discord mentions a person typed into
 // the @Name (senderRef) form the model uses to tag someone.
 func dailyTaskMentions(prompt string, bindings []conversation.MentionBinding, assistantName string) string {
 	replacements := make(map[string]string, len(bindings))

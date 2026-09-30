@@ -612,8 +612,11 @@ func statusFromBinding(binding SessionBinding) SessionStatus {
 // user copied an Authorization header value.
 func normalizeBotToken(value string) (string, error) {
 	token := strings.TrimSpace(value)
-	token = strings.TrimSpace(strings.TrimPrefix(token, "Bot "))
-	if token == "" || len(token) > maxBotTokenBytes {
+	if fields := strings.Fields(token); len(fields) == 2 && strings.EqualFold(fields[0], "Bot") {
+		token = fields[1]
+	}
+	// A bot token is three base64url parts joined by dots.
+	if token == "" || len(token) > maxBotTokenBytes || strings.Count(token, ".") != 2 {
 		return "", agent.NewError(agent.ErrorInvalidArgument, "begin Discord link", errors.New("paste the bot token from the Discord Developer Portal"))
 	}
 	for _, character := range token {

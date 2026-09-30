@@ -12,11 +12,11 @@ import (
 func TestIncomingCandidateEnforcesPartOneTextBoundary(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
-	lid, _ := identity.ParseUserID("10000000001@lid")
+	lid, _ := identity.ParseUserID("10000000001")
 	now := time.Now().UTC()
 	candidate := conversation.IncomingCandidate{
 		TenantID: tenantID, AccountID: accountID, ProviderMessageID: "provider-id",
-		ProviderChatAddress: "15550000001@s.whatsapp.net", SenderUserID: lid,
+		ProviderChatAddress: "15550000001", SenderUserID: lid,
 		ChatKind: conversation.ChatDirect, Text: strings.Repeat("x", conversation.MaxTextBytes),
 		OccurredAt: now, ReceivedAt: now,
 	}

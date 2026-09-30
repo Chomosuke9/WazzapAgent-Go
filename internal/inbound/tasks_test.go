@@ -11,7 +11,6 @@ import (
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/inbound"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
 
 // startTaskChat sends one ordinary message so the chat exists, and returns
@@ -32,7 +31,7 @@ func startTaskChat(t *testing.T, fixture *fixture, chat string) (agent.Key, iden
 
 func TestScheduledTaskRunsOnceAsASystemTurn(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000031@s.whatsapp.net")
+	key, source := startTaskChat(t, fixture, "15550000031")
 	dispatcher := fixture.handler.dispatcher
 	fireAt := time.Now().Add(50 * time.Millisecond)
 	if _, err := dispatcher.ScheduleTask(context.Background(), key, source, fireAt, "remind 【everyone】 about the meeting"); err != nil {
@@ -64,12 +63,9 @@ func TestScheduledTaskRunsOnceAsASystemTurn(t *testing.T) {
 	}
 }
 
-func TestScheduledTaskOffersTheChatStickers(t *testing.T) {
+func TestScheduledTaskOffersTheServerStickers(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000034@s.whatsapp.net")
-	if _, err := fixture.store.Stickers().SaveSticker(context.Background(), key, sticker.Sticker{Name: "wave", WebP: []byte("webp")}); err != nil {
-		t.Fatal(err)
-	}
+	key, source := startTaskChat(t, fixture, "15550000034")
 	dispatcher := fixture.handler.dispatcher
 	if _, err := dispatcher.ScheduleTask(context.Background(), key, source, time.Now().Add(20*time.Millisecond), "send the wave sticker"); err != nil {
 		t.Fatalf("schedule task: %v", err)
@@ -85,7 +81,7 @@ func TestScheduledTaskOffersTheChatStickers(t *testing.T) {
 
 func TestScheduledTaskRejectsMoreThanADayAhead(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000032@s.whatsapp.net")
+	key, source := startTaskChat(t, fixture, "15550000032")
 	_, err := fixture.handler.dispatcher.ScheduleTask(context.Background(), key, source, time.Now().Add(25*time.Hour), "too late")
 	if !agent.IsCode(err, agent.ErrorInvalidArgument) {
 		t.Fatalf("err = %v, want invalid argument", err)
@@ -97,7 +93,7 @@ func TestScheduledTaskSurvivesARestart(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	first := newFixtureAtPath(t, path, tenantID, accountID, 0, 1)
-	key, source := startTaskChat(t, first, "15550000033@s.whatsapp.net")
+	key, source := startTaskChat(t, first, "15550000033")
 	if _, err := first.handler.dispatcher.ScheduleTask(context.Background(), key, source, time.Now().Add(time.Hour), "water the plants"); err != nil {
 		t.Fatalf("schedule task: %v", err)
 	}
@@ -171,7 +167,7 @@ func waitRescheduled(t *testing.T, fixture *fixture, task inbound.ScheduledTask)
 
 func TestDailyTaskRunsAndMovesToTheNextDay(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000035@s.whatsapp.net")
+	key, source := startTaskChat(t, fixture, "15550000035")
 	task := saveDueDailyTask(t, fixture, key, source, time.Now().Add(20*time.Millisecond), 6*60+30)
 	next := waitRescheduled(t, fixture, task)
 	if err := fixture.handler.settle(nil); err != nil {
@@ -188,7 +184,7 @@ func TestDailyTaskRunsAndMovesToTheNextDay(t *testing.T) {
 
 func TestDailyTaskFarTooLateSkipsThatDay(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000036@s.whatsapp.net")
+	key, source := startTaskChat(t, fixture, "15550000036")
 	task := saveDueDailyTask(t, fixture, key, source, time.Now().Add(-2*time.Hour), 6*60)
 	waitRescheduled(t, fixture, task)
 	if err := fixture.handler.settle(nil); err != nil {
@@ -201,7 +197,7 @@ func TestDailyTaskFarTooLateSkipsThatDay(t *testing.T) {
 
 func TestCancelTaskDeletesOnlyTheNamedKind(t *testing.T) {
 	fixture := newFixture(t)
-	key, source := startTaskChat(t, fixture, "15550000037@s.whatsapp.net")
+	key, source := startTaskChat(t, fixture, "15550000037")
 	dispatcher := fixture.handler.dispatcher
 	daily, err := dispatcher.ScheduleDailyTask(context.Background(), key, source, 8*60, "post the agenda")
 	if err != nil || daily.Code == "" || !daily.Daily {
@@ -224,7 +220,7 @@ func TestCancelTaskDeletesOnlyTheNamedKind(t *testing.T) {
 
 func TestDailyTasksAreCappedPerChat(t *testing.T) {
 	fixture := newFixture(t)
-	key, _ := startTaskChat(t, fixture, "15550000038@s.whatsapp.net")
+	key, _ := startTaskChat(t, fixture, "15550000038")
 	dispatcher := fixture.handler.dispatcher
 	for index := range inbound.MaxDailyTasks + 1 {
 		source, _ := identity.NewMessageID()

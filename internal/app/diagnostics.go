@@ -116,7 +116,7 @@ func (application *Application) Ready() bool {
 
 // Started closes when runtime composition completed and the process-owned
 // worker lifecycle began. It is distinct from Ready, which also requires an
-// open WhatsApp connection.
+// open Discord connection.
 func (application *Application) Started() <-chan struct{} {
 	return application.started
 }

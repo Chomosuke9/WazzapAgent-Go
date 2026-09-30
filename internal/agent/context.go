@@ -241,16 +241,16 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 	name := sanitizeContextMetadata(chat.Name)
 	description := sanitizeContextMetadata(chat.Description)
 	if name == "" {
-		name = "(unnamed group)"
+		name = "(unnamed channel)"
 	}
 	if description == "" {
 		description = "(none)"
 	}
 	lines := []string{"Chat information:"}
 	if chat.Kind == "group" {
-		lines = append(lines, "- Group name: "+name, "- Group description: "+description)
+		lines = append(lines, "- Channel: "+name, "- Channel topic: "+description)
 	} else {
-		lines = append(lines, "- Chat name: (private chat)")
+		lines = append(lines, "- Chat name: (direct message)")
 	}
 	role := "regular member"
 	if chat.Kind == "group" && chat.BotIsAdmin {
@@ -270,7 +270,7 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 		}
 	}
 	lines = append(lines,
-		"- Chat state: "+chat.Kind,
+		"- Chat type: "+chatTypeLabel(chat.Kind),
 		"- Bot role: "+role,
 		fmt.Sprintf("- Bot moderation permission: %d", effectiveLevel),
 		"- Bot moderation capabilities: "+capabilities+" (configured maximum; command permissions apply separately)",
@@ -293,9 +293,9 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 			lines = append(lines, "  Name regex: "+sanitizeContextMetadata(triggers.NamePattern))
 		}
 		if rules := triggers.SmartRuleList(); len(rules) > 0 {
-			header := "  Group admin rules (a message matching one wakes you, and you follow it):"
+			header := "  Moderator rules (a message matching one wakes you, and you follow it):"
 			if !triggers.Smart {
-				header = "  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):"
+				header = "  Moderator rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):"
 			}
 			lines = append(lines, header)
 			for index, rule := range rules {
@@ -483,6 +483,13 @@ func formatCompactHistoryEntry(entry HistoryEntry, text, assistantName string, l
 	}
 	lines = append(lines, fmt.Sprintf("%s 【%s】%s: %s", displayName, senderRef, roleLabel, text))
 	return strings.Join(lines, "\n")
+}
+
+func chatTypeLabel(kind string) string {
+	if kind == "group" {
+		return "server channel"
+	}
+	return "direct message"
 }
 
 func groupRoleLabel(isAdmin, isSuperAdmin bool) string {

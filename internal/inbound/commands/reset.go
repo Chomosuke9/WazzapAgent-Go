@@ -11,7 +11,7 @@ func init() {
 		Name:        "reset",
 		Permission:  "(owner or (admin and group)) and !fromMe",
 		Description: "Clears the conversation history for this chat.",
-		DeniedReply: "The /reset command can only be used by group admins or the owner.",
+		DeniedReply: "The /reset command can only be used by server moderators or the owner.",
 		Run:         runReset,
 	})
 }

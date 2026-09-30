@@ -15,12 +15,12 @@ var errServerReturned = errors.New("server returned error")
 
 func TestErrorReportShowsEveryLayerOfTheChain(t *testing.T) {
 	native := fmt.Errorf("%w %d", errServerReturned, 405)
-	err := agent.NewError(agent.ErrorProviderFailure, "send WhatsApp broadcast", native)
+	err := agent.NewError(agent.ErrorProviderFailure, "send Discord broadcast", native)
 
 	report := ErrorReport(err)
 	for _, want := range []string{
-		"send WhatsApp broadcast: server returned error 405",
-		"- *agent.Error code=provider_failure op=\"send WhatsApp broadcast\"\n",
+		"send Discord broadcast: server returned error 405",
+		"- *agent.Error code=provider_failure op=\"send Discord broadcast\"\n",
 		"*fmt.wrapError: server returned error 405",
 		"*errors.errorString: server returned error",
 	} {
@@ -47,8 +47,8 @@ func TestErrorReportFollowsJoinedErrors(t *testing.T) {
 func TestWarningKeepsTheFullErrorBehindTheShortLine(t *testing.T) {
 	buffer := NewLogBuffer(10)
 	logger := slog.New(buffer.Handler())
-	sendErr := agent.NewError(agent.ErrorProviderFailure, "send WhatsApp broadcast", fmt.Errorf("%w %d", errServerReturned, 405))
-	logger.Warn("WhatsApp broadcast send failed", "chat_name", "Study Group", "code", agent.CodeOf(sendErr), "error", sendErr, "api_key", "token=do-not-show")
+	sendErr := agent.NewError(agent.ErrorProviderFailure, "send Discord broadcast", fmt.Errorf("%w %d", errServerReturned, 405))
+	logger.Warn("Discord broadcast send failed", "chat_name", "Study Group", "code", agent.CodeOf(sendErr), "error", sendErr, "api_key", "token=do-not-show")
 	logger.Info("an info line has no full details", "error", sendErr)
 
 	entries := buffer.Entries()
@@ -73,26 +73,30 @@ func TestWarningKeepsTheFullErrorBehindTheShortLine(t *testing.T) {
 	}
 }
 
-func TestFullDetailsHideProviderPayloadsAndAddresses(t *testing.T) {
+// fakeBotToken is shaped like a bot token. It is built from parts so it
+// never reads as a real token in the source.
+var fakeBotToken = "MTIzNDU2Nzg5MDEyMzQ1Njc4" + "." + "GabcDE" + "." + strings.Repeat("abcdefgh", 4)
+
+func TestFullDetailsHideProviderPayloadsAndIdentifiers(t *testing.T) {
 	buffer := NewLogBuffer(10)
 	logger := slog.New(buffer.Handler())
-	logger.Warn("WhatsApp stream error", "code", "503", "raw", "<stream:error secret-node/>", "continuation", "passkey-state")
-	logger.Warn("WhatsApp library: Failed to encrypt 3EB0C4F2A1B2C3D4E5F6 for 6281234567890@s.whatsapp.net and 12345678901234@lid and 98765432101@hosted.lid in 120363000000000001@g.us")
-	logger.Warn("WhatsApp account disconnected; reconnecting")
+	logger.Warn("Discord gateway error", "code", "4000", "raw", "{\"op\":9,\"secret\":\"node\"}", "token", "MTA.abc.def")
+	logger.Warn("Discord library: failed to send to <#123456789012345678> for <@!234567890123456789> in 345678901234567890 with " + fakeBotToken)
+	logger.Warn("Discord bot disconnected; reconnecting")
 
 	entries := buffer.Entries()
-	if strings.Contains(entries[0].Full, "secret-node") || strings.Contains(entries[0].Full, "passkey-state") || !strings.Contains(entries[0].Full, "code=503") {
+	if strings.Contains(entries[0].Full, "secret") || strings.Contains(entries[0].Full, "MTA.abc.def") || !strings.Contains(entries[0].Full, "code=4000") {
 		t.Fatalf("opaque attributes reached full details:\n%s", entries[0].Full)
 	}
-	for _, hidden := range []string{"6281234567890", "12345678901234", "98765432101", "120363000000000001", "3EB0C4F2A1B2C3D4E5F6"} {
+	for _, hidden := range []string{"123456789012345678", "234567890123456789", "345678901234567890", "GabcDE"} {
 		if strings.Contains(entries[1].Full, hidden) {
 			t.Fatalf("%q reached full details:\n%s", hidden, entries[1].Full)
 		}
 	}
-	if !strings.Contains(entries[1].Full, "<redacted>@s.whatsapp.net") || !strings.Contains(entries[1].Full, "<redacted>@g.us") || !strings.Contains(entries[1].Full, "<redacted>@hosted.lid") {
-		t.Fatalf("address kinds were lost:\n%s", entries[1].Full)
+	if !strings.Contains(entries[1].Full, "<#redacted>") || !strings.Contains(entries[1].Full, "<@!redacted>") || !strings.Contains(entries[1].Full, "<token>") {
+		t.Fatalf("mention kinds were lost:\n%s", entries[1].Full)
 	}
-	if entries[2].Full != "WhatsApp account disconnected; reconnecting" {
+	if entries[2].Full != "Discord bot disconnected; reconnecting" {
 		t.Fatalf("a warning without fields has no full details: %q", entries[2].Full)
 	}
 }

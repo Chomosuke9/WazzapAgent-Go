@@ -64,7 +64,7 @@ type SenderContext struct {
 	IsSuperAdmin  bool
 }
 
-// MentionContext binds one raw WhatsApp token to a model-safe identity. The
+// MentionContext binds one raw Discord token to a model-safe identity. The
 // display name is a mutable local-registry value and is intentionally excluded
 // from identity digests.
 type MentionContext struct {

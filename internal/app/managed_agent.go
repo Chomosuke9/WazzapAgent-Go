@@ -18,7 +18,7 @@ func (factory ManagedAgentRuntimeFactory) OpenAgentRuntime(_ context.Context, sn
 	return New(snapshot, factory.Logger, Options{SystemPolicy: RenderSystemPolicy(snapshot.AssistantName())}), nil
 }
 
-// Snapshot reports WhatsApp connection state for the GUI controller.
+// Snapshot reports Discord connection state for the GUI controller.
 func (application *Application) Snapshot() control.AgentRuntimeSnapshot {
 	result := control.AgentRuntimeSnapshot{DiscordState: "stopped"}
 	if accountSnapshot, ok := application.DiscordSnapshot(); ok {

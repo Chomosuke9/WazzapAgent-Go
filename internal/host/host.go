@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
 	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
+	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	coreapp "github.com/Chomosuke9/DiscordAgent-Go/internal/app"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"

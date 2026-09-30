@@ -55,7 +55,7 @@ func TestSettingsShowsTheCurrentSettingsWithAMenuPerPart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch /settings: %v", err)
 	}
-	want := "⚙️ *Chat settings*\n\nCurrent:\n- When I reply: mention, smart, 1 smart rule\n- Moderation: level 2 (delete + mute)\n" +
+	want := "⚙️ **Chat settings**\n\nCurrent:\n- When I reply: mention, smart, 1 smart rule\n- Moderation: level 2 (delete + mute)\n" +
 		"- Custom instructions: set, added to the main prompt\n- Tasks: 1 one-off, 1 daily; ask me to list or change them"
 	if text != want {
 		t.Fatalf("settings text:\n%s\nwant:\n%s", text, want)

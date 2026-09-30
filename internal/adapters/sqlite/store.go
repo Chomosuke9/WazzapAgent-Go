@@ -92,7 +92,7 @@ func (store *Store) Close() error { return errors.Join(store.read.Close(), store
 
 // ResolveInterrupted runs once at startup, before anything is sent. A send
 // or effect still marked executing was cut off by the last shutdown; it may
-// or may not have reached WhatsApp, so it becomes unknown and is never sent
+// or may not have reached Discord, so it becomes unknown and is never sent
 // again.
 func (store *Store) ResolveInterrupted(ctx context.Context, tenantID identity.TenantID) error {
 	tx, err := store.db.BeginTx(ctx, nil)

@@ -13,7 +13,7 @@ func TestCompactHandlerActualOutput(t *testing.T) {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
 
-	logger.Info("message received", "chatId", "120363429302106476@g.us", "senderId", "185775253680238@lid", "msgKey", "A5C0845F83BD47997B92EA5876C0BE23", "type", "notify", "msgContentType", "extendedTextMessage,messageContextInfo")
+	logger.Info("message received", "chatId", "120363429302106476", "senderId", "185775253680238", "msgKey", "A5C0845F83BD47997B92EA5876C0BE23", "type", "notify", "msgContentType", "extendedTextMessage,messageContextInfo")
 
 	logger.Info("prefix mode: no match; skipping", "chat_name", "HC (Hobi Coding)")
 

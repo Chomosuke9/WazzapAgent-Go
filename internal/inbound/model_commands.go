@@ -18,7 +18,7 @@ type ModelCommandPolicy interface {
 
 // ModelCommandExecutor runs reply_message.command through the same registry and
 // permission expression as an inbound slash command. The principal remains the
-// WhatsApp bot/model, so fromMe is always true here.
+// Discord bot/model, so fromMe is always true here.
 type ModelCommandExecutor struct {
 	factory  agent.Factory
 	policy   ModelCommandPolicy

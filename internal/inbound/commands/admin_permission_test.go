@@ -23,8 +23,8 @@ func TestChatConfigCommandsAllowOwnerGroupAdminsAndTheBot(t *testing.T) {
 		{"/reset", owner, true}, {"/reset", admin, true}, {"/reset", member, false}, {"/reset", private, false}, {"/reset", bot, false},
 		{"/permission", owner, true}, {"/permission", admin, true}, {"/permission", member, false}, {"/permission", private, false}, {"/permission", bot, true},
 		{"/trigger", owner, true}, {"/trigger", admin, true}, {"/trigger", member, false}, {"/trigger", bot, true}, {"/trigger", botInPrivate, false},
-		{"/group", admin, true}, {"/group", member, false}, {"/group", private, false}, {"/group", bot, true}, {"/group", botInPrivate, false},
-		{"/group", command.PermissionFacts{IsGroup: true, FromMe: true}, false},
+		{"/mod", admin, true}, {"/mod", member, false}, {"/mod", private, false}, {"/mod", bot, true}, {"/mod", botInPrivate, false},
+		{"/mod", command.PermissionFacts{IsGroup: true, FromMe: true}, false},
 		{"/help", member, true}, {"/help", bot, false}, {"/info", private, true}, {"/info", bot, false}, {"/catch", member, true}, {"/catch", bot, false},
 	}
 	for _, test := range tests {

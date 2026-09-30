@@ -50,3 +50,16 @@ func TestProviderAndPolicyIDsAreValidatedSlugs(t *testing.T) {
 		t.Fatal("accepted noncanonical provider ID")
 	}
 }
+
+func TestUserIDIsADiscordSnowflake(t *testing.T) {
+	for _, valid := range []string{"1", "80351110224678912", "18446744073709551615"} {
+		if _, err := ParseUserID(valid); err != nil {
+			t.Fatalf("ParseUserID(%q) = %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{"", "0", "0123", "123456789012345678901", "12a", "123@lid", " 123", "-1"} {
+		if _, err := ParseUserID(invalid); err == nil {
+			t.Fatalf("ParseUserID(%q) accepted", invalid)
+		}
+	}
+}

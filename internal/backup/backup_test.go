@@ -64,7 +64,7 @@ func TestBackupVerifyAndRestorePreserveDurableHistory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "runtime-identity.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatalf("write identity fixture: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tenantDir, "whatsapp.db"), []byte("device-session-fixture"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tenantDir, "discord.token"), []byte("token-fixture"), 0o600); err != nil {
 		t.Fatalf("write device fixture: %v", err)
 	}
 	backupPath, err := backup.Create(ctx, source, backupParent, time.Unix(1_700_000_100, 0).UTC())

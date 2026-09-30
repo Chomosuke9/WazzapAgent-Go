@@ -149,7 +149,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	// The environment-driven runtime always composes the agent, so its
-	// settings are required whenever WhatsApp is on, even with the agent
+	// settings are required whenever Discord is on, even with the agent
 	// switched off.
 	if settings.DiscordEnabled {
 		if err := ValidateAgent(settings); err != nil {

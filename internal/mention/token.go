@@ -1,6 +1,7 @@
 // Package mention contains the provider-neutral rules for matching raw
-// WhatsApp mention tokens. The durable text remains untouched; these helpers
-// are only used to validate metadata and build the model-facing view.
+// mention tokens: the Discord adapter writes a user mention as "@<user ID>".
+// The durable text remains untouched; these helpers are only used to
+// validate metadata and build the model-facing view.
 package mention
 
 import (
@@ -15,8 +16,8 @@ const (
 	MaxBindings    = 128
 )
 
-// ValidToken accepts the raw form produced by WhatsApp message text: an at
-// sign followed by the numeric user part of a PN or UserID JID.
+// ValidToken accepts the raw form the adapter writes for a mention: an at
+// sign followed by the user's numeric Discord ID.
 func ValidToken(token string) bool {
 	if len(token) < 2 || len(token) > MaxTokenDigits+1 || token[0] != '@' {
 		return false

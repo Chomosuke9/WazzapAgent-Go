@@ -15,7 +15,6 @@ type State uint8
 const (
 	StateStopped State = iota
 	StateStarting
-	StatePairing
 	StateConnecting
 	StateOpen
 	StateReconnecting
@@ -29,8 +28,6 @@ func (state State) String() string {
 		return "stopped"
 	case StateStarting:
 		return "starting"
-	case StatePairing:
-		return "pairing"
 	case StateConnecting:
 		return "connecting"
 	case StateOpen:

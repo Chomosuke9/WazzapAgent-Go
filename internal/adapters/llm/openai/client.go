@@ -307,7 +307,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 			"text": map[string]any{
 				"type":        "string",
 				"minLength":   1,
-				"description": "Visible reply text. Put anything the user may want to copy (code, commands, templates) in one fenced ``` block: the first block is also sent with a Copy button. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (Bot)` using the configured assistant name from the system prompt.",
+				"description": "Visible reply text. Put anything the user may want to copy (code, commands, templates) in a fenced ``` block. For a person mention, copy an exact canonical `@Name (senderRef)` already shown in the transcript, or construct it from one `Name 【senderRef】` sender line; for example `Budi 【a1b2c3】` becomes `@Budi (a1b2c3)`. Never write bare `@Budi`, `@a1b2c3`, or `Budi (@a1b2c3)`. Special forms are `@all (all)`, `@admin (admin)` to tag the group admins, and the bot mention `@<assistant name> (Bot)` using the configured assistant name from the system prompt.",
 			},
 			"choices": map[string]any{
 				"type":        []string{"array", "null"},
@@ -336,7 +336,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 	}
 	tools := []completionTool{{Type: "function", Function: completionFunction{
 		Name:        "reply_message",
-		Description: "Return the visible reply and optionally request authorized group commands. Inline person mentions must use an exact canonical `@Name (senderRef)` from the transcript or use both values from the same sender line. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
+		Description: "Return the visible reply and optionally request authorized chat commands. Inline person mentions must use an exact canonical `@Name (senderRef)` from the transcript or use both values from the same sender line. Use only exact compact history IDs supplied in the schema; use none for an ordinary reply. Commands are separately parsed and authorized.",
 		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {
@@ -383,7 +383,7 @@ func toolSchema(capability agent.Capability, contextIDs, stickers []string) (str
 		if err != nil {
 			return "", "", nil, false
 		}
-		return "send_sticker", "Send one sticker from this chat's sticker catalog, by exact name. It can stand in for a text reply or go with one.", parameters, true
+		return "send_sticker", "Send one of this server's stickers, by exact name. It can stand in for a text reply or go with one.", parameters, true
 	case "message.react":
 		contextProperty := map[string]any{"type": "string", "minLength": 6, "maxLength": 6}
 		if len(contextIDs) > 0 {
@@ -489,7 +489,7 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 			return agent.EffectIntent{}, "", err
 		}
 		if !slices.Contains(request.Stickers, args.StickerName) {
-			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("sticker is not in the chat's catalog"))
+			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("sticker is not one of the server's stickers"))
 		}
 		// Like reply_message, an unknown anchor only drops the quote.
 		return agent.EffectIntent{Kind: agent.EffectSticker, Sticker: args.StickerName, TargetMessageID: request.ContextMessages[args.ContextMessageID]}, agent.CapabilityMessageSticker, nil

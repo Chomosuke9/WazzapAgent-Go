@@ -13,7 +13,7 @@ type scheduledTaskLister interface {
 	ListScheduledTasks(context.Context, identity.TenantID) ([]inbound.ScheduledTask, error)
 }
 
-// chatStateReader adds the chat's one-off and daily tasks to the WhatsApp
+// chatStateReader adds the chat's one-off and daily tasks to the Discord
 // chat metadata, so the model's <chat_state> lists them.
 type chatStateReader struct {
 	chats agent.ChatContextReader

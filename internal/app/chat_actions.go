@@ -23,11 +23,11 @@ func (application *Application) SendChatMessage(ctx context.Context, chatID, tex
 
 func (application *Application) SendChatReply(ctx context.Context, chatID, text, replyToMessageID string) (control.BotMessage, error) {
 	if strings.TrimSpace(replyToMessageID) == "" {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to WhatsApp chat message", errors.New("a reply target is required"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to Discord chat message", errors.New("a reply target is required"))
 	}
 	replyTo, err := identity.ParseMessageID(replyToMessageID)
 	if err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to WhatsApp chat message", errors.New("reply target is invalid"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "reply to Discord chat message", errors.New("reply target is invalid"))
 	}
 	return application.sendChatMessage(ctx, chatID, text, replyTo)
 }
@@ -38,7 +38,7 @@ func (application *Application) sendChatMessage(ctx context.Context, chatID, tex
 		return control.BotMessage{}, err
 	}
 	if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || len(text) > agent.MaxHistoryBytes {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "send WhatsApp chat message", errors.New("message must be non-empty and within the supported length"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInvalidArgument, "send Discord chat message", errors.New("message must be non-empty and within the supported length"))
 	}
 	if err := runtime.gate.AuthorizeSend(ctx, key); err != nil {
 		return control.BotMessage{}, err
@@ -53,19 +53,19 @@ func (application *Application) sendChatMessage(ctx context.Context, chatID, tex
 	}
 	messageID, err := identity.NewMessageID()
 	if err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create WhatsApp message ID", errors.New("could not allocate a message identifier"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create Discord message ID", errors.New("could not allocate a message identifier"))
 	}
 	actionID, err := identity.NewActionID()
 	if err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create WhatsApp action ID", errors.New("could not allocate an action identifier"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create Discord action ID", errors.New("could not allocate an action identifier"))
 	}
 	invocationID, err := identity.NewInvocationID()
 	if err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create WhatsApp invocation ID", errors.New("could not allocate an invocation identifier"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create Discord invocation ID", errors.New("could not allocate an invocation identifier"))
 	}
 	causationID, err := identity.NewCausationID()
 	if err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create WhatsApp request ID", errors.New("could not allocate a request identifier"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorInternal, "create Discord request ID", errors.New("could not allocate a request identifier"))
 	}
 	sent, err := runtime.adapter.SendText(ctx, action.SendTextRequest{
 		Key: key, ActionID: actionID, Text: text, QuotedMessageID: replyTo,
@@ -74,7 +74,7 @@ func (application *Application) sendChatMessage(ctx context.Context, chatID, tex
 		return control.BotMessage{}, err
 	}
 	if strings.TrimSpace(sent.ProviderReceipt) == "" {
-		return control.BotMessage{}, agent.NewError(agent.ErrorUnknownOutcome, "send WhatsApp chat message", errors.New("WhatsApp returned no message receipt"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorUnknownOutcome, "send Discord chat message", errors.New("Discord returned no message receipt"))
 	}
 	createdAt := time.Now().UTC()
 	entry := agent.HistoryEntry{
@@ -85,7 +85,7 @@ func (application *Application) sendChatMessage(ctx context.Context, chatID, tex
 		Delivery: agent.DeliverySucceeded, CreatedAt: createdAt,
 	}
 	if err := runtime.store.RecordManualAssistantMessage(ctx, key, entry, sent.ProviderReceipt); err != nil {
-		return control.BotMessage{}, agent.NewError(agent.ErrorUnknownOutcome, "record sent WhatsApp chat message", errors.New("WhatsApp accepted the message but its local transcript could not be updated"))
+		return control.BotMessage{}, agent.NewError(agent.ErrorUnknownOutcome, "record sent Discord chat message", errors.New("Discord accepted the message but its local transcript could not be updated"))
 	}
 	return control.BotMessage{
 		ID: messageID, Role: "assistant", Sender: "Bot", Content: text,
@@ -115,17 +115,17 @@ func manualReplyContext(
 		}
 	}
 	if target == nil {
-		return nil, nil, agent.NewError(agent.ErrorNotFound, "reply to WhatsApp chat message", errors.New("reply target is not available in the saved history"))
+		return nil, nil, agent.NewError(agent.ErrorNotFound, "reply to Discord chat message", errors.New("reply target is not available in the saved history"))
 	}
 	if target.Role != agent.HistoryUser && (target.Role != agent.HistoryAssistant || target.Delivery != agent.DeliverySucceeded) {
-		return nil, nil, agent.NewError(agent.ErrorPermissionDenied, "reply to WhatsApp chat message", errors.New("reply target is not a sent chat message"))
+		return nil, nil, agent.NewError(agent.ErrorPermissionDenied, "reply to Discord chat message", errors.New("reply target is not a sent chat message"))
 	}
 	if len(target.Content) != 1 {
-		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target content is invalid"))
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to Discord chat message", errors.New("reply target content is invalid"))
 	}
 	text, ok := target.Content[0].(agent.TextPart)
 	if !ok {
-		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target content is unsupported"))
+		return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to Discord chat message", errors.New("reply target content is unsupported"))
 	}
 	quote := &agent.QuoteContext{
 		Sequence: target.Sequence, MessageID: target.MessageID, Role: target.Role, Text: text.Text,
@@ -133,7 +133,7 @@ func manualReplyContext(
 	quoteDTO := &control.BotQuote{MessageID: target.MessageID, Content: text.Text}
 	if target.Role == agent.HistoryUser {
 		if target.Sender == nil || target.Sender.Ref.IsZero() {
-			return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to WhatsApp chat message", errors.New("reply target sender is missing"))
+			return nil, nil, agent.NewError(agent.ErrorIntegrityFailure, "reply to Discord chat message", errors.New("reply target sender is missing"))
 		}
 		quote.SenderRef = target.Sender.Ref
 		quote.Mentions = append([]agent.MentionContext(nil), target.Mentions...)
@@ -151,7 +151,7 @@ func manualReplyContext(
 		return nil, nil, err
 	}
 	if deleted {
-		quote.Text = "This message was deleted on WhatsApp."
+		quote.Text = "This message was deleted on Discord."
 		quote.Mentions = nil
 		quoteDTO.Content = quote.Text
 		quoteDTO.Mentions = nil
@@ -180,7 +180,7 @@ func (application *Application) DeleteChatMessage(ctx context.Context, chatID, m
 	}
 	targetID, err := identity.ParseMessageID(messageID)
 	if err != nil {
-		return agent.NewError(agent.ErrorInvalidArgument, "delete WhatsApp chat message", errors.New("message identifier is invalid"))
+		return agent.NewError(agent.ErrorInvalidArgument, "delete Discord chat message", errors.New("message identifier is invalid"))
 	}
 	if err := runtime.gate.AuthorizeSend(ctx, key); err != nil {
 		return err
@@ -204,7 +204,7 @@ func (application *Application) DeleteChatMessage(ctx context.Context, chatID, m
 		}
 	}
 	if !deletableMessage {
-		return agent.NewError(agent.ErrorPermissionDenied, "delete WhatsApp chat message", errors.New("message is not an incoming chat message or a sent Agent message"))
+		return agent.NewError(agent.ErrorPermissionDenied, "delete Discord chat message", errors.New("message is not an incoming chat message or a sent Agent message"))
 	}
 	deleted, err := runtime.store.IsMessageDeleted(ctx, key, targetID)
 	if err != nil {
@@ -273,7 +273,7 @@ func (application *Application) SaveChatSettings(ctx context.Context, chatID str
 		return control.AgentChatSettings{}, err
 	}
 	if update.ExpectedVersion == 0 || !update.ModerationLevel.Valid() {
-		return control.AgentChatSettings{}, agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("settings revision and a valid moderation level are required"))
+		return control.AgentChatSettings{}, agent.NewError(agent.ErrorInvalidArgument, "save Discord chat settings", errors.New("settings revision and a valid moderation level are required"))
 	}
 	snapshot, err := runtime.store.Configs().LoadOrCreate(ctx, key, runtime.configDefaults)
 	if err != nil {
@@ -286,7 +286,7 @@ func (application *Application) SaveChatSettings(ctx context.Context, chatID str
 		values.PromptOverride = nil
 	} else {
 		if update.PromptOverrideMode != agent.PromptAppend && update.PromptOverrideMode != agent.PromptReplace {
-			return control.AgentChatSettings{}, agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("prompt mode must append or replace"))
+			return control.AgentChatSettings{}, agent.NewError(agent.ErrorInvalidArgument, "save Discord chat settings", errors.New("prompt mode must append or replace"))
 		}
 		values.PromptOverride = &agent.PromptOverride{Mode: update.PromptOverrideMode, Text: update.PromptOverrideText}
 	}
@@ -303,11 +303,11 @@ func (application *Application) ResetChatSettings(
 	defaults config.ChatDefaults,
 ) (int64, error) {
 	if application == nil || !application.ready.Load() {
-		return 0, agent.NewError(agent.ErrorNotReady, "reset WhatsApp chat settings", errors.New("Agent runtime is not ready"))
+		return 0, agent.NewError(agent.ErrorNotReady, "reset Discord chat settings", errors.New("Agent runtime is not ready"))
 	}
 	runtime := application.runtimeState.Load()
 	if runtime == nil || runtime.store == nil {
-		return 0, agent.NewError(agent.ErrorNotReady, "reset WhatsApp chat settings", errors.New("WhatsApp chat storage is not ready"))
+		return 0, agent.NewError(agent.ErrorNotReady, "reset Discord chat settings", errors.New("Discord chat storage is not ready"))
 	}
 	var categories appsqlite.ChatSettingsResetMask
 	switch category {
@@ -320,7 +320,7 @@ func (application *Application) ResetChatSettings(
 	case control.ChatSettingsResetAll:
 		categories = appsqlite.ResetChatModeration | appsqlite.ResetChatTriggers | appsqlite.ResetChatPromptOverride
 	default:
-		return 0, agent.NewError(agent.ErrorInvalidArgument, "reset WhatsApp chat settings", errors.New("chat settings reset category is invalid"))
+		return 0, agent.NewError(agent.ErrorInvalidArgument, "reset Discord chat settings", errors.New("chat settings reset category is invalid"))
 	}
 	configDefaults := runtime.configDefaults
 	configDefaults.Permission.ModerationLevel = agent.ModerationLevel(defaults.ModerationLevel)
@@ -353,15 +353,15 @@ func (application *Application) KickGroupMember(ctx context.Context, chatID, mem
 
 func (application *Application) chatActionScope(chatID string) (*conversationRuntime, agent.Key, error) {
 	if application == nil || !application.ready.Load() {
-		return nil, agent.Key{}, agent.NewError(agent.ErrorNotReady, "use WhatsApp chat actions", errors.New("Agent runtime is not ready"))
+		return nil, agent.Key{}, agent.NewError(agent.ErrorNotReady, "use Discord chat actions", errors.New("Agent runtime is not ready"))
 	}
 	runtime := application.runtimeState.Load()
 	if runtime == nil || runtime.adapter == nil || runtime.store == nil || runtime.gate == nil {
-		return nil, agent.Key{}, agent.NewError(agent.ErrorNotReady, "use WhatsApp chat actions", errors.New("WhatsApp chat runtime is not ready"))
+		return nil, agent.Key{}, agent.NewError(agent.ErrorNotReady, "use Discord chat actions", errors.New("Discord chat runtime is not ready"))
 	}
 	chat, err := identity.ParseChatID(chatID)
 	if err != nil {
-		return nil, agent.Key{}, agent.NewError(agent.ErrorInvalidArgument, "use WhatsApp chat actions", errors.New("conversation identifier is invalid"))
+		return nil, agent.Key{}, agent.NewError(agent.ErrorInvalidArgument, "use Discord chat actions", errors.New("conversation identifier is invalid"))
 	}
 	key := agent.Key{TenantID: application.config.TenantID(), AccountID: application.config.AccountID(), ChatID: chat}
 	if err := key.Validate(); err != nil {

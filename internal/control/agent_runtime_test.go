@@ -17,12 +17,12 @@ type agentTestBindings struct{ binding SessionBinding }
 func (repository *agentTestBindings) LoadSessionBinding(context.Context) (SessionBinding, error) {
 	return repository.binding, nil
 }
-func (*agentTestBindings) BeginSessionPairing(context.Context, SessionScope) error { return nil }
+func (*agentTestBindings) BeginSessionLink(context.Context, SessionScope) error { return nil }
 func (*agentTestBindings) MarkSessionLinked(context.Context, SessionScope, string) error {
 	return nil
 }
-func (*agentTestBindings) AbortSessionPairing(context.Context, SessionScope) error { return nil }
-func (*agentTestBindings) MarkSessionRevoked(context.Context, SessionScope) error  { return nil }
+func (*agentTestBindings) AbortSessionLink(context.Context, SessionScope) error   { return nil }
+func (*agentTestBindings) MarkSessionRevoked(context.Context, SessionScope) error { return nil }
 
 type agentTestSessions struct {
 	mu        sync.Mutex
@@ -106,8 +106,8 @@ func validAgentSettings() config.Settings {
 	settings := config.DefaultSettings()
 	settings.AssistantName = "Test Assistant"
 	settings.BasePrompt = "Answer messages helpfully."
-	settings.OwnerID = "628123456789@s.whatsapp.net"
-	settings.ChatAllowlist = []string{"628123456789@s.whatsapp.net"}
+	settings.OwnerID = "628123456789"
+	settings.ChatAllowlist = []string{"628123456789"}
 	settings.LLMEndpoint = "https://llm.example/v1"
 	settings.LLMAPIKey = "synthetic-test-key"
 	settings.LLMModel = "test-model"
@@ -259,7 +259,7 @@ func TestAgentControllerApplyDisablingAgentStopsWithoutLaunchingAnotherRuntime(t
 }
 
 func TestAgentControllerRequiresPairedSessionAndCompleteSettings(t *testing.T) {
-	controller, _, _, _ := newAgentControllerForTest(t, validAgentSettings(), SessionUnpaired)
+	controller, _, _, _ := newAgentControllerForTest(t, validAgentSettings(), SessionUnlinked)
 	if _, err := controller.Start(context.Background()); !agent.IsCode(err, agent.ErrorNotReady) {
 		t.Fatalf("unpaired start error = %v, want not ready", err)
 	}
@@ -307,7 +307,7 @@ func TestAgentControllerSerializesSessionMutationsWithRuntimeOwnership(t *testin
 		t.Fatalf("session mutation while Agent is active: %v, want conflict", err)
 	}
 	if called {
-		t.Fatal("session mutation ran while the Agent owned the WhatsApp client")
+		t.Fatal("session mutation ran while the Agent owned the Discord client")
 	}
 	if _, err := controller.Stop(context.Background()); err != nil {
 		t.Fatalf("stop Agent: %v", err)

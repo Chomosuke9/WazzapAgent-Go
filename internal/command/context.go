@@ -99,8 +99,8 @@ func (c *Context) replyInteractive(ctx context.Context, text, footer string, but
 	}
 	_, err = sender.SendButtons(ctx, request)
 	if agent.IsCode(err, agent.ErrorUnsupported) {
-		// The provider definitively rejected the buttons (WhatsApp does
-		// for some accounts or chats), so nothing was delivered and the
+		// The provider definitively rejected the buttons (Discord does for
+		// a layout it cannot show), so nothing was delivered and the
 		// text form is safe to send. Ambiguous failures are not retried
 		// as text, which could deliver both.
 		return c.replyButtonsAsText(ctx, text, buttons, menus)
@@ -116,7 +116,7 @@ func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons [
 		lines = append(lines, "• "+button.Label+": "+c.buttonID(button))
 	}
 	for _, menu := range menus {
-		lines = append(lines, "*"+menu.Title+"*")
+		lines = append(lines, "**"+menu.Title+"**")
 		for _, option := range menu.Options {
 			lines = append(lines, "• "+option.Label+": "+c.buttonID(option))
 		}

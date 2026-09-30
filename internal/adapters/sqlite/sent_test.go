@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,95 +9,20 @@ import (
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/maintenance"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/sticker"
 )
-
-func TestStickerCatalogIsPerChatAndReplacesByName(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sticker-chat-1", "15550000101@s.whatsapp.net"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sticker-chat-2", "15550000102@s.whatsapp.net"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
-	otherKey := agent.Key{TenantID: other.Message.TenantID, AccountID: other.Message.AccountID, ChatID: other.Message.ChatID}
-	catalog := store.Stickers()
-
-	if replaced, err := catalog.SaveSticker(ctx, key, sticker.Sticker{Name: "wave", WebP: []byte("one")}); err != nil || replaced {
-		t.Fatalf("first save replaced=%v err=%v", replaced, err)
-	}
-	if replaced, err := catalog.SaveSticker(ctx, key, sticker.Sticker{Name: "wave", Lottie: []byte(`{"isLottie":true}`), Animated: true}); err != nil || !replaced {
-		t.Fatalf("second save replaced=%v err=%v", replaced, err)
-	}
-	if _, err := catalog.SaveSticker(ctx, key, sticker.Sticker{Name: "cat", WebP: []byte("cat")}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := catalog.SaveSticker(ctx, key, sticker.Sticker{Name: "Bad Name", WebP: []byte("x")}); !agent.IsCode(err, agent.ErrorInvalidArgument) {
-		t.Fatalf("invalid name err = %v", err)
-	}
-
-	names, err := catalog.StickerNames(ctx, key)
-	if err != nil || !reflect.DeepEqual(names, []string{"cat", "wave"}) {
-		t.Fatalf("names = %v, err=%v", names, err)
-	}
-	if names, err := catalog.StickerNames(ctx, otherKey); err != nil || len(names) != 0 {
-		t.Fatalf("other chat names = %v, err=%v", names, err)
-	}
-	loaded, err := catalog.LoadSticker(ctx, key, "wave")
-	if err != nil || len(loaded.WebP) != 0 || string(loaded.Lottie) != `{"isLottie":true}` || !loaded.Animated {
-		t.Fatalf("loaded = %#v, err=%v", loaded, err)
-	}
-	if _, err := catalog.LoadSticker(ctx, otherKey, "wave"); !agent.IsCode(err, agent.ErrorNotFound) {
-		t.Fatalf("other chat load err = %v", err)
-	}
-	if deleted, err := catalog.DeleteSticker(ctx, key, "wave"); err != nil || !deleted {
-		t.Fatalf("delete = %v, err=%v", deleted, err)
-	}
-	if deleted, err := catalog.DeleteSticker(ctx, key, "wave"); err != nil || deleted {
-		t.Fatalf("second delete = %v, err=%v", deleted, err)
-	}
-}
-
-func TestCommandMediaIsStoredWithTheCommandMessage(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	candidate := testCandidate(t, "sticker-command", "15550000103@s.whatsapp.net")
-	candidate.Text = "/sticker"
-	candidate.ProviderMediaJSON = []byte(`{"imageMessage":{"mimetype":"image/jpeg"}}`)
-	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := store.Inbound().ReadCommandMedia(ctx, claimed.Message)
-	if err != nil || string(payload) != string(candidate.ProviderMediaJSON) {
-		t.Fatalf("payload = %s, err=%v", payload, err)
-	}
-
-	plain, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "plain-command", "15550000104@s.whatsapp.net"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Inbound().ReadCommandMedia(ctx, plain.Message); !agent.IsCode(err, agent.ErrorNotFound) {
-		t.Fatalf("message without media err = %v", err)
-	}
-}
 
 func TestReplyToASentStickerIsAReplyToTheBot(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sent-sticker-1", "15550000103@s.whatsapp.net"))
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "sent-sticker-1", "15550000103"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
-	if err := store.Stickers().RecordSentSticker(ctx, key, "BOT-STICKER-1", "wave"); err != nil {
+	if err := store.Sent().RecordSentSticker(ctx, key, "BOT-STICKER-1", "wave"); err != nil {
 		t.Fatal(err)
 	}
-	reply := testCandidate(t, "sent-sticker-2", "15550000103@s.whatsapp.net")
+	reply := testCandidate(t, "sent-sticker-2", "15550000103")
 	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
 	reply.ProviderQuotedMessageID = "BOT-STICKER-1"
 	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
@@ -114,12 +38,12 @@ func TestReplyToASentStickerIsAReplyToTheBot(t *testing.T) {
 func TestSentStickerQuotesRespectResetAndRetention(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "old-sticker-1", "15550000104@s.whatsapp.net"))
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "old-sticker-1", "15550000104"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
-	if err := store.Stickers().RecordSentSticker(ctx, key, "OLD-STICKER", "wave"); err != nil {
+	if err := store.Sent().RecordSentSticker(ctx, key, "OLD-STICKER", "wave"); err != nil {
 		t.Fatal(err)
 	}
 	resetAt := time.Now().Add(time.Minute).UnixMilli()
@@ -127,7 +51,7 @@ func TestSentStickerQuotesRespectResetAndRetention(t *testing.T) {
 	  VALUES (?, ?, ?, 0, 1, ?)`, key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), resetAt); err != nil {
 		t.Fatal(err)
 	}
-	reply := testCandidate(t, "old-sticker-2", "15550000104@s.whatsapp.net")
+	reply := testCandidate(t, "old-sticker-2", "15550000104")
 	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
 	reply.ProviderQuotedMessageID = "OLD-STICKER"
 	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
@@ -145,5 +69,42 @@ func TestSentStickerQuotesRespectResetAndRetention(t *testing.T) {
 	var remaining int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sent_stickers WHERE tenant_id = ?`, key.TenantID.String()).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("sent stickers after maintenance = %d, err=%v", remaining, err)
+	}
+}
+
+func TestReplyToALaterPartOfALongReplyIsAReplyToTheBot(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	first, err := store.Inbound().ClaimAndResolveSender(ctx, testCandidate(t, "long-reply-1", "15550000105"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := agent.Key{TenantID: first.Message.TenantID, AccountID: first.Message.AccountID, ChatID: first.Message.ChatID}
+	if err := store.Sent().RecordSentSticker(ctx, key, "PART-1", "wave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Sent().RecordReceiptAliases(ctx, key, "PART-1", []string{"PART-2", "PART-3", "PART-1", ""}); err != nil {
+		t.Fatal(err)
+	}
+	reply := testCandidate(t, "long-reply-2", "15550000105")
+	reply.TenantID, reply.AccountID = key.TenantID, key.AccountID
+	reply.ProviderQuotedMessageID = "PART-3"
+	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed.Message.RepliedToBot || claimed.Message.Quote == nil || claimed.Message.Quote.Role != conversation.QuoteAssistant {
+		t.Fatalf("repliedToBot=%v quote=%#v", claimed.Message.RepliedToBot, claimed.Message.Quote)
+	}
+	var aliases int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM receipt_aliases WHERE tenant_id = ?`, key.TenantID.String()).Scan(&aliases); err != nil || aliases != 2 {
+		t.Fatalf("aliases = %d, err=%v", aliases, err)
+	}
+	now := time.Now().Add(2 * time.Hour)
+	if _, err := store.Maintain(ctx, maintenance.Request{TenantID: key.TenantID, Now: now, DeleteBefore: now.Add(-time.Hour), BatchSize: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM receipt_aliases WHERE tenant_id = ?`, key.TenantID.String()).Scan(&aliases); err != nil || aliases != 0 {
+		t.Fatalf("aliases after maintenance = %d, err=%v", aliases, err)
 	}
 }

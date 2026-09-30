@@ -345,7 +345,7 @@ func SessionSnapshotFromSettings(settings Settings) (Snapshot, error) {
 
 // SessionSnapshotWithIdentity builds a session-only snapshot for the durable
 // identity selected by the session controller. The account scope is persisted
-// in settings.db so a later pairing can isolate application data by account.
+// in settings.db so a later link can isolate application data by account.
 func SessionSnapshotWithIdentity(settings Settings, tenantID identity.TenantID, accountID identity.AccountID) (Snapshot, error) {
 	if tenantID.IsZero() || accountID.IsZero() {
 		return Snapshot{}, fmt.Errorf("session identity is incomplete")

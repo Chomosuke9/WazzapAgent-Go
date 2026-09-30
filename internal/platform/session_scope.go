@@ -9,7 +9,7 @@ import (
 )
 
 // SessionScopeResolver connects the durable session scope in settings.db to
-// the immutable config snapshot used by the WhatsApp device store.
+// the immutable config snapshot that locates the Discord token file.
 type SessionScopeResolver struct{}
 
 func (SessionScopeResolver) ResolveSessionSnapshot(_ context.Context, dataRoot string, settings config.Settings, preferred control.SessionScope) (config.Snapshot, error) {

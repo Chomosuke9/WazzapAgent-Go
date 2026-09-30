@@ -14,8 +14,8 @@ func init() {
 		Name:        "permission",
 		Aliases:     []string{"permissions", "moderation"},
 		Permission:  "owner or (admin and group) or fromMe",
-		Description: "Shows and sets what the Agent may do to moderate this group, with buttons: /permission, or /permission 0-3 (0 off, 1 delete, 2 delete and mute, 3 delete, mute and kick).",
-		DeniedReply: "The /permission command can only be used by group admins or the owner.",
+		Description: "Shows and sets what the Agent may do to moderate this channel, with buttons: /permission, or /permission 0-3 (0 off, 1 delete, 2 delete and mute, 3 delete, mute and kick).",
+		DeniedReply: "The /permission command can only be used by server moderators or the owner.",
 		Run:         runPermission,
 	})
 }
@@ -57,7 +57,7 @@ func replyPermission(ctx context.Context, c *command.Context, current agent.Mode
 	}
 	text := formatModeration(current) + "\n\n" + strings.Join([]string{
 		"0: off", "1: delete messages", "2: delete + mute", "3: delete + mute + kick",
-	}, "\n") + "\n\nI act only when a group admin asks or a smart rule says so, and the bot account must be a group admin."
+	}, "\n") + "\n\nI act only when a server moderator asks or a smart rule says so, and the bot needs the Discord permission for the action."
 	return c.ReplyButtons(ctx, text, buttons...)
 }
 
@@ -75,7 +75,7 @@ func parsePermissionArgs(args string, hasArgs bool) (level agent.ModerationLevel
 // formatModeration says what the level lets the Agent do.
 func formatModeration(level agent.ModerationLevel) string {
 	if !level.Valid() {
-		return "*Moderation*: unknown level."
+		return "**Moderation**: unknown level."
 	}
-	return fmt.Sprintf("*Moderation*: level %d of 3. %s", level, moderationLevels[level].can)
+	return fmt.Sprintf("**Moderation**: level %d of 3. %s", level, moderationLevels[level].can)
 }

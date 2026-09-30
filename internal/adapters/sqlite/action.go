@@ -127,7 +127,7 @@ func (store *ActionStore) FailTerminal(ctx context.Context, ref agent.DispatchRe
 }
 
 // MarkUnknown records a send whose outcome cannot be known. It is never
-// retried: WhatsApp may already have delivered it.
+// retried: Discord may already have delivered it.
 func (store *ActionStore) MarkUnknown(ctx context.Context, ref agent.DispatchRef, code agent.ErrorCode, now time.Time) error {
 	if code == "" || now.IsZero() {
 		return agent.NewError(agent.ErrorInvalidArgument, "mark action unknown", errors.New("code and time are required"))

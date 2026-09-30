@@ -50,7 +50,7 @@ func (discardAgentLifecycleObserver) ObserveAgentTriggered(conversation.Incoming
 func (discardAgentLifecycleObserver) ObserveAgentSucceeded(conversation.IncomingMessage, agent.InvokeResult, time.Duration, string) {
 }
 
-// AIActivity owns best-effort WhatsApp UX signals. They are runtime behavior,
+// AIActivity owns best-effort Discord UX signals. They are runtime behavior,
 // not model tools and not permission-controlled moderation commands.
 type AIActivity interface {
 	MarkRead(context.Context, agent.Key, identity.MessageID) error
@@ -203,7 +203,7 @@ func (handler *handlerServices) failCommand(
 	}
 	reply := "Sorry, /" + cmd.Name + " failed. Please try again later."
 	if agent.IsCode(cause, agent.ErrorNotReady) {
-		reply = "WhatsApp is still starting up. Please try /" + cmd.Name + " again in a moment."
+		reply = "Discord is still starting up. Please try /" + cmd.Name + " again in a moment."
 	}
 	if err := handler.responses.Reply(ctx, message, version, reply); err != nil {
 		if markErr := handler.store.MarkCommandHandled(ctx, message); markErr != nil {

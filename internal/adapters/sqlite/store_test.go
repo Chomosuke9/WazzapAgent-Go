@@ -2,9 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -20,7 +18,7 @@ import (
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/policy"
 )
 
-const wantMigrationCount = 26
+const wantMigrationCount = 1
 
 func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	ctx := context.Background()
@@ -52,68 +50,9 @@ func TestOpenAppliesAndVerifiesEmbeddedMigrations(t *testing.T) {
 	}
 }
 
-func TestPart2MigrationUpgradesAnExistingPart1Database(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := sql.Open("sqlite", databaseDSN(path, defaultBusyTimeoutMS))
-	if err != nil {
-		t.Fatalf("open raw Part 1 database: %v", err)
-	}
-	part1, err := migrationFiles.ReadFile("migrations/001_part1.sql")
-	if err != nil {
-		t.Fatalf("read Part 1 migration: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE schema_migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        checksum TEXT NOT NULL,
-        applied_at_ms INTEGER NOT NULL
-    ) STRICT`); err != nil {
-		t.Fatalf("create migration ledger: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, string(part1)); err != nil {
-		t.Fatalf("apply Part 1 schema: %v", err)
-	}
-	digest := sha256.Sum256(part1)
-	if _, err := db.ExecContext(ctx,
-		"INSERT INTO schema_migrations(version, name, checksum, applied_at_ms) VALUES (1, ?, ?, ?)",
-		"001_part1.sql", hex.EncodeToString(digest[:]), time.Now().UTC().UnixMilli(),
-	); err != nil {
-		t.Fatalf("record Part 1 migration: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close raw Part 1 database: %v", err)
-	}
-
-	store, err := Open(ctx, path)
-	if err != nil {
-		t.Fatalf("upgrade database: %v", err)
-	}
-	defer store.Close()
-	var migrations int
-	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
-		t.Fatalf("count upgraded migrations: %v", err)
-	}
-	if migrations != wantMigrationCount {
-		t.Fatalf("upgraded migration count = %d, want %d", migrations, wantMigrationCount)
-	}
-	if _, err := store.db.ExecContext(ctx, "SELECT quoted_message_id, quoted_sequence, turn_claimed FROM inbound_events LIMIT 0"); err != nil {
-		t.Fatalf("Part 2 inbound columns are unavailable: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, "SELECT sequence FROM history_entries LIMIT 0"); err != nil {
-		t.Fatalf("Part 2 history table is unavailable: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, "SELECT effect_id FROM typed_effects LIMIT 0"); err != nil {
-		t.Fatalf("typed effects table is unavailable: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, "SELECT message_id, token FROM message_mentions LIMIT 0"); err != nil {
-		t.Fatalf("message mention table is unavailable: %v", err)
-	}
-}
-
 func TestResolveMessageTargetKeepsProviderFieldsAtAdapterEdge(t *testing.T) {
 	store := openTestStore(t)
-	candidate := testCandidate(t, "provider-effect-target", "15550000042@s.whatsapp.net")
+	candidate := testCandidate(t, "provider-effect-target", "15550000042")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim message target: %v", err)
@@ -202,7 +141,7 @@ func TestConfigPersistsModerationLevelAndAlwaysDerivesReactionTool(t *testing.T)
 
 func TestInboundClaimSenderRefAndDuplicateAreDurable(t *testing.T) {
 	store := openTestStore(t)
-	candidate := testCandidate(t, "provider-message-1", "15550000001@s.whatsapp.net")
+	candidate := testCandidate(t, "provider-message-1", "15550000001")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim inbound: %v", err)
@@ -248,7 +187,7 @@ func TestSenderRefAndAgentConfigSurviveStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	candidate := testCandidate(t, "provider-reopen-1", "15550000011@s.whatsapp.net")
+	candidate := testCandidate(t, "provider-reopen-1", "15550000011")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim inbound: %v", err)
@@ -291,8 +230,7 @@ func TestSenderRefAndAgentConfigSurviveStoreReopen(t *testing.T) {
 
 func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 	store := openTestStore(t)
-	candidate := testCandidate(t, "provider-policy-1", "15550000021@s.whatsapp.net")
-	candidate.ProviderSenderPhone = "15550000020@s.whatsapp.net"
+	candidate := testCandidate(t, "provider-policy-1", "15550000021")
 	candidate.Owner = true
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
@@ -302,7 +240,7 @@ func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 
 	if err := store.Inbound().ReconcileAccountPolicy(
 		context.Background(), candidate.TenantID, candidate.AccountID,
-		"15550000999@s.whatsapp.net", []string{"15550000888@s.whatsapp.net"},
+		"15550000999", []string{"15550000888"},
 	); err != nil {
 		t.Fatalf("remove prior policy: %v", err)
 	}
@@ -323,7 +261,7 @@ func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 
 	if err := store.Inbound().ReconcileAccountPolicy(
 		context.Background(), candidate.TenantID, candidate.AccountID,
-		candidate.ProviderSenderPhone, []string{candidate.ProviderChatAddress},
+		candidate.SenderUserID.String(), []string{candidate.ProviderChatAddress},
 	); err != nil {
 		t.Fatalf("restore current policy: %v", err)
 	}
@@ -341,17 +279,20 @@ func TestAccountPolicyReconciliationFailsClosedAcrossRestart(t *testing.T) {
 
 func TestAccountPolicyReconciliationAppliesChatAllowlistWildcards(t *testing.T) {
 	store := openTestStore(t)
-	direct := testCandidate(t, "wildcard-direct", "10000000001@lid")
+	direct := testCandidate(t, "wildcard-direct", "10000000001")
 	group := direct
 	group.ProviderMessageID = "wildcard-group"
-	group.ProviderChatAddress = "120363000000000001@g.us"
+	group.ProviderChatAddress = "120363000000000001"
 	group.ChatKind = conversation.ChatGroup
-	status := direct
-	status.ProviderMessageID = "wildcard-status"
-	status.ProviderChatAddress = "status@broadcast"
-	status.ChatKind = conversation.ChatStatus
+	group.ProviderGuildAddress = "500000000000000001"
+	thread := direct
+	thread.ProviderMessageID = "wildcard-thread"
+	thread.ProviderChatAddress = "120363000000000002"
+	thread.ChatKind = conversation.ChatGroup
+	thread.ProviderGuildAddress = "500000000000000002"
+	thread.ProviderAliasAddress = "120363000000000003"
 
-	candidates := []conversation.IncomingCandidate{direct, group, status}
+	candidates := []conversation.IncomingCandidate{direct, group, thread}
 	keys := make([]agent.Key, 0, len(candidates))
 	for _, candidate := range candidates {
 		claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -364,7 +305,7 @@ func TestAccountPolicyReconciliationAppliesChatAllowlistWildcards(t *testing.T) 
 	assertAllowed := func(pattern string, want ...bool) {
 		t.Helper()
 		if err := store.Inbound().ReconcileAccountPolicy(
-			context.Background(), direct.TenantID, direct.AccountID, direct.ProviderSenderPhone, []string{pattern},
+			context.Background(), direct.TenantID, direct.AccountID, direct.SenderUserID.String(), []string{pattern},
 		); err != nil {
 			t.Fatalf("reconcile wildcard %q: %v", pattern, err)
 		}
@@ -377,8 +318,12 @@ func TestAccountPolicyReconciliationAppliesChatAllowlistWildcards(t *testing.T) 
 	}
 
 	assertAllowed(policy.ChatAllowlistDirect, true, false, false)
-	assertAllowed(policy.ChatAllowlistGroup, false, true, false)
-	assertAllowed(policy.ChatAllowlistAll, true, true, false)
+	assertAllowed(policy.ChatAllowlistGroup, false, true, true)
+	assertAllowed(policy.ChatAllowlistAll, true, true, true)
+	// A server or parent channel admits the chats inside it.
+	assertAllowed("500000000000000001", false, true, false)
+	assertAllowed("120363000000000003", false, false, true)
+	assertAllowed(direct.SenderUserID.String(), false, false, false)
 }
 
 func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T) {
@@ -396,16 +341,14 @@ func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T)
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	first := testCandidate(t, "sender-ref-1", "15550000031@s.whatsapp.net")
-	first.ProviderSenderPhone = "15550000032@s.whatsapp.net"
+	first := testCandidate(t, "sender-ref-1", "15550000031")
 	firstClaim, err := store.Inbound().ClaimAndResolveSender(context.Background(), first)
 	if err != nil {
 		t.Fatalf("claim first sender: %v", err)
 	}
 	second := first
 	second.ProviderMessageID = "sender-ref-2"
-	second.ProviderSenderPhone = "15550000033@s.whatsapp.net"
-	second.SenderUserID, _ = identity.ParseUserID("10000000033@lid")
+	second.SenderUserID, _ = identity.ParseUserID("10000000033")
 	secondClaim, err := store.Inbound().ClaimAndResolveSender(context.Background(), second)
 	if err != nil {
 		t.Fatalf("claim colliding sender: %v", err)
@@ -421,44 +364,27 @@ func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T)
 
 func TestSenderRefAndUserIDResolveBothWays(t *testing.T) {
 	store := openTestStore(t)
-	candidate := testCandidate(t, "lid-round-trip", "15550000041@s.whatsapp.net")
+	candidate := testCandidate(t, "user-id-round-trip", "15550000041")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim sender: %v", err)
 	}
 	key := agent.Key{TenantID: candidate.TenantID, AccountID: candidate.AccountID, ChatID: claimed.Message.ChatID}
-	lid, err := store.Inbound().ResolveUserID(context.Background(), key, claimed.Message.SenderRef)
-	if err != nil || lid != candidate.SenderUserID {
-		t.Fatalf("senderRef -> UserID = %s, %v", lid, err)
+	userID, err := store.Inbound().ResolveUserID(context.Background(), key, claimed.Message.SenderRef)
+	if err != nil || userID != candidate.SenderUserID {
+		t.Fatalf("senderRef -> user ID = %s, %v", userID, err)
 	}
 	ref, err := store.Inbound().ResolveSenderRef(context.Background(), key, candidate.SenderUserID)
 	if err != nil || ref != claimed.Message.SenderRef {
-		t.Fatalf("LID -> senderRef = %s, %v", ref, err)
-	}
-	aliasChanged := candidate
-	aliasChanged.ProviderMessageID = "lid-round-trip-new-phone"
-	aliasChanged.ProviderSenderPhone = "15550000042@s.whatsapp.net"
-	aliasChanged.ReceivedAt = aliasChanged.ReceivedAt.Add(time.Second)
-	aliasChanged.OccurredAt = aliasChanged.OccurredAt.Add(time.Second)
-	changed, err := store.Inbound().ClaimAndResolveSender(context.Background(), aliasChanged)
-	if err != nil || changed.Message.SenderID != claimed.Message.SenderID || changed.Message.SenderRef != claimed.Message.SenderRef {
-		t.Fatalf("phone alias changed canonical identity: %#v, %v", changed.Message, err)
-	}
-	conflict := aliasChanged
-	conflict.ProviderMessageID = "lid-conflicting-phone"
-	conflict.SenderUserID, _ = identity.ParseUserID("10000000042@lid")
-	conflict.ReceivedAt = conflict.ReceivedAt.Add(time.Second)
-	conflict.OccurredAt = conflict.OccurredAt.Add(time.Second)
-	if _, err := store.Inbound().ClaimAndResolveSender(context.Background(), conflict); !agent.IsCode(err, agent.ErrorIntegrityFailure) {
-		t.Fatalf("conflicting UserID/phone binding error = %v", err)
+		t.Fatalf("user ID -> senderRef = %s, %v", ref, err)
 	}
 }
 
 func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	firstCandidate := testCandidate(t, "mention-source", "15550000061@s.whatsapp.net")
-	targetUserID, _ := identity.ParseUserID("10000000077@lid")
+	firstCandidate := testCandidate(t, "mention-source", "15550000061")
+	targetUserID, _ := identity.ParseUserID("10000000077")
 	firstCandidate.Text = "halo @10000000077 dan @999999"
 	firstCandidate.Mentions = []conversation.IncomingMention{
 		{Token: "@10000000077", TargetUserID: targetUserID, DisplayName: "Budi"},
@@ -549,10 +475,10 @@ func TestBatchClaimRecordsMembersAndUnfinishedAnchorSurvivesReopen(t *testing.T)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	firstCandidate := testCandidate(t, "batch-restart-1", "15550000044@s.whatsapp.net")
+	firstCandidate := testCandidate(t, "batch-restart-1", "15550000044")
 	firstCandidate.OccurredAt = clock.now.Add(-time.Second)
 	firstCandidate.ReceivedAt = clock.now
-	secondCandidate := testCandidate(t, "batch-restart-2", "15550000044@s.whatsapp.net")
+	secondCandidate := testCandidate(t, "batch-restart-2", "15550000044")
 	secondCandidate.TenantID = firstCandidate.TenantID
 	secondCandidate.AccountID = firstCandidate.AccountID
 	secondCandidate.OccurredAt = firstCandidate.OccurredAt
@@ -613,7 +539,7 @@ func TestStartedTurnOnlyEverRunsAsAnAnchor(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
-	firstCandidate := testCandidate(t, "batch-retry-1", "15550000046@s.whatsapp.net")
+	firstCandidate := testCandidate(t, "batch-retry-1", "15550000046")
 	firstCandidate.ReceivedAt = clock.now
 	firstCandidate.OccurredAt = clock.now.Add(-time.Second)
 	first, err := store.Inbound().ClaimAndResolveSender(ctx, firstCandidate)
@@ -667,7 +593,7 @@ func TestPreResetMessageIsDroppedFromBatch(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
 	store := openTestStoreWithClock(t, clock)
-	candidate := testCandidate(t, "batch-reset-race", "15550000045@s.whatsapp.net")
+	candidate := testCandidate(t, "batch-reset-race", "15550000045")
 	candidate.OccurredAt = clock.now.Add(-time.Second)
 	candidate.ReceivedAt = clock.now
 	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
@@ -699,7 +625,7 @@ func TestLateClaimOfPreResetInboundDoesNotReintroduceHistory(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Unix(1_700_000_000, 0).UTC()}
 	store := openTestStoreWithClock(t, clock)
-	first := testCandidate(t, "reset-seed", "15550000046@s.whatsapp.net")
+	first := testCandidate(t, "reset-seed", "15550000046")
 	first.ReceivedAt = clock.now
 	first.OccurredAt = clock.now
 	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, first)
@@ -739,7 +665,7 @@ func TestLateClaimOfPreResetInboundDoesNotReintroduceHistory(t *testing.T) {
 func TestTurnPlanAndActionReceiptAreAtomicAndReplayable(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
-	candidate := testCandidate(t, "provider-message-2", "15550000002@s.whatsapp.net")
+	candidate := testCandidate(t, "provider-message-2", "15550000002")
 	candidate.ReceivedAt = clock.now
 	candidate.OccurredAt = clock.now.Add(-time.Second)
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -888,7 +814,7 @@ func TestPlanReplayUsesTheExactAssistantHistoryTimestamp(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Date(2026, 9, 8, 1, 30, 0, 999_500_000, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
-	candidate := testCandidate(t, "history-timestamp-replay", "15550000048@s.whatsapp.net")
+	candidate := testCandidate(t, "history-timestamp-replay", "15550000048")
 	candidate.ReceivedAt = clock.now
 	candidate.OccurredAt = clock.now.Add(-time.Second)
 	claimed, err := store.Inbound().ClaimAndResolveSender(ctx, candidate)
@@ -934,7 +860,7 @@ func TestPlanReplayUsesTheExactAssistantHistoryTimestamp(t *testing.T) {
 
 func TestPreclaimedInboundCannotBeReboundToDifferentInvocationContent(t *testing.T) {
 	store := openTestStore(t)
-	candidate := testCandidate(t, "provider-message-integrity", "15550000007@s.whatsapp.net")
+	candidate := testCandidate(t, "provider-message-integrity", "15550000007")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
 	if err != nil {
 		t.Fatalf("claim inbound: %v", err)
@@ -1035,7 +961,7 @@ func TestGenerationRetriesAreBoundedAndBecomeTerminal(t *testing.T) {
 func TestInterruptedActionBecomesUnknownAndIsNeverResent(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 9, 8, 4, 0, 0, 0, time.UTC)}
 	store := openTestStoreWithClock(t, clock)
-	candidate := testCandidate(t, "unknown-expired-action", "15550000041@s.whatsapp.net")
+	candidate := testCandidate(t, "unknown-expired-action", "15550000041")
 	candidate.ReceivedAt = clock.now
 	candidate.OccurredAt = clock.now.Add(-time.Second)
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -1141,7 +1067,7 @@ func testCandidate(t *testing.T, providerMessageID, chat string) conversation.In
 	t.Helper()
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
-	lid, _ := identity.ParseUserID("10000000009@lid")
+	lid, _ := identity.ParseUserID("10000000009")
 	now := time.Now().UTC()
 	return conversation.IncomingCandidate{
 		TenantID:            tenantID,
@@ -1149,7 +1075,6 @@ func testCandidate(t *testing.T, providerMessageID, chat string) conversation.In
 		ProviderMessageID:   providerMessageID,
 		ProviderChatAddress: chat,
 		SenderUserID:        lid,
-		ProviderSenderPhone: "15550000009@s.whatsapp.net",
 		SenderName:          "Tester",
 		ChatKind:            conversation.ChatDirect,
 		Text:                "hello",

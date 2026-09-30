@@ -16,11 +16,11 @@ func init() {
 	register(command.Command{
 		Name:       "trigger",
 		Permission: "(owner or isAdmin or fromMe) and isGroup",
-		Description: "Shows and changes when the Agent replies in this group: /trigger shows it and how to change it; " +
+		Description: "Shows and changes when the Agent replies in this channel: /trigger shows it and how to change it; " +
 			"/trigger toggle has buttons; /trigger mention|name|reply|smart on|off; /trigger smart add <rule>, " +
 			"/trigger smart remove <number>, /trigger smart set <rules, one per line>, /trigger smart clear; " +
-			"/trigger pattern <regex>, /trigger regex off. Only the owner or a group admin can use it in a group.",
-		DeniedReply: "The /trigger command can only be used by the owner or an admin in a group.",
+			"/trigger pattern <regex>, /trigger regex off. Only the owner or a server moderator can use it in a server channel.",
+		DeniedReply: "The /trigger command can only be used by the owner or a server moderator in a server channel.",
 		Run:         runTrigger,
 	})
 }
@@ -178,7 +178,7 @@ func smartRuleNumber(value string) (int, bool) {
 	return index, err == nil && index >= 1
 }
 
-// formatTriggers says, in plain words, when the Agent replies in the group
+// formatTriggers says, in plain words, when the Agent replies in the channel
 // and lists the smart rules.
 func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 	name := "my name"
@@ -190,7 +190,7 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 		nameDetail = "a message matches the regex " + triggers.NamePattern
 	}
 	lines := []string{
-		"*When I reply in this group*",
+		"**When I reply in this channel**",
 		check(triggers.Mention) + " Mention: someone @mentions me",
 		check(triggers.Reply) + " Reply: someone replies to my message",
 		check(triggers.Name) + " Name: " + nameDetail,
@@ -200,11 +200,11 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 	rules := triggers.SmartRuleList()
 	switch {
 	case len(rules) == 0:
-		lines = append(lines, "*Smart rules*: none yet.")
+		lines = append(lines, "**Smart rules**: none yet.")
 	case triggers.Smart:
-		lines = append(lines, fmt.Sprintf("*Smart rules* (%d of %d). A message that matches one always wakes me, and I follow the rule:", len(rules), agent.MaxSmartRules))
+		lines = append(lines, fmt.Sprintf("**Smart rules** (%d of %d). A message that matches one always wakes me, and I follow the rule:", len(rules), agent.MaxSmartRules))
 	default:
-		lines = append(lines, fmt.Sprintf("*Smart rules* (%d of %d), paused while Smart is off:", len(rules), agent.MaxSmartRules))
+		lines = append(lines, fmt.Sprintf("**Smart rules** (%d of %d), paused while Smart is off:", len(rules), agent.MaxSmartRules))
 	}
 	for index, rule := range rules {
 		lines = append(lines, fmt.Sprintf("%d. %s", index+1, rule))
@@ -213,7 +213,7 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 }
 
 // triggerUsage is how to change the triggers, shown under /trigger.
-const triggerUsage = "*How to change it*\n" +
+const triggerUsage = "**How to change it**\n" +
 	"/trigger toggle: buttons to turn each one on or off\n" +
 	"/trigger mention|reply|name|smart on|off\n" +
 	"/trigger smart add <rule>: add a rule, e.g. /trigger smart add someone sends a scam link: delete it and warn them\n" +
@@ -249,7 +249,7 @@ func triggerHelp(args string) string {
 // triggerInvalid explains why a change was refused.
 func triggerInvalid(triggers agent.TriggerConfig) string {
 	if len(triggers.SmartRuleList()) > agent.MaxSmartRules || len(triggers.SmartRules) > agent.MaxSmartRulesBytes {
-		return fmt.Sprintf("A group can have at most %d smart rules (%d characters in all). Remove one first with /trigger smart remove <number>.", agent.MaxSmartRules, agent.MaxSmartRulesBytes)
+		return fmt.Sprintf("A channel can have at most %d smart rules (%d characters in all). Remove one first with /trigger smart remove <number>.", agent.MaxSmartRules, agent.MaxSmartRulesBytes)
 	}
 	if triggers.NameRegex && strings.TrimSpace(triggers.NamePattern) == "" {
 		return "There is no regex yet. Send /trigger pattern <regex> to set one."

@@ -32,7 +32,7 @@ func (repository *sessionTestBindings) LoadSessionBinding(context.Context) (Sess
 	return repository.binding, nil
 }
 
-func (repository *sessionTestBindings) BeginSessionPairing(_ context.Context, scope SessionScope) error {
+func (repository *sessionTestBindings) BeginSessionLink(_ context.Context, scope SessionScope) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if repository.binding.State == SessionLinked || repository.binding.HasPendingScope {
@@ -58,7 +58,7 @@ func (repository *sessionTestBindings) MarkSessionLinked(_ context.Context, scop
 	return nil
 }
 
-func (repository *sessionTestBindings) AbortSessionPairing(_ context.Context, scope SessionScope) error {
+func (repository *sessionTestBindings) AbortSessionLink(_ context.Context, scope SessionScope) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if repository.binding.HasPendingScope && repository.binding.PendingScope != scope {
@@ -76,7 +76,6 @@ func (repository *sessionTestBindings) MarkSessionRevoked(_ context.Context, sco
 		return errors.New("scope changed")
 	}
 	repository.binding.State = SessionRevoked
-	repository.binding.DiscordBotID = ""
 	return nil
 }
 
@@ -113,17 +112,17 @@ func (factory *sessionTestFactory) OpenSession(context.Context, config.Snapshot)
 }
 
 type sessionTestRuntime struct {
-	mu           sync.Mutex
-	session      bool
-	connect      bool
-	revoke       bool
-	logoutErr    error
-	logoutWait   bool
-	logoutStart  chan struct{}
-	accountID    string
-	request      SessionRunRequest
-	closed       bool
-	pairingReady chan struct{}
+	mu          sync.Mutex
+	session     bool
+	connect     bool
+	revoke      bool
+	logoutErr   error
+	logoutWait  bool
+	logoutStart chan struct{}
+	accountID   string
+	request     SessionRunRequest
+	closed      bool
+	linkReady   chan struct{}
 }
 
 func (runtime *sessionTestRuntime) HasSession() bool {
@@ -140,10 +139,10 @@ func (runtime *sessionTestRuntime) Run(ctx context.Context, request SessionRunRe
 	runtime.mu.Lock()
 	runtime.request = request
 	runtime.mu.Unlock()
-	if request.Mode == SessionRunPairing {
-		emit(SessionRuntimeEvent{State: RuntimePairing, Pairing: &SessionPairing{Method: request.Method, Code: "TEST", ExpiresAt: time.Now().Add(time.Minute)}})
-		if runtime.pairingReady != nil {
-			close(runtime.pairingReady)
+	if request.Mode == SessionRunLink {
+		emit(SessionRuntimeEvent{State: RuntimeLinking})
+		if runtime.linkReady != nil {
+			close(runtime.linkReady)
 		}
 	}
 	if runtime.revoke {
@@ -155,9 +154,9 @@ func (runtime *sessionTestRuntime) Run(ctx context.Context, request SessionRunRe
 		runtime.session = true
 		runtime.mu.Unlock()
 		if runtime.accountID == "" {
-			runtime.accountID = "123456789@s.whatsapp.net"
+			runtime.accountID = "123456789"
 		}
-		emit(SessionRuntimeEvent{State: RuntimeConnected, DiscordBotID: runtime.accountID})
+		emit(SessionRuntimeEvent{State: RuntimeConnected, DiscordBotID: runtime.accountID, BotName: "Vivy"})
 	}
 	<-ctx.Done()
 	return nil
@@ -200,18 +199,18 @@ func (sink sessionTestEvents) TryPublish(event SessionEvent) bool {
 	}
 }
 
-func TestSessionControllerPairingCancelClearsPendingScope(t *testing.T) {
-	controller, bindings, runtime := newSessionTestController(t, SessionBinding{State: SessionUnpaired}, &sessionTestRuntime{pairingReady: make(chan struct{})})
-	operation, err := controller.BeginPairing(context.Background(), BeginPairingRequest{Method: PairingQR})
+func TestSessionControllerLinkCancelClearsPendingScope(t *testing.T) {
+	controller, bindings, runtime := newSessionTestController(t, SessionBinding{State: SessionUnlinked}, &sessionTestRuntime{linkReady: make(chan struct{})})
+	operation, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: testBotToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitChannel(t, runtime.pairingReady)
-	status, err := controller.CancelPairing(context.Background(), operation.OperationID)
+	waitChannel(t, runtime.linkReady)
+	status, err := controller.CancelLink(context.Background(), operation.OperationID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.BindingState != SessionUnpaired || status.RuntimeState != RuntimeStopped {
+	if status.BindingState != SessionUnlinked || status.RuntimeState != RuntimeStopped {
 		t.Fatalf("cancel status = %+v", status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
@@ -220,10 +219,10 @@ func TestSessionControllerPairingCancelClearsPendingScope(t *testing.T) {
 	}
 }
 
-func TestSessionControllerCompletesPairingIntoPersistentSession(t *testing.T) {
-	runtime := &sessionTestRuntime{connect: true, pairingReady: make(chan struct{})}
-	controller, bindings, _ := newSessionTestController(t, SessionBinding{State: SessionUnpaired}, runtime)
-	if _, err := controller.BeginPairing(context.Background(), BeginPairingRequest{Method: PairingQR}); err != nil {
+func TestSessionControllerCompletesLinkIntoPersistentSession(t *testing.T) {
+	runtime := &sessionTestRuntime{connect: true, linkReady: make(chan struct{})}
+	controller, bindings, _ := newSessionTestController(t, SessionBinding{State: SessionUnlinked}, runtime)
+	if _, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: testBotToken}); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionState(t, controller, RuntimeConnected)
@@ -232,18 +231,18 @@ func TestSessionControllerCompletesPairingIntoPersistentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status.BindingState != SessionLinked || status.RuntimeState != RuntimeStopped || !status.SessionPresent {
-		t.Fatalf("completed pairing status = %+v", status)
+		t.Fatalf("completed link status = %+v", status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
 	if binding.State != SessionLinked || binding.HasPendingScope || binding.DiscordBotID == "" {
-		t.Fatalf("successful pairing was not made durable: %+v", binding)
+		t.Fatalf("successful link was not made durable: %+v", binding)
 	}
 }
 
-func TestSessionControllerResumeStopPreservesPairedBinding(t *testing.T) {
+func TestSessionControllerResumeStopPreservesLinkedBinding(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
-	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net", connect: true}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
+	runtime := &sessionTestRuntime{session: true, accountID: "123456789", connect: true}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	operation, err := controller.Resume(context.Background())
 	if err != nil {
@@ -265,8 +264,8 @@ func TestSessionControllerResumeStopPreservesPairedBinding(t *testing.T) {
 
 func TestSessionControllerExternalLogoutMarksSessionRevoked(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
-	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net", revoke: true}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
+	runtime := &sessionTestRuntime{session: true, accountID: "123456789", revoke: true}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	if _, err := controller.Resume(context.Background()); err != nil {
 		t.Fatal(err)
@@ -281,27 +280,27 @@ func TestSessionControllerExternalLogoutMarksSessionRevoked(t *testing.T) {
 	}
 }
 
-func TestSessionControllerMissingLocalDeviceMakesPairingAvailableAgain(t *testing.T) {
+func TestSessionControllerMissingTokenMakesLinkingAvailableAgain(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
 	runtime := &sessionTestRuntime{session: false}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	if _, err := controller.Resume(context.Background()); err == nil {
-		t.Fatal("resume unexpectedly succeeded without a local device")
+		t.Fatal("resume unexpectedly succeeded without a saved token")
 	}
 	status, err := controller.GetStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status.BindingState != SessionRevoked || status.SessionPresent {
-		t.Fatalf("missing-device status = %+v", status)
+		t.Fatalf("missing-token status = %+v", status)
 	}
 }
 
 func TestSessionControllerLogoutWhenStoppedRevokesPersistence(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
-	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net"}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
+	runtime := &sessionTestRuntime{session: true, accountID: "123456789"}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	operation, err := controller.Logout(context.Background())
 	if err != nil {
@@ -311,14 +310,14 @@ func TestSessionControllerLogoutWhenStoppedRevokesPersistence(t *testing.T) {
 		t.Fatalf("logout status = %+v", operation.Status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
-	if binding.State != SessionRevoked || binding.DiscordBotID != "" {
+	if binding.State != SessionRevoked {
 		t.Fatalf("logout did not persist revocation: %+v", binding)
 	}
 }
 
 func TestSessionControllerCloseCancelsLogoutBeforeWaitingForOperationLock(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
 	runtime := &sessionTestRuntime{session: true, logoutWait: true, logoutStart: make(chan struct{})}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	logoutDone := make(chan error, 1)
@@ -345,19 +344,71 @@ func TestSessionControllerCloseCancelsLogoutBeforeWaitingForOperationLock(t *tes
 func TestSessionControllerRevokedRelinkRotatesAccountScope(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
 	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionRevoked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true}}
-	runtime := &sessionTestRuntime{pairingReady: make(chan struct{})}
+	runtime := &sessionTestRuntime{linkReady: make(chan struct{})}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
-	operation, err := controller.BeginPairing(context.Background(), BeginPairingRequest{Method: PairingQR})
+	operation, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: testBotToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitChannel(t, runtime.pairingReady)
+	waitChannel(t, runtime.linkReady)
 	binding, _ := bindings.LoadSessionBinding(context.Background())
 	if !binding.HasPendingScope || binding.PendingScope.AccountID == accountID || binding.PendingScope.TenantID == tenantID {
-		t.Fatalf("re-pair did not isolate the new account scope: %+v", binding)
+		t.Fatalf("relink did not isolate the new bot scope: %+v", binding)
 	}
-	if _, err := controller.CancelPairing(context.Background(), operation.OperationID); err != nil {
+	if _, err := controller.CancelLink(context.Background(), operation.OperationID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// testBotToken is shaped like a bot token whose first part encodes the bot
+// ID 123456789.
+const testBotToken = "MTIzNDU2Nzg5.GabcDE.abcdefghijklmnopqrstuvwxyz0123456789"
+
+func TestSessionControllerRelinkingTheSameBotKeepsItsScope(t *testing.T) {
+	tenantID, accountID := newTestSessionIDs(t)
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionRevoked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789"}}
+	runtime := &sessionTestRuntime{linkReady: make(chan struct{})}
+	controller := newSessionTestControllerWith(t, bindings, runtime)
+	operation, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: "Bot " + testBotToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannel(t, runtime.linkReady)
+	binding, _ := bindings.LoadSessionBinding(context.Background())
+	if !binding.HasPendingScope || binding.PendingScope != (SessionScope{TenantID: tenantID, AccountID: accountID}) {
+		t.Fatalf("relinking the same bot moved it to a new scope: %+v", binding)
+	}
+	runtime.mu.Lock()
+	token := runtime.request.Token
+	runtime.mu.Unlock()
+	if token != testBotToken {
+		t.Fatalf("link token = %q, want the token without its Bot prefix", token)
+	}
+	if _, err := controller.CancelLink(context.Background(), operation.OperationID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionControllerRejectsMalformedTokens(t *testing.T) {
+	controller, _, _ := newSessionTestController(t, SessionBinding{State: SessionUnlinked}, &sessionTestRuntime{})
+	for _, token := range []string{"", "   ", "Bot ", "Bot", "has space.in.it", "tab\tin.si.de", "no-dots", "one.dot", "Bot two words.x.y"} {
+		if _, err := controller.BeginLink(context.Background(), BeginLinkRequest{Token: token}); err == nil {
+			t.Fatalf("token %q was accepted", token)
+		}
+	}
+}
+
+func TestBotIDFromToken(t *testing.T) {
+	for token, want := range map[string]string{
+		testBotToken:                   "123456789",
+		"MTIzNDU2Nzg5MDEyMzQ1Njc4.x.y": "123456789012345678",
+		"bm90LWFuLWlk.x.y":             "",
+		"!!!.x.y":                      "",
+		"":                             "",
+	} {
+		if got := BotIDFromToken(token); got != want {
+			t.Fatalf("BotIDFromToken(%q) = %q, want %q", token, got, want)
+		}
 	}
 }
 

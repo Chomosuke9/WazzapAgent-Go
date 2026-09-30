@@ -59,7 +59,7 @@ func TestConversationReaderListsBotTranscriptWithoutOpeningDatabaseForWrites(t *
 	defer store.Close()
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	candidate := testCandidate(t, "conversation-reader-message", "120363000000000001@s.whatsapp.net")
+	candidate := testCandidate(t, "conversation-reader-message", "120363000000000001")
 	candidate.TenantID, candidate.AccountID = tenantID, accountID
 	candidate.ChatKind = conversation.ChatDirect
 	candidate.SenderName = "Ayu"
@@ -139,7 +139,7 @@ func TestConversationReaderLoadsPassiveGroupHistoryWithoutAgentConfig(t *testing
 	}
 	defer store.Close()
 
-	candidate := testCandidate(t, "passive-group-history", "120363000000000002@g.us")
+	candidate := testCandidate(t, "passive-group-history", "120363000000000002")
 	candidate.TenantID, candidate.AccountID = tenantID, accountID
 	candidate.ChatKind = conversation.ChatGroup
 	candidate.SenderName = "Rina"
@@ -180,7 +180,7 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open app database: %v", err)
 	}
-	candidate := testCandidate(t, "group-name-message", "120363000000000001@g.us")
+	candidate := testCandidate(t, "group-name-message", "120363000000000001")
 	candidate.TenantID, candidate.AccountID = tenantID, accountID
 	candidate.ChatKind = conversation.ChatGroup
 	candidate.SenderName = "Rina"
@@ -201,7 +201,7 @@ func TestConversationReaderUsesPersistedGroupName(t *testing.T) {
 			t.Fatalf("group name = %#v, err=%v; want %q", chats, readErr, want)
 		}
 	}
-	assertName("Group")
+	assertName("Channel")
 	if err := store.Inbound().SaveGroupName(ctx, tenantID, accountID, candidate.ProviderChatAddress, "  Keluarga  "); err != nil {
 		t.Fatalf("save group name: %v", err)
 	}
