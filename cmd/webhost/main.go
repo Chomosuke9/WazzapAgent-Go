@@ -115,7 +115,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 2 * time.Minute}
 	if *tlsCert == "" && *publicOrigin == "" && !isLoopback(listener.Addr()) {
 		logger.Warn("serving plain HTTP on a network address; the access token travels unencrypted. Use -tls-cert/-tls-key or a TLS reverse proxy with -public-origin")
 	}

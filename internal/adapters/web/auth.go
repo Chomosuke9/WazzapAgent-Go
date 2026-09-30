@@ -45,6 +45,8 @@ type TokenAuth struct {
 
 // NewTokenAuth builds an authenticator for token.
 func NewTokenAuth(token string) (*TokenAuth, error) {
+	// Login trims what the browser sends, so trim the configured token too.
+	token = strings.TrimSpace(token)
 	if len(token) < MinTokenLength {
 		return nil, fmt.Errorf("access token must be at least %d characters", MinTokenLength)
 	}

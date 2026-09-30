@@ -237,3 +237,11 @@ func TestLoadTokenPersistsAndRotates(t *testing.T) {
 		t.Fatalf("token file mode: %v %v", info, err)
 	}
 }
+
+func TestConfiguredTokenWhitespaceIsIgnored(t *testing.T) {
+	handler := authedHandler(t, "correct-horse-battery-staple\n")
+	response := postForTest(handler, "/api/auth/login", `{"token":"correct-horse-battery-staple"}`, "192.168.1.20:8080", "10.0.0.1:1")
+	if response.Code != http.StatusOK {
+		t.Fatalf("login with newline-terminated configured token = %d", response.Code)
+	}
+}
