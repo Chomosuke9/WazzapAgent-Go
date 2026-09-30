@@ -37,8 +37,7 @@ const (
 	defaultPolicyID          = "part1-chat-gate.v1"
 	defaultTypeSafeEndpoint  = "https://api.typesafe.ai/v1/systemone"
 	defaultTypeSafeModel     = "jev-latest"
-	defaultWhatsAppEnabled   = true
-	defaultPairingOutput     = "terminal"
+	defaultDiscordEnabled    = true
 	maxShutdownTimeout       = 5 * time.Minute
 	maxResponseBytes         = 16 * 1024
 )
@@ -51,7 +50,7 @@ type Snapshot struct {
 	logLevel            string
 	logFormat           string
 	shutdownTimeout     time.Duration
-	whatsAppEnabled     bool
+	discordEnabled      bool
 	agentEnabled        bool
 	tenantID            identity.TenantID
 	accountID           identity.AccountID
@@ -84,7 +83,6 @@ type Snapshot struct {
 	historyMaxAge       time.Duration
 	connectTimeout      time.Duration
 	sendTimeout         time.Duration
-	pairingOutput       string
 	assistantName       string
 	chatDefaults        ChatDefaults
 }
@@ -114,7 +112,7 @@ func LoadRuntimeBootstrap(lookup LookupEnv) (Snapshot, error) {
 // ResolveRuntimeIdentity loads or creates the durable identity after the
 // caller has acquired ownership of the data root.
 func (snapshot Snapshot) ResolveRuntimeIdentity() (Snapshot, error) {
-	if !snapshot.whatsAppEnabled {
+	if !snapshot.discordEnabled {
 		return snapshot, nil
 	}
 	tenantID, accountID, err := resolveRuntimeIdentity(snapshot.dataDir)
@@ -153,7 +151,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	// The environment-driven runtime always composes the agent, so its
 	// settings are required whenever WhatsApp is on, even with the agent
 	// switched off.
-	if settings.WhatsAppEnabled {
+	if settings.DiscordEnabled {
 		if err := ValidateAgent(settings); err != nil {
 			return Snapshot{}, err
 		}
@@ -162,7 +160,7 @@ func load(lookup LookupEnv, requireConfiguredIdentity bool) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if snapshot.whatsAppEnabled && requireConfiguredIdentity {
+	if snapshot.discordEnabled && requireConfiguredIdentity {
 		if err := snapshot.loadRequiredIdentity(lookup); err != nil {
 			return Snapshot{}, err
 		}
@@ -180,7 +178,7 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 	settings := Settings{
 		AssistantName: value(lookup, "ASSISTANT_NAME"), BasePrompt: value(lookup, "DISCORDAGENT_BASE_PROMPT"),
 		ChatDefaults: DefaultChatDefaults(),
-		OwnerJID:     value(lookup, "DISCORDAGENT_OWNER_ID"), ChatAllowlist: splitList(value(lookup, "DISCORDAGENT_CHAT_ALLOWLIST")),
+		OwnerID:      value(lookup, "DISCORDAGENT_OWNER_ID"), ChatAllowlist: splitList(value(lookup, "DISCORDAGENT_CHAT_ALLOWLIST")),
 		LLMEndpoint: value(lookup, "DISCORDAGENT_LLM_ENDPOINT"), LLMAPIKey: value(lookup, "DISCORDAGENT_LLM_API_KEY"),
 		LLMModel: value(lookup, "DISCORDAGENT_LLM_MODEL"), LLMProviderID: value(lookup, "DISCORDAGENT_LLM_PROVIDER_ID"),
 		FallbackEndpoint: value(lookup, "DISCORDAGENT_LLM_FALLBACK_ENDPOINT"), FallbackAPIKey: value(lookup, "DISCORDAGENT_LLM_FALLBACK_API_KEY"),
@@ -189,13 +187,12 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"), TypeSafeEndpoint: value(lookup, "TYPESAFE_ENDPOINT"),
 		TypeSafeModel: value(lookup, "TYPESAFE_MODEL"),
 		DataDir:       value(lookup, "DISCORDAGENT_DATA_DIR"), HTTPAddress: value(lookup, "DISCORDAGENT_HTTP_ADDRESS"),
-		PairingOutput: value(lookup, "DISCORDAGENT_PAIRING_OUTPUT"),
 	}
 	var err error
-	if settings.WhatsAppEnabled, err = parseBool(lookup, "DISCORDAGENT_DISCORD_ENABLED", defaultWhatsAppEnabled); err != nil {
+	if settings.DiscordEnabled, err = parseBool(lookup, "DISCORDAGENT_DISCORD_ENABLED", defaultDiscordEnabled); err != nil {
 		return Settings{}, err
 	}
-	if settings.AgentEnabled, err = parseBool(lookup, "DISCORDAGENT_AGENT_ENABLED", settings.WhatsAppEnabled); err != nil {
+	if settings.AgentEnabled, err = parseBool(lookup, "DISCORDAGENT_AGENT_ENABLED", settings.DiscordEnabled); err != nil {
 		return Settings{}, err
 	}
 	if settings.PolicyRevision, err = parseUint(lookup, "DISCORDAGENT_POLICY_REVISION", 0, 1, ^uint64(0)); err != nil {
@@ -255,7 +252,7 @@ func (snapshot Snapshot) HTTPAddress() string                { return snapshot.h
 func (snapshot Snapshot) LogLevel() string                   { return snapshot.logLevel }
 func (snapshot Snapshot) LogFormat() string                  { return snapshot.logFormat }
 func (snapshot Snapshot) ShutdownTimeout() time.Duration     { return snapshot.shutdownTimeout }
-func (snapshot Snapshot) WhatsAppEnabled() bool              { return snapshot.whatsAppEnabled }
+func (snapshot Snapshot) DiscordEnabled() bool               { return snapshot.discordEnabled }
 func (snapshot Snapshot) AgentEnabled() bool                 { return snapshot.agentEnabled }
 func (snapshot Snapshot) TenantID() identity.TenantID        { return snapshot.tenantID }
 func (snapshot Snapshot) AccountID() identity.AccountID      { return snapshot.accountID }
@@ -287,7 +284,6 @@ func (snapshot Snapshot) HistoryKeepLatest() uint32          { return snapshot.h
 func (snapshot Snapshot) HistoryMaxAge() time.Duration       { return snapshot.historyMaxAge }
 func (snapshot Snapshot) ConnectTimeout() time.Duration      { return snapshot.connectTimeout }
 func (snapshot Snapshot) SendTimeout() time.Duration         { return snapshot.sendTimeout }
-func (snapshot Snapshot) PairingOutput() string              { return snapshot.pairingOutput }
 func (snapshot Snapshot) AssistantName() string              { return snapshot.assistantName }
 func (snapshot Snapshot) ChatDefaults() ChatDefaults         { return snapshot.chatDefaults }
 
@@ -305,8 +301,11 @@ func (snapshot Snapshot) TenantDataDir() string {
 func (snapshot Snapshot) AppDatabasePath() string {
 	return filepath.Join(snapshot.TenantDataDir(), "app.db")
 }
-func (snapshot Snapshot) WhatsAppDatabasePath() string {
-	return filepath.Join(snapshot.TenantDataDir(), "whatsapp.db")
+
+// DiscordTokenPath is the linked bot's token file. Each account scope has its
+// own, so linking a different bot never mixes two bots' data.
+func (snapshot Snapshot) DiscordTokenPath() string {
+	return filepath.Join(snapshot.TenantDataDir(), "discord.token")
 }
 
 func (snapshot Snapshot) Redacted() map[string]any {
@@ -316,7 +315,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"log_level":               snapshot.logLevel,
 		"log_format":              snapshot.logFormat,
 		"shutdown_timeout":        snapshot.shutdownTimeout.String(),
-		"whatsapp_enabled":        snapshot.whatsAppEnabled,
+		"discord_enabled":         snapshot.discordEnabled,
 		"agent_enabled":           snapshot.agentEnabled,
 		"tenant_configured":       !snapshot.tenantID.IsZero(),
 		"account_configured":      !snapshot.accountID.IsZero(),
@@ -338,7 +337,6 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"max_context_bytes":       snapshot.maxContextBytes,
 		"history_keep_latest":     snapshot.historyKeepLatest,
 		"history_max_age":         snapshot.historyMaxAge.String(),
-		"pairing_output":          snapshot.pairingOutput,
 	}
 }
 
@@ -456,6 +454,30 @@ func validateOpaqueAddress(value string) error {
 		}
 	}
 	return nil
+}
+
+// validSnowflake reports whether value is a Discord ID: a positive number of
+// at most 20 digits.
+func validSnowflake(value string) bool {
+	if value == "" || len(value) > 20 || value[0] == '0' {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// validAllowlistEntry accepts a Discord channel, server, or user ID, or one
+// of the wildcards "*", "dm:*" and "server:*".
+func validAllowlistEntry(value string) bool {
+	switch value {
+	case "*", "dm:*", "server:*":
+		return true
+	}
+	return validSnowflake(value)
 }
 
 func oneOf(value string, allowed ...string) bool {

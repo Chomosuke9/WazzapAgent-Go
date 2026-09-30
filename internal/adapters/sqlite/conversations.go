@@ -354,8 +354,6 @@ func transcriptChatKind(kind uint8) string {
 		return "direct"
 	case conversation.ChatGroup:
 		return "group"
-	case conversation.ChatStatus:
-		return "status"
 	default:
 		return "chat"
 	}
@@ -375,9 +373,7 @@ func transcriptChatName(kind uint8, address, groupName, senderName string) strin
 		if name := strings.TrimSpace(groupName); name != "" {
 			return name
 		}
-		return "Group"
-	case conversation.ChatStatus:
-		return "WhatsApp Status"
+		return "Channel"
 	default:
 		return "Conversation"
 	}

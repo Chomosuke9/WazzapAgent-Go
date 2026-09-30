@@ -228,7 +228,7 @@ func initializeSettings(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "initialize settings", err)
 	}
-	_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO session_state(id, state, updated_at_ms) VALUES (1, 'unpaired', ?)", time.Now().UTC().UnixMilli())
+	_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO session_state(id, state, updated_at_ms) VALUES (1, 'unlinked', ?)", time.Now().UTC().UnixMilli())
 	if err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "initialize session state", err)
 	}

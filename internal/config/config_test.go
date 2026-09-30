@@ -32,8 +32,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MaxResponseBytes() != defaultMaxResponseBytes {
 		t.Fatalf("response byte limit = %d, want %d", cfg.MaxResponseBytes(), defaultMaxResponseBytes)
 	}
-	if cfg.WhatsAppEnabled() || cfg.AgentEnabled() {
-		t.Fatalf("explicitly disabled runtime = %v/%v, want false/false", cfg.WhatsAppEnabled(), cfg.AgentEnabled())
+	if cfg.DiscordEnabled() || cfg.AgentEnabled() {
+		t.Fatalf("explicitly disabled runtime = %v/%v, want false/false", cfg.DiscordEnabled(), cfg.AgentEnabled())
 	}
 	if cfg.PairingOutput() != defaultPairingOutput {
 		t.Fatalf("pairing output = %q, want %q", cfg.PairingOutput(), defaultPairingOutput)
@@ -81,8 +81,8 @@ func TestLoadRuntimeProcessEnvironmentOverridesDotEnv(t *testing.T) {
 
 	cfg, err := LoadRuntime(mapLookup(map[string]string{
 		"DISCORDAGENT_DISCORD_ENABLED": "false",
-		"DISCORDAGENT_HTTP_ADDRESS":     "127.0.0.1:7070",
-		"DISCORDAGENT_LOG_LEVEL":        "",
+		"DISCORDAGENT_HTTP_ADDRESS":    "127.0.0.1:7070",
+		"DISCORDAGENT_LOG_LEVEL":       "",
 	}))
 	if err != nil {
 		t.Fatalf("load runtime config: %v", err)
@@ -135,8 +135,8 @@ func TestLoadRuntimeGeneratesAndReusesStableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first runtime load: %v", err)
 	}
-	if !first.WhatsAppEnabled() || !first.AgentEnabled() {
-		t.Fatalf("default runtime state = %v/%v, want true/true", first.WhatsAppEnabled(), first.AgentEnabled())
+	if !first.DiscordEnabled() || !first.AgentEnabled() {
+		t.Fatalf("default runtime state = %v/%v, want true/true", first.DiscordEnabled(), first.AgentEnabled())
 	}
 	if first.PairingOutput() != "terminal" {
 		t.Fatalf("default pairing output = %q, want terminal", first.PairingOutput())
@@ -191,9 +191,9 @@ func TestLoadRuntimeDisabledModeDoesNotCreateIdentity(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dataDir := filepath.Join(t.TempDir(), "runtime-data")
 	cfg, err := LoadRuntime(mapLookup(map[string]string{
-		"DISCORDAGENT_DATA_DIR":         dataDir,
+		"DISCORDAGENT_DATA_DIR":        dataDir,
 		"DISCORDAGENT_DISCORD_ENABLED": "false",
-		"DISCORDAGENT_AGENT_ENABLED":    "false",
+		"DISCORDAGENT_AGENT_ENABLED":   "false",
 	}))
 	if err != nil {
 		t.Fatalf("load disabled runtime: %v", err)
@@ -252,16 +252,16 @@ func TestAgentModeFailsClosedAndLoadsValidatedPartOneConfig(t *testing.T) {
 	accountID, _ := identity.NewAccountID()
 	values := map[string]string{
 		"DISCORDAGENT_DISCORD_ENABLED": "true",
-		"DISCORDAGENT_AGENT_ENABLED":    "true",
-		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
-		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_AGENT_ENABLED":   "true",
+		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
 		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net,120363000000000001@g.us",
-		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"DISCORDAGENT_LLM_API_KEY":      "very-secret-key",
-		"DISCORDAGENT_LLM_MODEL":        "test-model",
-		"ASSISTANT_NAME":          "Vivy",
-		"DISCORDAGENT_BASE_PROMPT":      "private base prompt",
+		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002@s.whatsapp.net,120363000000000001@g.us",
+		"DISCORDAGENT_LLM_ENDPOINT":    "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":     "very-secret-key",
+		"DISCORDAGENT_LLM_MODEL":       "test-model",
+		"ASSISTANT_NAME":               "Vivy",
+		"DISCORDAGENT_BASE_PROMPT":     "private base prompt",
 	}
 	cfg, err := Load(mapLookup(values))
 	if err != nil {
@@ -289,14 +289,14 @@ func TestAgentModeRejectsEmptyOrMalformedAllowlist(t *testing.T) {
 	accountID, _ := identity.NewAccountID()
 	base := map[string]string{
 		"DISCORDAGENT_DISCORD_ENABLED": "true",
-		"DISCORDAGENT_AGENT_ENABLED":    "true",
-		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
-		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_AGENT_ENABLED":   "true",
+		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
 		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_LLM_ENDPOINT":     "https://example.invalid/chat/completions",
-		"DISCORDAGENT_LLM_API_KEY":      "secret",
-		"DISCORDAGENT_LLM_MODEL":        "model",
-		"ASSISTANT_NAME":          "Vivy",
+		"DISCORDAGENT_LLM_ENDPOINT":    "https://example.invalid/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":     "secret",
+		"DISCORDAGENT_LLM_MODEL":       "model",
+		"ASSISTANT_NAME":               "Vivy",
 	}
 	if _, err := Load(mapLookup(base)); err == nil {
 		t.Fatal("enabled mode accepted an empty allowlist")
@@ -314,38 +314,38 @@ func TestEnvRuntimeRequiresAgentSettingsEvenWithAgentOff(t *testing.T) {
 	accountID, _ := identity.NewAccountID()
 	_, err := Load(mapLookup(map[string]string{
 		"DISCORDAGENT_DISCORD_ENABLED": "true",
-		"DISCORDAGENT_AGENT_ENABLED":    "false",
-		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
-		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
-		"DISCORDAGENT_PAIRING_OUTPUT":   "terminal",
+		"DISCORDAGENT_AGENT_ENABLED":   "false",
+		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
+		"DISCORDAGENT_PAIRING_OUTPUT":  "terminal",
 	}))
 	if err == nil {
 		t.Fatal("WhatsApp runtime accepted missing agent settings")
 	}
 }
 
-func TestWhatsAppRuntimeCanPairWhileAgentKillSwitchIsOff(t *testing.T) {
+func TestDiscordRuntimeCanLinkWhileAgentKillSwitchIsOff(t *testing.T) {
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
 	cfg, err := Load(mapLookup(map[string]string{
 		"DISCORDAGENT_DISCORD_ENABLED": "true",
-		"DISCORDAGENT_AGENT_ENABLED":    "false",
-		"DISCORDAGENT_TENANT_ID":        tenantID.String(),
-		"DISCORDAGENT_ACCOUNT_ID":       accountID.String(),
+		"DISCORDAGENT_AGENT_ENABLED":   "false",
+		"DISCORDAGENT_TENANT_ID":       tenantID.String(),
+		"DISCORDAGENT_ACCOUNT_ID":      accountID.String(),
 		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
-		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"DISCORDAGENT_LLM_API_KEY":      "secret",
-		"DISCORDAGENT_LLM_MODEL":        "test-model",
-		"ASSISTANT_NAME":          "Vivy",
-		"DISCORDAGENT_PAIRING_OUTPUT":   "terminal",
-		"DISCORDAGENT_BASE_PROMPT":      "test prompt",
+		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":    "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":     "secret",
+		"DISCORDAGENT_LLM_MODEL":       "test-model",
+		"ASSISTANT_NAME":               "Vivy",
+		"DISCORDAGENT_PAIRING_OUTPUT":  "terminal",
+		"DISCORDAGENT_BASE_PROMPT":     "test prompt",
 	}))
 	if err != nil {
 		t.Fatalf("load pairing-only runtime: %v", err)
 	}
-	if !cfg.WhatsAppEnabled() || cfg.AgentEnabled() {
-		t.Fatalf("runtime/kill-switch state = %v/%v", cfg.WhatsAppEnabled(), cfg.AgentEnabled())
+	if !cfg.DiscordEnabled() || cfg.AgentEnabled() {
+		t.Fatalf("runtime/kill-switch state = %v/%v", cfg.DiscordEnabled(), cfg.AgentEnabled())
 	}
 	if _, err := Load(mapLookup(map[string]string{"DISCORDAGENT_AGENT_ENABLED": "true"})); err == nil {
 		t.Fatal("agent was enabled without the WhatsApp runtime")
@@ -381,9 +381,9 @@ func TestSnapshotRedactsSecret(t *testing.T) {
 	secret := "secret-value-that-must-not-leak"
 	langSmithSecret := "ls-secret-value-that-must-not-leak"
 	cfg, err := Load(mapLookup(map[string]string{
-		"DISCORDAGENT_DISCORD_ENABLED": "false",
+		"DISCORDAGENT_DISCORD_ENABLED":  "false",
 		"DISCORDAGENT_LLM_API_KEY":      secret,
-		"LANGSMITH_API_KEY":       langSmithSecret,
+		"LANGSMITH_API_KEY":             langSmithSecret,
 		"DISCORDAGENT_SHUTDOWN_TIMEOUT": "12s",
 	}))
 	if err != nil {
@@ -440,12 +440,12 @@ func TestOptionalFallbackRequiresCompletePairAndRedactsItsSecret(t *testing.T) {
 func enabledRuntimeValues(dataDir string) map[string]string {
 	return map[string]string{
 		"DISCORDAGENT_DATA_DIR":       dataDir,
-		"DISCORDAGENT_OWNER_ID":      "15550000001@s.whatsapp.net",
+		"DISCORDAGENT_OWNER_ID":       "15550000001@s.whatsapp.net",
 		"DISCORDAGENT_CHAT_ALLOWLIST": "15550000002@s.whatsapp.net",
 		"DISCORDAGENT_LLM_ENDPOINT":   "https://llm.example.invalid/v1/chat/completions",
 		"DISCORDAGENT_LLM_API_KEY":    "very-secret-key",
 		"DISCORDAGENT_LLM_MODEL":      "test-model",
-		"ASSISTANT_NAME":        "Vivy",
+		"ASSISTANT_NAME":              "Vivy",
 		"DISCORDAGENT_BASE_PROMPT":    "test prompt",
 	}
 }

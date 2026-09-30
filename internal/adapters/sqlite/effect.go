@@ -331,7 +331,7 @@ type effectQuerier interface {
 type effectPayload struct {
 	Principal   policy.PrincipalKind `json:"principal"`
 	Participant string               `json:"participant,omitempty"`
-	LID         string               `json:"lid,omitempty"`
+	UserID      string               `json:"user_id,omitempty"`
 	Invocation  string               `json:"invocation,omitempty"`
 	Emoji       string               `json:"emoji,omitempty"`
 	Command     string               `json:"command,omitempty"`
@@ -344,7 +344,7 @@ func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
 	payload := effectPayload{Principal: request.Principal.Kind}
 	switch request.Principal.Kind {
 	case policy.PrincipalHuman:
-		payload.Participant, payload.LID = request.Principal.ParticipantID.String(), request.Principal.LID.String()
+		payload.Participant, payload.UserID = request.Principal.ParticipantID.String(), request.Principal.UserID.String()
 	case policy.PrincipalModel, policy.PrincipalRecovery:
 		payload.Invocation = request.Principal.InvocationID.String()
 	}
@@ -379,7 +379,7 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 	case policy.PrincipalHuman:
 		principal.ParticipantID, err = identity.ParseParticipantID(payload.Participant)
 		if err == nil {
-			principal.LID, err = identity.ParseLID(payload.LID)
+			principal.UserID, err = identity.ParseUserID(payload.UserID)
 		}
 	case policy.PrincipalModel, policy.PrincipalRecovery:
 		principal.InvocationID, err = identity.ParseInvocationID(payload.Invocation)

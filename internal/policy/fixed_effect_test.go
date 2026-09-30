@@ -136,12 +136,12 @@ func fixedInvocationMessage(t *testing.T, key agent.Key, kind conversation.ChatK
 	causationID, _ := identity.NewCausationID()
 	participantID, _ := identity.NewParticipantID()
 	senderRef, _ := identity.NewSenderRef()
-	lid, _ := identity.ParseLID("10000000009@lid")
+	lid, _ := identity.ParseUserID("10000000009@lid")
 	now := time.Now().UTC()
 	return conversation.IncomingMessage{
 		ID: messageID, InvocationID: invocationID, CausationID: causationID,
 		TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
-		SenderID: participantID, SenderRef: senderRef, SenderLID: lid,
+		SenderID: participantID, SenderRef: senderRef, SenderUserID: lid,
 		SenderName: "Tester", ChatKind: kind, Text: text, Allowlisted: true,
 		OccurredAt: now.Add(-time.Second), ReceivedAt: now,
 	}

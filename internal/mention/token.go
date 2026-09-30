@@ -16,7 +16,7 @@ const (
 )
 
 // ValidToken accepts the raw form produced by WhatsApp message text: an at
-// sign followed by the numeric user part of a PN or LID JID.
+// sign followed by the numeric user part of a PN or UserID JID.
 func ValidToken(token string) bool {
 	if len(token) < 2 || len(token) > MaxTokenDigits+1 || token[0] != '@' {
 		return false

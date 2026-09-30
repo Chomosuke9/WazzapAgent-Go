@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { cancelWhatsAppBroadcastSchedule, getWhatsAppBroadcastGroups, getWhatsAppBroadcastSchedules, normalizeWhatsAppBroadcastPayload, scheduleWhatsAppBroadcast, sendWhatsAppBroadcast, type WhatsAppBroadcastGroupDTO, type WhatsAppBroadcastGroupResultDTO, type WhatsAppBroadcastScheduleDTO } from "../services/backend";
+import { cancelDiscordBroadcastSchedule, getDiscordBroadcastGroups, getDiscordBroadcastSchedules, normalizeDiscordBroadcastPayload, scheduleDiscordBroadcast, sendDiscordBroadcast, type DiscordBroadcastGroupDTO, type DiscordBroadcastGroupResultDTO, type DiscordBroadcastScheduleDTO } from "../services/backend";
 
 type MessageFormat = "text" | "payload";
 
@@ -40,7 +40,7 @@ function scheduleStatus(status: string): string {
 }
 
 export function BroadcastPage() {
-  const [groups, setGroups] = useState<WhatsAppBroadcastGroupDTO[]>([]);
+  const [groups, setGroups] = useState<DiscordBroadcastGroupDTO[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [format, setFormat] = useState<MessageFormat>("text");
   const [text, setText] = useState("");
@@ -59,8 +59,8 @@ export function BroadcastPage() {
   const [cancellingSchedule, setCancellingSchedule] = useState("");
   const [error, setError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
-  const [results, setResults] = useState<WhatsAppBroadcastGroupResultDTO[]>([]);
-  const [schedules, setSchedules] = useState<WhatsAppBroadcastScheduleDTO[]>([]);
+  const [results, setResults] = useState<DiscordBroadcastGroupResultDTO[]>([]);
+  const [schedules, setSchedules] = useState<DiscordBroadcastScheduleDTO[]>([]);
 
   const refreshGroups = useCallback(async () => {
     setLoading(true);
@@ -69,7 +69,7 @@ export function BroadcastPage() {
     setSelected(new Set());
     setResults([]);
     try {
-      setGroups(await getWhatsAppBroadcastGroups());
+      setGroups(await getDiscordBroadcastGroups());
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Could not load WhatsApp groups.");
     } finally {
@@ -81,7 +81,7 @@ export function BroadcastPage() {
     setLoadingSchedules(true);
     setScheduleError("");
     try {
-      setSchedules(await getWhatsAppBroadcastSchedules());
+      setSchedules(await getDiscordBroadcastSchedules());
     } catch (reason: unknown) {
       setScheduleError(reason instanceof Error ? reason.message : "Could not load scheduled broadcasts.");
     } finally {
@@ -122,7 +122,7 @@ export function BroadcastPage() {
     setPayloadNormalizationMessage("");
     setPayloadNormalizationFailed(false);
     try {
-      const normalized = await normalizeWhatsAppBroadcastPayload(payload);
+      const normalized = await normalizeDiscordBroadcastPayload(payload);
       setPayload(normalized);
       setResults([]);
       setPayloadNormalizationMessage("Normalized and validated as a WhatsApp message payload.");
@@ -154,7 +154,7 @@ export function BroadcastPage() {
     setError("");
     setResults([]);
     try {
-      const sent = await sendWhatsAppBroadcast({ groupIDs: selectedIDs, format, payload: messageValue, batchSize, batchDelaySeconds });
+      const sent = await sendDiscordBroadcast({ groupIDs: selectedIDs, format, payload: messageValue, batchSize, batchDelaySeconds });
       setResults(sent);
       void refreshSchedules();
     } catch (reason: unknown) {
@@ -180,7 +180,7 @@ export function BroadcastPage() {
     setError("");
     setScheduleError("");
     try {
-      await scheduleWhatsAppBroadcast({ groupIDs: selectedIDs, format, payload: messageValue, batchSize, batchDelaySeconds, scheduledAt: scheduledAt.toISOString() });
+      await scheduleDiscordBroadcast({ groupIDs: selectedIDs, format, payload: messageValue, batchSize, batchDelaySeconds, scheduledAt: scheduledAt.toISOString() });
       await refreshSchedules();
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Could not schedule the broadcast.");
@@ -194,7 +194,7 @@ export function BroadcastPage() {
     setCancellingSchedule(id);
     setScheduleError("");
     try {
-      await cancelWhatsAppBroadcastSchedule(id);
+      await cancelDiscordBroadcastSchedule(id);
       await refreshSchedules();
     } catch (reason: unknown) {
       setScheduleError(reason instanceof Error ? reason.message : "Could not cancel this schedule.");

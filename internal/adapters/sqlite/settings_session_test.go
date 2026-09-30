@@ -75,7 +75,7 @@ func TestSessionBindingTransitionsPersistWithoutChangingSettingsRevision(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revoked.State != control.SessionRevoked || revoked.ActiveScope != scope || revoked.WhatsAppAccountID != "" {
+	if revoked.State != control.SessionRevoked || revoked.ActiveScope != scope || revoked.DiscordBotID != "" {
 		t.Fatalf("reopened revoked binding = %+v", revoked)
 	}
 	if settingsBefore.Revision != settingsAfter.Revision {

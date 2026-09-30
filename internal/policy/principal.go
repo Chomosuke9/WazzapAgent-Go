@@ -27,7 +27,7 @@ type Principal struct {
 	AccountID     identity.AccountID
 	ChatID        identity.ChatID
 	ParticipantID identity.ParticipantID
-	LID           identity.LID
+	UserID        identity.UserID
 	InvocationID  identity.InvocationID
 }
 
@@ -37,7 +37,7 @@ func HumanPrincipal(message conversation.IncomingMessage) (Principal, error) {
 	}
 	principal := Principal{
 		Kind: PrincipalHuman, TenantID: message.TenantID, AccountID: message.AccountID, ChatID: message.ChatID,
-		ParticipantID: message.SenderID, LID: message.SenderLID,
+		ParticipantID: message.SenderID, UserID: message.SenderUserID,
 	}
 	return principal, principal.Validate()
 }
@@ -74,15 +74,15 @@ func (principal Principal) Validate() error {
 	}
 	switch principal.Kind {
 	case PrincipalHuman:
-		if principal.ParticipantID.IsZero() || principal.LID.IsZero() || !principal.InvocationID.IsZero() {
-			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("human principal requires participant and LID only"))
+		if principal.ParticipantID.IsZero() || principal.UserID.IsZero() || !principal.InvocationID.IsZero() {
+			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("human principal requires participant and user ID only"))
 		}
 	case PrincipalModel, PrincipalRecovery:
-		if principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.LID.IsZero() {
+		if principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.UserID.IsZero() {
 			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("model and recovery principals require invocation only"))
 		}
 	case PrincipalSystem:
-		if !principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.LID.IsZero() {
+		if !principal.InvocationID.IsZero() || !principal.ParticipantID.IsZero() || !principal.UserID.IsZero() {
 			return agent.NewError(agent.ErrorInvalidArgument, "validate principal", errors.New("system principal must not carry actor identity"))
 		}
 	default:
@@ -101,18 +101,15 @@ type HumanAccess struct {
 }
 
 func (access HumanAccess) Validate() error {
-	if access.ChatKind != conversation.ChatDirect && access.ChatKind != conversation.ChatGroup && access.ChatKind != conversation.ChatStatus {
+	if access.ChatKind != conversation.ChatDirect && access.ChatKind != conversation.ChatGroup {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate human access", errors.New("chat kind is invalid"))
-	}
-	if access.ChatKind == conversation.ChatStatus && (access.Allowlisted || access.ConfiguredOwner) {
-		return agent.NewError(agent.ErrorIntegrityFailure, "validate human access", errors.New("status chat cannot have access grants"))
 	}
 	return nil
 }
 
 // HumanAccessReader is implemented by the application persistence boundary.
 // It must look up the principal using both its internal participant ID and
-// verified LID, so a stale surrogate alone cannot gain command authority.
+// verified UserID, so a stale surrogate alone cannot gain command authority.
 type HumanAccessReader interface {
 	ReadHumanAccess(context.Context, Principal) (HumanAccess, error)
 }

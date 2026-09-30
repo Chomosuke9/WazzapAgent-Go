@@ -66,7 +66,7 @@ func (gate *FixedGate) SetEnabled(enabled bool) { gate.enabled.Store(enabled) }
 func (gate *FixedGate) Enabled() bool           { return gate.enabled.Load() }
 
 func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) error {
-	if !gate.enabled.Load() || message.FromMe || message.ChatKind == conversation.ChatStatus ||
+	if !gate.enabled.Load() || message.FromMe ||
 		(message.ChatKind == conversation.ChatGroup && !gate.triggered(ctx, message, snapshot)) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize invocation", errors.New("message is not eligible"))
 	}
@@ -145,7 +145,7 @@ func (gate *FixedGate) CommandPermissionFacts(
 		if err := access.Validate(); err != nil {
 			return PermissionFacts{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve human command permission facts", err)
 		}
-		if !access.Allowlisted || access.ChatKind == conversation.ChatStatus {
+		if !access.Allowlisted {
 			return PermissionFacts{}, agent.NewError(agent.ErrorPermissionDenied, "resolve human command permission facts", errors.New("current chat policy denies principal"))
 		}
 		authority, err := gate.authority.ReadChatAuthority(ctx, principal)
@@ -320,7 +320,7 @@ func (gate *FixedGate) authorizeHuman(ctx context.Context, principal Principal, 
 	if err := access.Validate(); err != nil {
 		return err
 	}
-	if !access.Allowlisted || access.ChatKind == conversation.ChatStatus || (requiresOwner && !access.ConfiguredOwner) {
+	if !access.Allowlisted || (requiresOwner && !access.ConfiguredOwner) {
 		return agent.NewError(agent.ErrorPermissionDenied, "authorize human access", errors.New("current chat policy denies principal"))
 	}
 	return nil

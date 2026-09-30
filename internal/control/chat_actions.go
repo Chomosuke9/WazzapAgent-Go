@@ -19,7 +19,7 @@ const (
 )
 
 // AgentGroupMember contains a safe, short-lived group member handle for the
-// local UI. Provider addresses never cross the WhatsApp adapter boundary.
+// local UI. Provider addresses never cross the Discord adapter boundary.
 type AgentGroupMember struct {
 	ID           string
 	Name         string
@@ -112,10 +112,10 @@ type ManagedAgentChatActions interface {
 	AddChatTask(context.Context, string, AgentChatTaskInput) (AgentChatTask, error)
 	DeleteChatTask(ctx context.Context, chatID, taskID string, daily bool) error
 	ListBroadcastGroups(context.Context) ([]AgentBroadcastGroup, error)
-	BroadcastWhatsAppGroups(context.Context, []string, string, string, int, int) ([]AgentBroadcastGroupResult, error)
-	ScheduleWhatsAppBroadcast(context.Context, []string, string, string, int, int, time.Time) (AgentBroadcastSchedule, error)
-	ListWhatsAppBroadcastSchedules(context.Context) ([]AgentBroadcastSchedule, error)
-	CancelWhatsAppBroadcastSchedule(context.Context, string) error
+	BroadcastDiscordGroups(context.Context, []string, string, string, int, int) ([]AgentBroadcastGroupResult, error)
+	ScheduleDiscordBroadcast(context.Context, []string, string, string, int, int, time.Time) (AgentBroadcastSchedule, error)
+	ListDiscordBroadcastSchedules(context.Context) ([]AgentBroadcastSchedule, error)
+	CancelDiscordBroadcastSchedule(context.Context, string) error
 }
 
 // WithChatActions runs a UI action against the running bot. Actions do not
@@ -137,7 +137,7 @@ func (controller *AgentController) WithChatActions(ctx context.Context, action f
 		return agent.NewError(agent.ErrorNotReady, "use Agent chat actions", errors.New("Agent controller is closing"))
 	}
 	if run == nil || state != BotRunning {
-		return agent.NewError(agent.ErrorNotReady, "use Agent chat actions", errors.New("start the Agent before managing WhatsApp chats"))
+		return agent.NewError(agent.ErrorNotReady, "use Agent chat actions", errors.New("start the Agent before managing Discord chats"))
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

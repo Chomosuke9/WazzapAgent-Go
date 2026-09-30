@@ -564,7 +564,7 @@ func TestKnownMalformedCommandDoesNotFallThroughToModel(t *testing.T) {
 	}
 }
 
-func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
+func TestCommandAuthorizationRereadsDurableUserIDBoundOwner(t *testing.T) {
 	fixture := newFixture(t)
 	candidate := fixture.candidate("current-owner-only", "15550000018@s.whatsapp.net", conversation.ChatDirect, "/reset")
 	claimed, err := fixture.store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -572,7 +572,7 @@ func TestCommandAuthorizationRereadsDurableLIDBoundOwner(t *testing.T) {
 		t.Fatalf("claim command: %v", err)
 	}
 	// The message snapshot is deliberately forged after the durable identity
-	// boundary. Authorization must consult the participant's current LID-bound
+	// boundary. Authorization must consult the participant's current UserID-bound
 	// policy record instead of this transient field.
 	claimed.Message.Owner = true
 	if err := fixture.handler.Resume(context.Background(), claimed.Message); err != nil {
@@ -1066,10 +1066,10 @@ func newFixtureAtPath(
 
 func (fixture *fixture) candidate(id, chat string, kind conversation.ChatKind, text string) conversation.IncomingCandidate {
 	now := time.Now().UTC()
-	lid, _ := identity.ParseLID("10000000001@lid")
+	lid, _ := identity.ParseUserID("10000000001@lid")
 	return conversation.IncomingCandidate{
 		TenantID: fixture.tenantID, AccountID: fixture.accountID,
-		ProviderMessageID: id, ProviderChatAddress: chat, SenderLID: lid, ProviderSenderPhone: "15550000001@s.whatsapp.net",
+		ProviderMessageID: id, ProviderChatAddress: chat, SenderUserID: lid, ProviderSenderPhone: "15550000001@s.whatsapp.net",
 		SenderName: "Tester", ChatKind: kind, Text: text, Allowlisted: true,
 		OccurredAt: now.Add(-time.Second), ReceivedAt: now,
 	}

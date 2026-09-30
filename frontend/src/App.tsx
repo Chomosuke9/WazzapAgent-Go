@@ -3,7 +3,7 @@ import { AppLayout, type PageId } from "./layouts/AppLayout";
 import { AppDataPage } from "./pages/AppDataPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { WhatsAppPage } from "./pages/WhatsAppPage";
+import { DiscordPage } from "./pages/DiscordPage";
 import { LogsPage } from "./pages/LogsPage";
 import { ChatPage } from "./pages/ChatPage";
 import { BroadcastPage } from "./pages/BroadcastPage";
@@ -11,6 +11,6 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 
 export function App() {
   const [page, setPage] = useState<PageId>("overview");
-  const current = page === "overview" ? <OverviewPage onNavigate={setPage} /> : page === "analytics" ? <AnalyticsPage /> : page === "whatsapp" ? <WhatsAppPage /> : page === "broadcast" ? <BroadcastPage /> : page === "chat" ? <ChatPage /> : page === "settings" ? <SettingsPage /> : page === "logs" ? <LogsPage /> : <AppDataPage />;
+  const current = page === "overview" ? <OverviewPage onNavigate={setPage} /> : page === "analytics" ? <AnalyticsPage /> : page === "whatsapp" ? <DiscordPage /> : page === "broadcast" ? <BroadcastPage /> : page === "chat" ? <ChatPage /> : page === "settings" ? <SettingsPage /> : page === "logs" ? <LogsPage /> : <AppDataPage />;
   return <AppLayout page={page} onNavigate={setPage}>{current}</AppLayout>;
 }

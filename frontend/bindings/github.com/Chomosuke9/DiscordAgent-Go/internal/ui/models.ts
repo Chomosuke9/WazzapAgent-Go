@@ -6,11 +6,11 @@
 import * as config$0 from "../config/models.js";
 
 /**
- * AddWhatsAppChatTaskRequestDTO adds a task that runs once at RunAt (RFC
+ * AddDiscordChatTaskRequestDTO adds a task that runs once at RunAt (RFC
  * 3339, within 24 hours) or, when Daily, every day at Time ("HH:MM" in the
  * bot's time zone).
  */
-export interface AddWhatsAppChatTaskRequestDTO {
+export interface AddDiscordChatTaskRequestDTO {
     "chatID": string;
     "prompt": string;
     "daily": boolean;
@@ -23,7 +23,7 @@ export interface AgentRuntimeStatusDTO {
     "savedRevision": string;
     "activeRevision": string;
     "pendingChanges": boolean;
-    "whatsAppState": string;
+    "discordState": string;
     "errorCode"?: string;
     "operationID"?: string;
 }
@@ -41,7 +41,7 @@ export interface ApplyAgentSettingsRequestDTO {
     "expectedRevision": string;
 }
 
-export interface BeginWhatsAppPairingRequestDTO {
+export interface BeginDiscordLinkRequestDTO {
     "method": string;
     "phone"?: string;
 }
@@ -71,12 +71,12 @@ export interface ReadinessIssueDTO {
     "message": string;
 }
 
-export interface ResetWhatsAppChatSettingsRequestDTO {
+export interface ResetDiscordChatSettingsRequestDTO {
     "expectedSettingsRevision": string;
     "category": string;
 }
 
-export interface ResetWhatsAppChatSettingsResultDTO {
+export interface ResetDiscordChatSettingsResultDTO {
     "changedChats": number;
 }
 
@@ -91,7 +91,7 @@ export interface SaveSettingsResultDTO {
     "pendingChanges": boolean;
 }
 
-export interface SaveWhatsAppChatSettingsRequestDTO {
+export interface SaveDiscordChatSettingsRequestDTO {
     "chatID": string;
     "expectedVersion": string;
     "moderationLevel": number;
@@ -106,7 +106,7 @@ export interface SaveWhatsAppChatSettingsRequestDTO {
     "triggerSmartRules": string;
 }
 
-export interface ScheduleWhatsAppBroadcastRequestDTO {
+export interface ScheduleDiscordBroadcastRequestDTO {
     "groupIDs": string[] | null;
     "format": string;
     "payload": string;
@@ -127,7 +127,7 @@ export interface SecretUpdateDTO {
     "value"?: string;
 }
 
-export interface SendWhatsAppBroadcastRequestDTO {
+export interface SendDiscordBroadcastRequestDTO {
     "groupIDs": string[] | null;
     "format": string;
     "payload": string;
@@ -156,7 +156,7 @@ export interface SettingsValuesDTO {
     "assistantName": string;
     "basePrompt": string;
     "chatDefaults": config$0.ChatDefaults;
-    "whatsAppEnabled": boolean;
+    "discordEnabled": boolean;
     "agentEnabled": boolean;
     "ownerJID": string;
     "chatAllowlist": string[] | null;
@@ -221,35 +221,35 @@ export interface ValidationResultDTO {
     "agentReadiness": ReadinessIssueDTO[] | null;
 }
 
-export interface WhatsAppBroadcastGroupDTO {
+export interface DiscordBroadcastGroupDTO {
     "id": string;
     "name": string;
 }
 
-export interface WhatsAppBroadcastGroupResultDTO {
+export interface DiscordBroadcastGroupResultDTO {
     "id": string;
     "name": string;
     "sent": boolean;
     "errorCode": string;
 }
 
-export interface WhatsAppBroadcastScheduleDTO {
+export interface DiscordBroadcastScheduleDTO {
     "id": string;
     "scheduledAt": string;
     "batchSize": number;
     "batchDelaySeconds": number;
     "groupCount": number;
     "status": string;
-    "results": WhatsAppBroadcastScheduleResultDTO[] | null;
+    "results": DiscordBroadcastScheduleResultDTO[] | null;
 }
 
-export interface WhatsAppBroadcastScheduleResultDTO {
+export interface DiscordBroadcastScheduleResultDTO {
     "name": string;
     "sent": boolean;
     "errorCode": string;
 }
 
-export interface WhatsAppChatSettingsDTO {
+export interface DiscordChatSettingsDTO {
     "version": string;
     "moderationLevel": number;
     "promptOverrideMode": string;
@@ -264,9 +264,9 @@ export interface WhatsAppChatSettingsDTO {
 }
 
 /**
- * WhatsAppChatTaskDTO is a chat's scheduled (one-off) or daily task.
+ * DiscordChatTaskDTO is a chat's scheduled (one-off) or daily task.
  */
-export interface WhatsAppChatTaskDTO {
+export interface DiscordChatTaskDTO {
     "id": string;
     "prompt": string;
 
@@ -277,7 +277,7 @@ export interface WhatsAppChatTaskDTO {
     "daily": boolean;
 }
 
-export interface WhatsAppConversationDTO {
+export interface DiscordConversationDTO {
     "id": string;
     "kind": string;
     "name": string;
@@ -285,16 +285,16 @@ export interface WhatsAppConversationDTO {
     "lastMessageAt": string;
     "lastFromBot": boolean;
     "messageCount": number;
-    "lastMessageMentions": WhatsAppMentionDTO[] | null;
+    "lastMessageMentions": DiscordMentionDTO[] | null;
 }
 
-export interface WhatsAppDailyUsageDTO {
+export interface DiscordDailyUsageDTO {
     "date": string;
     "messages": number;
     "invocations": number;
 }
 
-export interface WhatsAppGroupMemberDTO {
+export interface DiscordGroupMemberDTO {
     "id": string;
     "name": string;
     "isAdmin": boolean;
@@ -302,12 +302,12 @@ export interface WhatsAppGroupMemberDTO {
     "canKick": boolean;
 }
 
-export interface WhatsAppGroupMembersDTO {
+export interface DiscordGroupMembersDTO {
     "botIsAdmin": boolean;
-    "members": WhatsAppGroupMemberDTO[] | null;
+    "members": DiscordGroupMemberDTO[] | null;
 }
 
-export interface WhatsAppGroupUsageDTO {
+export interface DiscordGroupUsageDTO {
     "name": string;
     "messages": number;
     "messagesInPeriod": number;
@@ -315,14 +315,14 @@ export interface WhatsAppGroupUsageDTO {
     "invocationsInPeriod": number;
 }
 
-export interface WhatsAppMentionDTO {
+export interface DiscordMentionDTO {
     "token": string;
     "senderRef": string;
     "displayName": string;
     "bot": boolean;
 }
 
-export interface WhatsAppMessageDTO {
+export interface DiscordMessageDTO {
     "id": string;
     "role": string;
     "sender": string;
@@ -333,11 +333,11 @@ export interface WhatsAppMessageDTO {
     "createdAt": string;
     "delivery": string;
     "deleted": boolean;
-    "mentions": WhatsAppMentionDTO[] | null;
-    "quote": WhatsAppQuoteDTO | null;
+    "mentions": DiscordMentionDTO[] | null;
+    "quote": DiscordQuoteDTO | null;
 }
 
-export interface WhatsAppPairingDTO {
+export interface DiscordPairingDTO {
     "method": string;
     "code"?: string;
     "qrCodeDataURL"?: string;
@@ -345,33 +345,33 @@ export interface WhatsAppPairingDTO {
     "expiresAt": string;
 }
 
-export interface WhatsAppQuoteDTO {
+export interface DiscordQuoteDTO {
     "messageID": string;
     "role": string;
     "sender": string;
     "content": string;
     "isAdmin": boolean;
     "isSuperAdmin": boolean;
-    "mentions": WhatsAppMentionDTO[] | null;
+    "mentions": DiscordMentionDTO[] | null;
 }
 
-export interface WhatsAppSessionOperationDTO {
+export interface DiscordSessionOperationDTO {
     "operationID": string;
-    "status": WhatsAppSessionStatusDTO;
+    "status": DiscordSessionStatusDTO;
 }
 
-export interface WhatsAppSessionStatusDTO {
+export interface DiscordSessionStatusDTO {
     "bindingState": string;
     "runtimeState": string;
     "sessionPresent": boolean;
     "agentActive": boolean;
-    "whatsAppAccountID"?: string;
+    "discordBotID"?: string;
     "operationID"?: string;
-    "pairing"?: WhatsAppPairingDTO | null;
+    "pairing"?: DiscordPairingDTO | null;
     "errorCode"?: string;
 }
 
-export interface WhatsAppUsageDTO {
+export interface DiscordUsageDTO {
     "totalMessages": number;
     "totalInvocations": number;
     "totalChats": number;
@@ -382,7 +382,7 @@ export interface WhatsAppUsageDTO {
     "activeGroupsInPeriod": number;
     "periodStart": string;
     "periodDays": number;
-    "groups": WhatsAppGroupUsageDTO[] | null;
-    "invocationGroups": WhatsAppGroupUsageDTO[] | null;
-    "dailyActivity": WhatsAppDailyUsageDTO[] | null;
+    "groups": DiscordGroupUsageDTO[] | null;
+    "invocationGroups": DiscordGroupUsageDTO[] | null;
+    "dailyActivity": DiscordDailyUsageDTO[] | null;
 }

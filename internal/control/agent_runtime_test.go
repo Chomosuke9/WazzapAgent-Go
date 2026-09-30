@@ -18,7 +18,7 @@ func (repository *agentTestBindings) LoadSessionBinding(context.Context) (Sessio
 	return repository.binding, nil
 }
 func (*agentTestBindings) BeginSessionPairing(context.Context, SessionScope) error { return nil }
-func (*agentTestBindings) MarkSessionPaired(context.Context, SessionScope, string) error {
+func (*agentTestBindings) MarkSessionLinked(context.Context, SessionScope, string) error {
 	return nil
 }
 func (*agentTestBindings) AbortSessionPairing(context.Context, SessionScope) error { return nil }
@@ -99,20 +99,20 @@ func (runtime *agentTestManagedRuntime) Snapshot() AgentRuntimeSnapshot {
 	if runtime.started.Load() {
 		state = "open"
 	}
-	return AgentRuntimeSnapshot{WhatsAppState: state}
+	return AgentRuntimeSnapshot{DiscordState: state}
 }
 
 func validAgentSettings() config.Settings {
 	settings := config.DefaultSettings()
 	settings.AssistantName = "Test Assistant"
 	settings.BasePrompt = "Answer messages helpfully."
-	settings.OwnerJID = "628123456789@s.whatsapp.net"
+	settings.OwnerID = "628123456789@s.whatsapp.net"
 	settings.ChatAllowlist = []string{"628123456789@s.whatsapp.net"}
 	settings.LLMEndpoint = "https://llm.example/v1"
 	settings.LLMAPIKey = "synthetic-test-key"
 	settings.LLMModel = "test-model"
 	settings.AgentEnabled = true
-	settings.WhatsAppEnabled = true
+	settings.DiscordEnabled = true
 	return settings
 }
 
@@ -131,7 +131,7 @@ func newAgentControllerForTest(t *testing.T, settings config.Settings, bindingSt
 	bindings := &agentTestBindings{binding: SessionBinding{
 		State: bindingState, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true,
 	}}
-	sessions := &agentTestSessions{status: SessionStatus{BindingState: bindingState, RuntimeState: RuntimeConnected, SessionPresent: bindingState == SessionPaired}}
+	sessions := &agentTestSessions{status: SessionStatus{BindingState: bindingState, RuntimeState: RuntimeConnected, SessionPresent: bindingState == SessionLinked}}
 	factory := &agentTestRuntimeFactory{}
 	controller, err := NewAgentController(repository, bindings, sessions, factory, t.TempDir())
 	if err != nil {
@@ -164,12 +164,12 @@ func waitAgentRuntimeState(t *testing.T, controller *AgentController, state Agen
 }
 
 func TestAgentControllerStartsExistingRuntimeAndStopsSessionOnlyOwner(t *testing.T) {
-	controller, _, sessions, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, _, sessions, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	status, err := controller.Start(context.Background())
 	if err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}
-	if status.State != BotRunning || status.ActiveRevision != 1 || status.PendingChanges || status.WhatsAppState != "open" {
+	if status.State != BotRunning || status.ActiveRevision != 1 || status.PendingChanges || status.DiscordState != "open" {
 		t.Fatalf("unexpected started status: %#v", status)
 	}
 	if len(factory.snapshots) != 1 || factory.snapshots[0].TenantID().IsZero() || factory.snapshots[0].AccountID().IsZero() {
@@ -195,7 +195,7 @@ func TestAgentControllerStartsExistingRuntimeAndStopsSessionOnlyOwner(t *testing
 }
 
 func TestAgentControllerApplyRestartsOnlyActiveRuntimeAtExpectedRevision(t *testing.T) {
-	controller, repository, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, repository, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	if _, err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestAgentControllerApplyRestartsOnlyActiveRuntimeAtExpectedRevision(t *test
 }
 
 func TestAgentControllerDoesNotStartWhenApplyingWhileStopped(t *testing.T) {
-	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	status, err := controller.ApplySettings(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("apply while stopped: %v", err)
@@ -236,7 +236,7 @@ func TestAgentControllerDoesNotStartWhenApplyingWhileStopped(t *testing.T) {
 }
 
 func TestAgentControllerApplyDisablingAgentStopsWithoutLaunchingAnotherRuntime(t *testing.T) {
-	controller, repository, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, repository, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	if _, err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}
@@ -266,21 +266,21 @@ func TestAgentControllerRequiresPairedSessionAndCompleteSettings(t *testing.T) {
 
 	settings := validAgentSettings()
 	settings.AgentEnabled = false
-	controller, _, _, _ = newAgentControllerForTest(t, settings, SessionPaired)
+	controller, _, _, _ = newAgentControllerForTest(t, settings, SessionLinked)
 	if _, err := controller.Start(context.Background()); !agent.IsCode(err, agent.ErrorNotReady) {
 		t.Fatalf("disabled Agent start error = %v, want not ready", err)
 	}
 
 	settings = validAgentSettings()
 	settings.LLMAPIKey = ""
-	controller, _, _, _ = newAgentControllerForTest(t, settings, SessionPaired)
+	controller, _, _, _ = newAgentControllerForTest(t, settings, SessionLinked)
 	if _, err := controller.Start(context.Background()); !agent.IsCode(err, agent.ErrorInvalidArgument) {
 		t.Fatalf("incomplete settings start error = %v, want invalid argument", err)
 	}
 }
 
 func TestAgentControllerShutdownClosesRuntime(t *testing.T) {
-	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	if _, err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestAgentControllerShutdownClosesRuntime(t *testing.T) {
 }
 
 func TestAgentControllerSerializesSessionMutationsWithRuntimeOwnership(t *testing.T) {
-	controller, _, _, _ := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, _, _, _ := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	if _, err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestAgentControllerSerializesSessionMutationsWithRuntimeOwnership(t *testin
 }
 
 func TestAgentControllerStopCancelsLongChatActionInsteadOfWaitingForIt(t *testing.T) {
-	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionPaired)
+	controller, _, _, factory := newAgentControllerForTest(t, validAgentSettings(), SessionLinked)
 	if _, err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("start Agent: %v", err)
 	}

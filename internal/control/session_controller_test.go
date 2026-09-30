@@ -35,7 +35,7 @@ func (repository *sessionTestBindings) LoadSessionBinding(context.Context) (Sess
 func (repository *sessionTestBindings) BeginSessionPairing(_ context.Context, scope SessionScope) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	if repository.binding.State == SessionPaired || repository.binding.HasPendingScope {
+	if repository.binding.State == SessionLinked || repository.binding.HasPendingScope {
 		return errors.New("busy")
 	}
 	repository.binding.PendingScope = scope
@@ -43,7 +43,7 @@ func (repository *sessionTestBindings) BeginSessionPairing(_ context.Context, sc
 	return nil
 }
 
-func (repository *sessionTestBindings) MarkSessionPaired(_ context.Context, scope SessionScope, accountID string) error {
+func (repository *sessionTestBindings) MarkSessionLinked(_ context.Context, scope SessionScope, accountID string) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if repository.binding.HasPendingScope && repository.binding.PendingScope != scope {
@@ -53,8 +53,8 @@ func (repository *sessionTestBindings) MarkSessionPaired(_ context.Context, scop
 	repository.binding.HasActiveScope = true
 	repository.binding.HasPendingScope = false
 	repository.binding.PendingScope = SessionScope{}
-	repository.binding.WhatsAppAccountID = accountID
-	repository.binding.State = SessionPaired
+	repository.binding.DiscordBotID = accountID
+	repository.binding.State = SessionLinked
 	return nil
 }
 
@@ -76,7 +76,7 @@ func (repository *sessionTestBindings) MarkSessionRevoked(_ context.Context, sco
 		return errors.New("scope changed")
 	}
 	repository.binding.State = SessionRevoked
-	repository.binding.WhatsAppAccountID = ""
+	repository.binding.DiscordBotID = ""
 	return nil
 }
 
@@ -132,7 +132,7 @@ func (runtime *sessionTestRuntime) HasSession() bool {
 	return runtime.session
 }
 
-func (runtime *sessionTestRuntime) WhatsAppAccountID() string {
+func (runtime *sessionTestRuntime) DiscordBotID() string {
 	return runtime.accountID
 }
 
@@ -157,7 +157,7 @@ func (runtime *sessionTestRuntime) Run(ctx context.Context, request SessionRunRe
 		if runtime.accountID == "" {
 			runtime.accountID = "123456789@s.whatsapp.net"
 		}
-		emit(SessionRuntimeEvent{State: RuntimeConnected, WhatsAppAccountID: runtime.accountID})
+		emit(SessionRuntimeEvent{State: RuntimeConnected, DiscordBotID: runtime.accountID})
 	}
 	<-ctx.Done()
 	return nil
@@ -231,18 +231,18 @@ func TestSessionControllerCompletesPairingIntoPersistentSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.BindingState != SessionPaired || status.RuntimeState != RuntimeStopped || !status.SessionPresent {
+	if status.BindingState != SessionLinked || status.RuntimeState != RuntimeStopped || !status.SessionPresent {
 		t.Fatalf("completed pairing status = %+v", status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
-	if binding.State != SessionPaired || binding.HasPendingScope || binding.WhatsAppAccountID == "" {
+	if binding.State != SessionLinked || binding.HasPendingScope || binding.DiscordBotID == "" {
 		t.Fatalf("successful pairing was not made durable: %+v", binding)
 	}
 }
 
 func TestSessionControllerResumeStopPreservesPairedBinding(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionPaired, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, WhatsAppAccountID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
 	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net", connect: true}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	operation, err := controller.Resume(context.Background())
@@ -254,18 +254,18 @@ func TestSessionControllerResumeStopPreservesPairedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.BindingState != SessionPaired || status.RuntimeState != RuntimeStopped || !status.SessionPresent {
+	if status.BindingState != SessionLinked || status.RuntimeState != RuntimeStopped || !status.SessionPresent {
 		t.Fatalf("stop status = %+v", status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
-	if binding.State != SessionPaired || binding.ActiveScope.AccountID != accountID {
+	if binding.State != SessionLinked || binding.ActiveScope.AccountID != accountID {
 		t.Fatalf("stop changed durable binding: %+v (operation %s)", binding, operation.OperationID)
 	}
 }
 
 func TestSessionControllerExternalLogoutMarksSessionRevoked(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionPaired, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, WhatsAppAccountID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
 	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net", revoke: true}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	if _, err := controller.Resume(context.Background()); err != nil {
@@ -283,7 +283,7 @@ func TestSessionControllerExternalLogoutMarksSessionRevoked(t *testing.T) {
 
 func TestSessionControllerMissingLocalDeviceMakesPairingAvailableAgain(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionPaired, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, WhatsAppAccountID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
 	runtime := &sessionTestRuntime{session: false}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	if _, err := controller.Resume(context.Background()); err == nil {
@@ -300,7 +300,7 @@ func TestSessionControllerMissingLocalDeviceMakesPairingAvailableAgain(t *testin
 
 func TestSessionControllerLogoutWhenStoppedRevokesPersistence(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionPaired, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, WhatsAppAccountID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
 	runtime := &sessionTestRuntime{session: true, accountID: "123456789@s.whatsapp.net"}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	operation, err := controller.Logout(context.Background())
@@ -311,14 +311,14 @@ func TestSessionControllerLogoutWhenStoppedRevokesPersistence(t *testing.T) {
 		t.Fatalf("logout status = %+v", operation.Status)
 	}
 	binding, _ := bindings.LoadSessionBinding(context.Background())
-	if binding.State != SessionRevoked || binding.WhatsAppAccountID != "" {
+	if binding.State != SessionRevoked || binding.DiscordBotID != "" {
 		t.Fatalf("logout did not persist revocation: %+v", binding)
 	}
 }
 
 func TestSessionControllerCloseCancelsLogoutBeforeWaitingForOperationLock(t *testing.T) {
 	tenantID, accountID := newTestSessionIDs(t)
-	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionPaired, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, WhatsAppAccountID: "123456789@s.whatsapp.net"}}
+	bindings := &sessionTestBindings{binding: SessionBinding{State: SessionLinked, ActiveScope: SessionScope{TenantID: tenantID, AccountID: accountID}, HasActiveScope: true, DiscordBotID: "123456789@s.whatsapp.net"}}
 	runtime := &sessionTestRuntime{session: true, logoutWait: true, logoutStart: make(chan struct{})}
 	controller := newSessionTestControllerWith(t, bindings, runtime)
 	logoutDone := make(chan error, 1)

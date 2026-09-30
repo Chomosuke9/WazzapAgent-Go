@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"sync"
@@ -12,7 +13,7 @@ import (
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
 )
 
-const pairingPhoneMaxDigits = 15
+const maxBotTokenBytes = 256
 
 type sessionRun struct {
 	id      string
@@ -24,12 +25,12 @@ type sessionRun struct {
 	done    chan struct{}
 
 	state     SessionRuntimeState
-	pairing   *SessionPairing
-	paired    bool
+	linked    bool
+	botName   string
 	errorCode agent.ErrorCode
 }
 
-// SessionController owns the session-only WhatsApp lifecycle. It never
+// SessionController owns the session-only Discord lifecycle. It never
 // constructs the Agent pipeline or exposes a message/outbox operation.
 type SessionController struct {
 	settings   SettingsRepository
@@ -74,46 +75,25 @@ func (controller *SessionController) GetStatus(ctx context.Context) (SessionStat
 		run := controller.run
 		status.RuntimeState = run.state
 		status.OperationID = run.id
-		status.Pairing = clonePairing(run.pairing)
+		status.BotName = run.botName
 		status.ErrorCode = run.errorCode
-		if run.paired {
+		if run.linked {
 			status.SessionPresent = true
-			status.BindingState = SessionPaired
-		}
-		if status.Pairing != nil && !controller.now().Before(status.Pairing.ExpiresAt) {
-			status.Pairing = nil
-			run.pairing = nil
+			status.BindingState = SessionLinked
 		}
 	}
 	return status, nil
 }
 
-func (controller *SessionController) GetPairingStatus(ctx context.Context) (SessionPairing, error) {
-	status, err := controller.GetStatus(ctx)
-	if err != nil {
-		return SessionPairing{}, err
-	}
-	if status.Pairing == nil {
-		return SessionPairing{}, agent.NewError(agent.ErrorNotFound, "get pairing status", errors.New("no unexpired pairing code is available"))
-	}
-	return *status.Pairing, nil
-}
-
-func (controller *SessionController) BeginPairing(ctx context.Context, request BeginPairingRequest) (SessionOperation, error) {
+// BeginLink links a Discord bot by its token. The token is verified by
+// connecting with it, and saved in the account scope only once Discord
+// accepted it.
+func (controller *SessionController) BeginLink(ctx context.Context, request BeginLinkRequest) (SessionOperation, error) {
 	controller.operations.Lock()
 	defer controller.operations.Unlock()
-	if request.Method != PairingQR && request.Method != PairingPhoneCode {
-		return SessionOperation{}, agent.NewError(agent.ErrorInvalidArgument, "begin WhatsApp pairing", errors.New("pairing method is invalid"))
-	}
-	phone := ""
-	if request.Method == PairingPhoneCode {
-		var err error
-		phone, err = normalizePairingPhone(request.Phone)
-		if err != nil {
-			return SessionOperation{}, err
-		}
-	} else if strings.TrimSpace(request.Phone) != "" {
-		return SessionOperation{}, agent.NewError(agent.ErrorInvalidArgument, "begin WhatsApp pairing", errors.New("phone number is only used for phone-code pairing"))
+	token, err := normalizeBotToken(request.Token)
+	if err != nil {
+		return SessionOperation{}, err
 	}
 	if err := controller.ensureOpen(); err != nil {
 		return SessionOperation{}, err
@@ -122,43 +102,45 @@ func (controller *SessionController) BeginPairing(ctx context.Context, request B
 	if err != nil {
 		return SessionOperation{}, sessionRepositoryError("load session binding", err)
 	}
-	if binding.State == SessionPaired {
-		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin WhatsApp pairing", errors.New("a WhatsApp session already exists; resume it or log out first"))
+	if binding.State == SessionLinked {
+		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin Discord link", errors.New("a Discord bot is already linked; resume it or unlink it first"))
 	}
 	preferred, hasPreferred := binding.ActiveScope, binding.HasActiveScope
 	if binding.HasPendingScope {
-		// A process may stop while a pairing reservation is durable. Re-open
-		// that exact device store before deciding whether it can be resumed.
+		// A process may stop while a link reservation is durable. Re-open
+		// that exact scope before deciding whether it can be resumed.
 		snapshot, scope, err := controller.sessionSnapshot(ctx, binding.PendingScope, true)
 		if err != nil {
 			return SessionOperation{}, err
 		}
 		managed, err := controller.factory.OpenSession(ctx, snapshot)
 		if err != nil {
-			return SessionOperation{}, sessionFactoryError("recover WhatsApp pairing", err)
+			return SessionOperation{}, sessionFactoryError("recover Discord link", err)
 		}
 		if managed.HasSession() {
-			accountID := managed.WhatsAppAccountID()
-			if accountID == "" || controller.bindings.MarkSessionPaired(ctx, scope, accountID) != nil {
+			botID := managed.DiscordBotID()
+			if botID == "" || controller.bindings.MarkSessionLinked(ctx, scope, botID) != nil {
 				_ = managed.Close(context.Background())
-				return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "recover WhatsApp pairing", errors.New("linked WhatsApp device could not be recorded"))
+				return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "recover Discord link", errors.New("linked Discord bot could not be recorded"))
 			}
 			_ = managed.Close(context.Background())
-			return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin WhatsApp pairing", errors.New("the interrupted pairing already linked a device; resume it"))
+			return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin Discord link", errors.New("the interrupted link already saved a bot; resume it"))
 		}
 		_ = managed.Close(context.Background())
-		if err := controller.bindings.AbortSessionPairing(ctx, scope); err != nil {
-			return SessionOperation{}, sessionRepositoryError("recover pending WhatsApp pairing", err)
+		if err := controller.bindings.AbortSessionLink(ctx, scope); err != nil {
+			return SessionOperation{}, sessionRepositoryError("recover pending Discord link", err)
 		}
 	}
-	if binding.State == SessionRevoked && binding.HasActiveScope {
+	// Relinking the bot that was unlinked keeps its history; any other bot
+	// gets a fresh scope so two bots' data never mix.
+	if binding.State == SessionRevoked && binding.HasActiveScope && (binding.DiscordBotID == "" || BotIDFromToken(token) != binding.DiscordBotID) {
 		newTenantID, tenantErr := identity.NewTenantID()
 		if tenantErr != nil {
-			return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create WhatsApp tenant scope", tenantErr)
+			return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create Discord tenant scope", tenantErr)
 		}
 		newAccountID, idErr := identity.NewAccountID()
 		if idErr != nil {
-			return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create WhatsApp account scope", idErr)
+			return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create Discord account scope", idErr)
 		}
 		preferred = SessionScope{TenantID: newTenantID, AccountID: newAccountID}
 		hasPreferred = true
@@ -167,34 +149,34 @@ func (controller *SessionController) BeginPairing(ctx context.Context, request B
 	if err != nil {
 		return SessionOperation{}, err
 	}
-	if err := controller.bindings.BeginSessionPairing(ctx, scope); err != nil {
-		return SessionOperation{}, sessionRepositoryError("reserve session pairing", err)
+	if err := controller.bindings.BeginSessionLink(ctx, scope); err != nil {
+		return SessionOperation{}, sessionRepositoryError("reserve session link", err)
 	}
 	managed, err := controller.factory.OpenSession(ctx, snapshot)
 	if err != nil {
-		_ = controller.bindings.AbortSessionPairing(context.Background(), scope)
-		return SessionOperation{}, sessionFactoryError("open WhatsApp session", err)
+		_ = controller.bindings.AbortSessionLink(context.Background(), scope)
+		return SessionOperation{}, sessionFactoryError("open Discord session", err)
 	}
-	if managed.HasSession() {
-		accountID := managed.WhatsAppAccountID()
-		if accountID != "" {
-			_ = controller.bindings.MarkSessionPaired(ctx, scope, accountID)
+	if managed.HasSession() && binding.State != SessionRevoked {
+		botID := managed.DiscordBotID()
+		if botID != "" {
+			_ = controller.bindings.MarkSessionLinked(ctx, scope, botID)
 		} else {
-			_ = controller.bindings.AbortSessionPairing(context.Background(), scope)
+			_ = controller.bindings.AbortSessionLink(context.Background(), scope)
 		}
 		_ = managed.Close(context.Background())
-		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin WhatsApp pairing", errors.New("a linked device already exists in this WhatsApp store; refresh status and resume it"))
+		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "begin Discord link", errors.New("a bot token is already saved for this account; refresh status and resume it"))
 	}
-	run, err := controller.newRun(scope, managed, SessionRunRequest{Mode: SessionRunPairing, Method: request.Method, Phone: phone})
+	run, err := controller.newRun(scope, managed, SessionRunRequest{Mode: SessionRunLink, Token: token})
 	if err != nil {
-		_ = controller.bindings.AbortSessionPairing(context.Background(), scope)
+		_ = controller.bindings.AbortSessionLink(context.Background(), scope)
 		_ = managed.Close(context.Background())
 		return SessionOperation{}, err
 	}
 	if !controller.launch(run) {
-		_ = controller.bindings.AbortSessionPairing(context.Background(), scope)
+		_ = controller.bindings.AbortSessionLink(context.Background(), scope)
 		_ = managed.Close(context.Background())
-		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "begin WhatsApp pairing", errors.New("session controller is closing"))
+		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "begin Discord link", errors.New("session controller is closing"))
 	}
 	status := controller.statusForRun(run)
 	return SessionOperation{OperationID: run.id, Status: status}, nil
@@ -210,8 +192,8 @@ func (controller *SessionController) Resume(ctx context.Context) (SessionOperati
 	if err != nil {
 		return SessionOperation{}, sessionRepositoryError("load session binding", err)
 	}
-	if binding.State != SessionPaired || !binding.HasActiveScope {
-		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "resume WhatsApp session", errors.New("there is no saved WhatsApp session to resume"))
+	if binding.State != SessionLinked || !binding.HasActiveScope {
+		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "resume Discord session", errors.New("there is no linked Discord bot to resume"))
 	}
 	snapshot, scope, err := controller.sessionSnapshot(ctx, binding.ActiveScope, true)
 	if err != nil {
@@ -219,24 +201,24 @@ func (controller *SessionController) Resume(ctx context.Context) (SessionOperati
 	}
 	managed, err := controller.factory.OpenSession(ctx, snapshot)
 	if err != nil {
-		return SessionOperation{}, sessionFactoryError("open WhatsApp session", err)
+		return SessionOperation{}, sessionFactoryError("open Discord session", err)
 	}
 	if !managed.HasSession() {
 		_ = managed.Close(context.Background())
 		if err := controller.bindings.MarkSessionRevoked(ctx, binding.ActiveScope); err != nil {
-			return SessionOperation{}, sessionRepositoryError("mark missing WhatsApp device", err)
+			return SessionOperation{}, sessionRepositoryError("mark missing Discord token", err)
 		}
-		return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "resume WhatsApp session", errors.New("saved session is missing from its local device store"))
+		return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "resume Discord session", errors.New("the saved bot token is missing"))
 	}
 	run, err := controller.newRun(scope, managed, SessionRunRequest{Mode: SessionRunResume})
 	if err != nil {
 		_ = managed.Close(context.Background())
 		return SessionOperation{}, err
 	}
-	run.paired = true
+	run.linked = true
 	if !controller.launch(run) {
 		_ = managed.Close(context.Background())
-		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "resume WhatsApp session", errors.New("session controller is closing"))
+		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "resume Discord session", errors.New("session controller is closing"))
 	}
 	status, _ := controller.GetStatus(ctx)
 	return SessionOperation{OperationID: run.id, Status: status}, nil
@@ -251,12 +233,11 @@ func (controller *SessionController) Stop(ctx context.Context) (SessionStatus, e
 		controller.mu.Unlock()
 		return controller.GetStatus(ctx)
 	}
-	if run.request.Mode == SessionRunPairing && !run.paired {
+	if run.request.Mode == SessionRunLink && !run.linked {
 		controller.mu.Unlock()
-		return SessionStatus{}, agent.NewError(agent.ErrorConflict, "stop WhatsApp session", errors.New("cancel pairing to discard the pending link request"))
+		return SessionStatus{}, agent.NewError(agent.ErrorConflict, "stop Discord session", errors.New("cancel linking to discard the pending link request"))
 	}
 	run.state = RuntimeStopping
-	run.pairing = nil
 	run.cancel()
 	controller.mu.Unlock()
 	if err := waitSessionRun(ctx, run); err != nil {
@@ -265,24 +246,23 @@ func (controller *SessionController) Stop(ctx context.Context) (SessionStatus, e
 	return controller.GetStatus(ctx)
 }
 
-func (controller *SessionController) CancelPairing(ctx context.Context, operationID string) (SessionStatus, error) {
+func (controller *SessionController) CancelLink(ctx context.Context, operationID string) (SessionStatus, error) {
 	controller.operations.Lock()
 	defer controller.operations.Unlock()
 	controller.mu.Lock()
 	run := controller.run
-	if run == nil || run.id != operationID || run.request.Mode != SessionRunPairing || run.paired {
+	if run == nil || run.id != operationID || run.request.Mode != SessionRunLink || run.linked {
 		controller.mu.Unlock()
-		return SessionStatus{}, agent.NewError(agent.ErrorConflict, "cancel WhatsApp pairing", errors.New("pairing operation is no longer active"))
+		return SessionStatus{}, agent.NewError(agent.ErrorConflict, "cancel Discord link", errors.New("link operation is no longer active"))
 	}
 	run.state = RuntimeStopping
-	run.pairing = nil
 	run.cancel()
 	controller.mu.Unlock()
 	if err := waitSessionRun(ctx, run); err != nil {
 		return SessionStatus{}, err
 	}
-	if err := controller.bindings.AbortSessionPairing(ctx, run.scope); err != nil {
-		return SessionStatus{}, sessionRepositoryError("clear pending pairing", err)
+	if err := controller.bindings.AbortSessionLink(ctx, run.scope); err != nil {
+		return SessionStatus{}, sessionRepositoryError("clear pending link", err)
 	}
 	return controller.GetStatus(ctx)
 }
@@ -292,16 +272,16 @@ func (controller *SessionController) Reconnect(ctx context.Context) (SessionOper
 	defer controller.operations.Unlock()
 	controller.mu.Lock()
 	run := controller.run
-	if run == nil || !run.paired {
+	if run == nil || !run.linked {
 		controller.mu.Unlock()
-		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "reconnect WhatsApp session", errors.New("no active paired session is running"))
+		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "reconnect Discord session", errors.New("no linked session is running"))
 	}
 	if err := run.runtime.Reconnect(); err != nil {
 		controller.mu.Unlock()
-		return SessionOperation{}, agent.NewError(agent.ErrorProviderFailure, "reconnect WhatsApp session", err)
+		return SessionOperation{}, agent.NewError(agent.ErrorProviderFailure, "reconnect Discord session", err)
 	}
 	run.state = RuntimeReconnecting
-	status := controller.statusForRunLocked(run, SessionPaired)
+	status := controller.statusForRunLocked(run, SessionLinked)
 	controller.mu.Unlock()
 	controller.publish(run.id, status)
 	return SessionOperation{OperationID: run.id, Status: status}, nil
@@ -317,24 +297,23 @@ func (controller *SessionController) Logout(ctx context.Context) (SessionOperati
 	if err != nil {
 		return SessionOperation{}, sessionRepositoryError("load session binding", err)
 	}
-	if binding.State != SessionPaired || !binding.HasActiveScope {
-		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "logout WhatsApp session", errors.New("there is no paired WhatsApp session to log out"))
+	if binding.State != SessionLinked || !binding.HasActiveScope {
+		return SessionOperation{}, agent.NewError(agent.ErrorNotReady, "unlink Discord bot", errors.New("there is no linked Discord bot to unlink"))
 	}
 	controller.mu.Lock()
 	run := controller.run
-	if run != nil && (!run.paired || run.scope != binding.ActiveScope) {
+	if run != nil && (!run.linked || run.scope != binding.ActiveScope) {
 		controller.mu.Unlock()
-		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "logout WhatsApp session", errors.New("a different WhatsApp operation is active"))
+		return SessionOperation{}, agent.NewError(agent.ErrorConflict, "unlink Discord bot", errors.New("a different Discord operation is active"))
 	}
 	if run != nil {
 		run.state = RuntimeLoggingOut
-		run.pairing = nil
 	}
 	controller.mu.Unlock()
 
 	operationID, err := newSessionOperationID()
 	if err != nil {
-		return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create logout operation", err)
+		return SessionOperation{}, agent.NewError(agent.ErrorInternal, "create unlink operation", err)
 	}
 	var temporary ManagedSession
 	managed := ManagedSession(nil)
@@ -347,11 +326,11 @@ func (controller *SessionController) Logout(ctx context.Context) (SessionOperati
 		}
 		temporary, err = controller.factory.OpenSession(ctx, snapshot)
 		if err != nil {
-			return SessionOperation{}, sessionFactoryError("open WhatsApp session for logout", err)
+			return SessionOperation{}, sessionFactoryError("open Discord session to unlink", err)
 		}
 		if !temporary.HasSession() {
 			_ = temporary.Close(context.Background())
-			return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "open WhatsApp session for logout", errors.New("saved WhatsApp device is missing"))
+			return SessionOperation{}, agent.NewError(agent.ErrorIntegrityFailure, "open Discord session to unlink", errors.New("the saved bot token is missing"))
 		}
 		managed = temporary
 	}
@@ -365,18 +344,18 @@ func (controller *SessionController) Logout(ctx context.Context) (SessionOperati
 			_ = temporary.Close(context.Background())
 		}
 		controller.restoreAfterFailedLogout(run)
-		return SessionOperation{}, agent.NewError(agent.ErrorProviderFailure, "logout WhatsApp session", errors.New("WhatsApp did not confirm logout; the saved session was kept"))
+		return SessionOperation{}, agent.NewError(agent.ErrorStorageFailure, "unlink Discord bot", errors.New("the saved bot token could not be removed; the link was kept"))
 	}
 	if err := controller.bindings.MarkSessionRevoked(ctx, binding.ActiveScope); err != nil {
 		if temporary != nil {
 			_ = temporary.Close(context.Background())
 		}
 		controller.restoreAfterFailedLogout(run)
-		return SessionOperation{}, sessionRepositoryError("persist WhatsApp logout", err)
+		return SessionOperation{}, sessionRepositoryError("persist Discord unlink", err)
 	}
 	if temporary != nil {
 		if closeErr := temporary.Close(context.Background()); closeErr != nil {
-			return SessionOperation{}, sessionRepositoryError("close logged out WhatsApp session", closeErr)
+			return SessionOperation{}, sessionRepositoryError("close unlinked Discord session", closeErr)
 		}
 	}
 	if run != nil {
@@ -401,7 +380,6 @@ func (controller *SessionController) Close(ctx context.Context) error {
 	run := controller.run
 	if run != nil {
 		run.state = RuntimeStopping
-		run.pairing = nil
 		run.cancel()
 	}
 	controller.mu.Unlock()
@@ -416,7 +394,7 @@ func (controller *SessionController) Close(ctx context.Context) error {
 func (controller *SessionController) sessionSnapshot(ctx context.Context, preferred SessionScope, hasPreferred bool) (config.Snapshot, SessionScope, error) {
 	settings, err := controller.settings.Load(ctx)
 	if err != nil {
-		return config.Snapshot{}, SessionScope{}, safeRepositoryError("load settings for WhatsApp session", err)
+		return config.Snapshot{}, SessionScope{}, safeRepositoryError("load settings for Discord session", err)
 	}
 	settings.Values.DataDir = controller.dataRoot
 	preferredScope := SessionScope{}
@@ -425,11 +403,11 @@ func (controller *SessionController) sessionSnapshot(ctx context.Context, prefer
 	}
 	snapshot, err := controller.scopes.ResolveSessionSnapshot(ctx, controller.dataRoot, settings.Values, preferredScope)
 	if err != nil {
-		return config.Snapshot{}, SessionScope{}, agent.NewError(agent.ErrorInvalidArgument, "validate WhatsApp session settings", errors.New("data root or session identity is not ready"))
+		return config.Snapshot{}, SessionScope{}, agent.NewError(agent.ErrorInvalidArgument, "validate Discord session settings", errors.New("data root or session identity is not ready"))
 	}
 	scope := SessionScope{TenantID: snapshot.TenantID(), AccountID: snapshot.AccountID()}
 	if scope.TenantID.IsZero() || scope.AccountID.IsZero() {
-		return config.Snapshot{}, SessionScope{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp session identity", errors.New("session identity is incomplete"))
+		return config.Snapshot{}, SessionScope{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve Discord session identity", errors.New("session identity is incomplete"))
 	}
 	return snapshot, scope, nil
 }
@@ -437,7 +415,7 @@ func (controller *SessionController) sessionSnapshot(ctx context.Context, prefer
 func (controller *SessionController) newRun(scope SessionScope, managed ManagedSession, request SessionRunRequest) (*sessionRun, error) {
 	id, err := newSessionOperationID()
 	if err != nil {
-		return nil, agent.NewError(agent.ErrorInternal, "create WhatsApp operation", err)
+		return nil, agent.NewError(agent.ErrorInternal, "create Discord operation", err)
 	}
 	ctx, cancel := context.WithCancel(controller.rootCtx)
 	return &sessionRun{id: id, scope: scope, request: request, runtime: managed, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: RuntimeStarting}, nil
@@ -468,11 +446,11 @@ func (controller *SessionController) runSession(run *sessionRun) {
 	}
 	err = errors.Join(err, closeErr)
 	controller.mu.Lock()
-	pairingMode := run.request.Mode == SessionRunPairing
-	paired := run.paired
+	linkMode := run.request.Mode == SessionRunLink
+	linked := run.linked
 	controller.mu.Unlock()
-	if pairingMode && !paired {
-		_ = controller.bindings.AbortSessionPairing(context.Background(), run.scope)
+	if linkMode && !linked {
+		_ = controller.bindings.AbortSessionLink(context.Background(), run.scope)
 	}
 	controller.mu.Lock()
 	if controller.run == run {
@@ -482,12 +460,11 @@ func (controller *SessionController) runSession(run *sessionRun) {
 		} else {
 			run.state = RuntimeStopped
 		}
-		run.pairing = nil
 		controller.run = nil
 	}
-	status := SessionStatus{BindingState: SessionUnpaired, RuntimeState: run.state, OperationID: run.id, ErrorCode: run.errorCode}
-	if run.paired {
-		status.BindingState, status.SessionPresent = SessionPaired, true
+	status := SessionStatus{BindingState: SessionUnlinked, RuntimeState: run.state, OperationID: run.id, ErrorCode: run.errorCode}
+	if run.linked {
+		status.BindingState, status.SessionPresent = SessionLinked, true
 	}
 	if run.state == RuntimeRevoked {
 		status.BindingState = SessionRevoked
@@ -508,15 +485,15 @@ func (controller *SessionController) runSession(run *sessionRun) {
 
 func (controller *SessionController) handleRuntimeEvent(run *sessionRun, event SessionRuntimeEvent) {
 	if event.State == RuntimeConnected {
-		accountID := strings.TrimSpace(event.WhatsAppAccountID)
-		if accountID == "" {
-			accountID = run.runtime.WhatsAppAccountID()
+		botID := strings.TrimSpace(event.DiscordBotID)
+		if botID == "" {
+			botID = run.runtime.DiscordBotID()
 		}
-		if accountID == "" {
+		if botID == "" {
 			controller.failRun(run, agent.ErrorIntegrityFailure)
 			return
 		}
-		if err := controller.bindings.MarkSessionPaired(context.Background(), run.scope, accountID); err != nil {
+		if err := controller.bindings.MarkSessionLinked(context.Background(), run.scope, botID); err != nil {
 			controller.failRun(run, agent.CodeOf(err))
 			return
 		}
@@ -533,32 +510,23 @@ func (controller *SessionController) handleRuntimeEvent(run *sessionRun, event S
 		return
 	}
 	if event.State == RuntimeConnected {
-		run.paired = true
-		run.request.Mode = SessionRunResume
+		run.linked = true
+		// The token is saved now, so a later run resumes it.
+		run.request = SessionRunRequest{Mode: SessionRunResume}
+		if name := strings.TrimSpace(event.BotName); name != "" {
+			run.botName = name
+		}
 	}
 	if event.State == RuntimeRevoked {
-		run.paired = false
+		run.linked = false
 	}
 	run.state = event.State
-	if event.Pairing != nil {
-		pairing := *event.Pairing
-		if pairing.Generation == 0 {
-			if run.pairing == nil {
-				pairing.Generation = 1
-			} else {
-				pairing.Generation = run.pairing.Generation + 1
-			}
-		}
-		run.pairing = &pairing
-	} else if event.State == RuntimeConnected || event.State == RuntimeStopping || event.State == RuntimeFailed || event.State == RuntimeRevoked {
-		run.pairing = nil
-	}
 	if event.ErrorCode != "" {
 		run.errorCode = event.ErrorCode
 	}
-	status := controller.statusForRunLocked(run, SessionUnpaired)
-	if run.paired {
-		status.BindingState = SessionPaired
+	status := controller.statusForRunLocked(run, SessionUnlinked)
+	if run.linked {
+		status.BindingState = SessionLinked
 	} else if run.state == RuntimeRevoked {
 		status.BindingState = SessionRevoked
 	}
@@ -579,9 +547,9 @@ func (controller *SessionController) failRun(run *sessionRun, code agent.ErrorCo
 func (controller *SessionController) statusForRun(run *sessionRun) SessionStatus {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	state := SessionUnpaired
-	if run.paired {
-		state = SessionPaired
+	state := SessionUnlinked
+	if run.linked {
+		state = SessionLinked
 	} else if run.state == RuntimeRevoked {
 		state = SessionRevoked
 	}
@@ -589,7 +557,7 @@ func (controller *SessionController) statusForRun(run *sessionRun) SessionStatus
 }
 
 func (controller *SessionController) statusForRunLocked(run *sessionRun, state SessionBindingState) SessionStatus {
-	return SessionStatus{BindingState: state, RuntimeState: run.state, SessionPresent: run.paired, WhatsAppAccountID: run.runtime.WhatsAppAccountID(), OperationID: run.id, Pairing: clonePairing(run.pairing), ErrorCode: run.errorCode}
+	return SessionStatus{BindingState: state, RuntimeState: run.state, SessionPresent: run.linked, DiscordBotID: run.runtime.DiscordBotID(), BotName: run.botName, OperationID: run.id, ErrorCode: run.errorCode}
 }
 
 func (controller *SessionController) restoreAfterFailedLogout(run *sessionRun) {
@@ -600,7 +568,7 @@ func (controller *SessionController) restoreAfterFailedLogout(run *sessionRun) {
 	if controller.run == run {
 		run.state = RuntimeConnected
 	}
-	status := controller.statusForRunLocked(run, SessionPaired)
+	status := controller.statusForRunLocked(run, SessionLinked)
 	controller.mu.Unlock()
 	controller.publish(run.id, status)
 }
@@ -615,10 +583,10 @@ func (controller *SessionController) ensureOpen() error {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
 	if controller.closed || controller.rootCtx.Err() != nil {
-		return agent.NewError(agent.ErrorNotReady, "manage WhatsApp session", errors.New("session controller is closing"))
+		return agent.NewError(agent.ErrorNotReady, "manage Discord session", errors.New("session controller is closing"))
 	}
 	if controller.run != nil {
-		return agent.NewError(agent.ErrorConflict, "manage WhatsApp session", errors.New("another WhatsApp operation is active"))
+		return agent.NewError(agent.ErrorConflict, "manage Discord session", errors.New("another Discord operation is active"))
 	}
 	return nil
 }
@@ -628,32 +596,56 @@ func waitSessionRun(ctx context.Context, run *sessionRun) error {
 	case <-run.done:
 		return nil
 	case <-ctx.Done():
-		return agent.NewError(agent.ErrorTimeout, "wait for WhatsApp session shutdown", ctx.Err())
+		return agent.NewError(agent.ErrorTimeout, "wait for Discord session shutdown", ctx.Err())
 	}
 }
 
 func statusFromBinding(binding SessionBinding) SessionStatus {
 	state := binding.State
 	if state == "" {
-		state = SessionUnpaired
+		state = SessionUnlinked
 	}
-	return SessionStatus{BindingState: state, RuntimeState: RuntimeStopped, SessionPresent: state == SessionPaired, WhatsAppAccountID: binding.WhatsAppAccountID}
+	return SessionStatus{BindingState: state, RuntimeState: RuntimeStopped, SessionPresent: state == SessionLinked, DiscordBotID: binding.DiscordBotID}
 }
 
-func normalizePairingPhone(value string) (string, error) {
-	var digits strings.Builder
-	for _, r := range value {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
-		} else if r != '+' && r != ' ' && r != '-' && r != '(' && r != ')' && r != '.' {
-			return "", agent.NewError(agent.ErrorInvalidArgument, "begin WhatsApp pairing", errors.New("phone number must use an international number format"))
+// normalizeBotToken trims a pasted token, and its "Bot " prefix when the
+// user copied an Authorization header value.
+func normalizeBotToken(value string) (string, error) {
+	token := strings.TrimSpace(value)
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bot "))
+	if token == "" || len(token) > maxBotTokenBytes {
+		return "", agent.NewError(agent.ErrorInvalidArgument, "begin Discord link", errors.New("paste the bot token from the Discord Developer Portal"))
+	}
+	for _, character := range token {
+		if character <= ' ' || character > '~' {
+			return "", agent.NewError(agent.ErrorInvalidArgument, "begin Discord link", errors.New("the bot token contains characters a token never has"))
 		}
 	}
-	normalized := digits.String()
-	if len(normalized) < 7 || len(normalized) > pairingPhoneMaxDigits || strings.HasPrefix(normalized, "0") {
-		return "", agent.NewError(agent.ErrorInvalidArgument, "begin WhatsApp pairing", errors.New("phone number must include its country code"))
+	return token, nil
+}
+
+// BotIDFromToken reads the bot's user ID from the token's first segment, which
+// Discord encodes as base64. It returns "" when the token does not carry one;
+// the ID is only a hint for reusing a scope, never proof of identity.
+func BotIDFromToken(token string) string {
+	first, _, _ := strings.Cut(token, ".")
+	for _, encoding := range []*base64.Encoding{base64.RawURLEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.StdEncoding} {
+		decoded, err := encoding.DecodeString(first)
+		if err != nil || len(decoded) == 0 || len(decoded) > 20 {
+			continue
+		}
+		valid := true
+		for _, digit := range decoded {
+			if digit < '0' || digit > '9' {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return string(decoded)
+		}
 	}
-	return normalized, nil
+	return ""
 }
 
 func newSessionOperationID() (string, error) {
@@ -662,14 +654,6 @@ func newSessionOperationID() (string, error) {
 		return "", err
 	}
 	return id.String(), nil
-}
-
-func clonePairing(pairing *SessionPairing) *SessionPairing {
-	if pairing == nil {
-		return nil
-	}
-	clone := *pairing
-	return &clone
 }
 
 func sessionRepositoryError(operation string, err error) error {

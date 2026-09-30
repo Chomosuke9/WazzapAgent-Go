@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import {
-  addWhatsAppChatTask,
-  deleteWhatsAppChatTask,
-  getWhatsAppChatTasks,
-  type WhatsAppChatTaskDTO,
+  addDiscordChatTask,
+  deleteDiscordChatTask,
+  getDiscordChatTasks,
+  type DiscordChatTaskDTO,
 } from "../services/backend";
 
 export function errorMessage(error: unknown, fallback: string): string {
@@ -20,7 +20,7 @@ function localInputValue(date: Date): string {
 
 // A daily task runs at the bot's clock time, which is the time part of
 // nextRun (RFC 3339 with the bot's UTC offset).
-function taskWhen(task: WhatsAppChatTaskDTO): string {
+function taskWhen(task: DiscordChatTaskDTO): string {
   if (task.daily) return `Every day at ${task.nextRun.slice(11, 16)}`;
   const date = new Date(task.nextRun);
   if (Number.isNaN(date.getTime())) return task.nextRun;
@@ -30,7 +30,7 @@ function taskWhen(task: WhatsAppChatTaskDTO): string {
 // ChatTasks lists, adds and deletes the chat's reminders and daily tasks. The
 // bot runs them; people only ask it, in chat or here.
 export function ChatTasks({ chatID }: { chatID: string }) {
-  const [tasks, setTasks] = useState<WhatsAppChatTaskDTO[]>([]);
+  const [tasks, setTasks] = useState<DiscordChatTaskDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyTask, setBusyTask] = useState("");
@@ -44,7 +44,7 @@ export function ChatTasks({ chatID }: { chatID: string }) {
     let mounted = true;
     setLoading(true);
     setError("");
-    void getWhatsAppChatTasks(chatID)
+    void getDiscordChatTasks(chatID)
       .then((result) => { if (mounted) setTasks(result); })
       .catch((reason) => { if (mounted) setError(errorMessage(reason, "Could not load tasks. Make sure the Agent is running.")); })
       .finally(() => { if (mounted) setLoading(false); });
@@ -61,7 +61,7 @@ export function ChatTasks({ chatID }: { chatID: string }) {
     setAdding(true);
     setError("");
     try {
-      const task = await addWhatsAppChatTask({ chatID, prompt, daily, runAt: daily ? "" : at.toISOString(), time: daily ? clock : "" });
+      const task = await addDiscordChatTask({ chatID, prompt, daily, runAt: daily ? "" : at.toISOString(), time: daily ? clock : "" });
       setTasks((current) => [...current, task].sort((left, right) => new Date(left.nextRun).getTime() - new Date(right.nextRun).getTime()));
       setPrompt("");
     } catch (reason) {
@@ -71,11 +71,11 @@ export function ChatTasks({ chatID }: { chatID: string }) {
     }
   }
 
-  async function deleteTask(task: WhatsAppChatTaskDTO) {
+  async function deleteTask(task: DiscordChatTaskDTO) {
     setBusyTask(task.id);
     setError("");
     try {
-      await deleteWhatsAppChatTask(chatID, task.id, task.daily);
+      await deleteDiscordChatTask(chatID, task.id, task.daily);
       setTasks((current) => current.filter((item) => item.id !== task.id || item.daily !== task.daily));
     } catch (reason) {
       setError(errorMessage(reason, "Could not delete the task."));

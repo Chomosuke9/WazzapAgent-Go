@@ -121,9 +121,9 @@ func (application *Application) Started() <-chan struct{} {
 	return application.started
 }
 
-// WhatsAppSnapshot returns account connection state without exposing client or
+// DiscordSnapshot returns account connection state without exposing client or
 // provider data. The boolean is false when no account runtime was composed.
-func (application *Application) WhatsAppSnapshot() (account.Snapshot, bool) {
+func (application *Application) DiscordSnapshot() (account.Snapshot, bool) {
 	if application == nil {
 		return account.Snapshot{}, false
 	}

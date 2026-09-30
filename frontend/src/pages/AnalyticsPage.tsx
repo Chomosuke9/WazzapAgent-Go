@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getWhatsAppUsage, type WhatsAppDailyUsageDTO, type WhatsAppGroupUsageDTO, type WhatsAppUsageDTO } from "../services/backend";
+import { getDiscordUsage, type DiscordDailyUsageDTO, type DiscordGroupUsageDTO, type DiscordUsageDTO } from "../services/backend";
 
 type ChartMetric = "messages" | "invocations";
 type ChartPeriod = 1 | 7 | 30;
@@ -25,11 +25,11 @@ function readMetric(): ChartMetric {
   }
 }
 
-function metricValue(item: WhatsAppDailyUsageDTO | WhatsAppGroupUsageDTO, metric: ChartMetric): number {
+function metricValue(item: DiscordDailyUsageDTO | DiscordGroupUsageDTO, metric: ChartMetric): number {
   return metric === "messages" ? item.messages : item.invocations;
 }
 
-function UsageChart({ days, metric }: { days: WhatsAppDailyUsageDTO[]; metric: ChartMetric }) {
+function UsageChart({ days, metric }: { days: DiscordDailyUsageDTO[]; metric: ChartMetric }) {
   const valueLabel = metric === "messages" ? "messages" : "Agent invokes";
   const peak = Math.max(1, ...days.map((day) => metricValue(day, metric)));
   const formatDay = (value: string, compact: boolean) => {
@@ -60,7 +60,7 @@ function UsageChart({ days, metric }: { days: WhatsAppDailyUsageDTO[]; metric: C
 }
 
 export function AnalyticsPage() {
-  const [usage, setUsage] = useState<WhatsAppUsageDTO | null>(null);
+  const [usage, setUsage] = useState<DiscordUsageDTO | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [metric, setMetric] = useState<ChartMetric>(readMetric);
   const [periodDays, setPeriodDays] = useState<ChartPeriod>(readPeriod);
@@ -69,7 +69,7 @@ export function AnalyticsPage() {
   const refreshUsage = useCallback(async () => {
     const request = ++requestSequence.current;
     try {
-      const result = await getWhatsAppUsage(periodDays);
+      const result = await getDiscordUsage(periodDays);
       if (request !== requestSequence.current) return;
       setUsage(result);
       setUsageError(null);
@@ -98,8 +98,8 @@ export function AnalyticsPage() {
   }, [refreshUsage]);
 
   const topGroups = metric === "messages" ? usage?.groups ?? [] : usage?.invocationGroups ?? [];
-  const groupPeriodTotal = (group: WhatsAppGroupUsageDTO) => metric === "messages" ? group.messagesInPeriod : group.invocationsInPeriod;
-  const groupAllTimeTotal = (group: WhatsAppGroupUsageDTO) => metric === "messages" ? group.messages : group.invocations;
+  const groupPeriodTotal = (group: DiscordGroupUsageDTO) => metric === "messages" ? group.messagesInPeriod : group.invocationsInPeriod;
+  const groupAllTimeTotal = (group: DiscordGroupUsageDTO) => metric === "messages" ? group.messages : group.invocations;
   const metricName = metric === "messages" ? "messages" : "Agent invokes";
   const periodLabel = periodDays === 1 ? "1 day" : `${periodDays} days`;
   const periodStart = usage?.periodStart ? new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short" }).format(new Date(`${usage.periodStart}T12:00:00`)) : "";

@@ -15,13 +15,13 @@ type SettingsRepository interface {
 	Save(context.Context, uint64, config.Settings) (SettingsSnapshot, error)
 }
 
-// SessionBindingRepository persists only the active WhatsApp scope and
-// account identity. Pending scope writes are separate from settings revision.
+// SessionBindingRepository persists only the active Discord scope and bot
+// identity. Pending scope writes are separate from settings revision.
 type SessionBindingRepository interface {
 	LoadSessionBinding(context.Context) (SessionBinding, error)
-	BeginSessionPairing(context.Context, SessionScope) error
-	MarkSessionPaired(context.Context, SessionScope, string) error
-	AbortSessionPairing(context.Context, SessionScope) error
+	BeginSessionLink(context.Context, SessionScope) error
+	MarkSessionLinked(context.Context, SessionScope, string) error
+	AbortSessionLink(context.Context, SessionScope) error
 	MarkSessionRevoked(context.Context, SessionScope) error
 }
 
@@ -33,11 +33,13 @@ type SessionRuntimeFactory interface {
 }
 
 // ManagedSession is deliberately smaller than the bot runtime: it can only
-// connect, observe status, request a link code, and unlink its own device.
+// connect, observe status, save a verified bot token, and forget it.
 type ManagedSession interface {
+	// HasSession reports whether the scope has a saved bot token.
 	HasSession() bool
-	WhatsAppAccountID() string
+	DiscordBotID() string
 	Run(context.Context, SessionRunRequest, func(SessionRuntimeEvent)) error
+	// Logout forgets the saved bot token. Discord has no API to revoke it.
 	Logout(context.Context) error
 	Reconnect() error
 	Close(context.Context) error
@@ -48,15 +50,15 @@ type SessionEventSink interface {
 	TryPublish(SessionEvent) bool
 }
 
-// SessionScopeResolver resolves the durable IDs used for the WhatsApp device
-// database. It runs only after the caller already owns the data-root lease.
+// SessionScopeResolver resolves the durable IDs used for the Discord token
+// file. It runs only after the caller already owns the data-root lease.
 type SessionScopeResolver interface {
 	ResolveSessionSnapshot(context.Context, string, config.Settings, SessionScope) (config.Snapshot, error)
 }
 
 // AgentRuntimeFactory creates a bot runtime from the immutable configuration
 // snapshot selected by AgentController. Unlike SessionRuntimeFactory, the
-// returned runtime may receive and respond to WhatsApp messages.
+// returned runtime may receive and respond to Discord messages.
 type AgentRuntimeFactory interface {
 	OpenAgentRuntime(context.Context, config.Snapshot) (ManagedAgentRuntime, error)
 }
@@ -73,7 +75,7 @@ type ManagedAgentRuntime interface {
 }
 
 // AgentSessionControl lets bot startup stop a session-only client before
-// creating its own WhatsApp client. This preserves the one-client-per-root rule.
+// creating its own Discord client. This preserves the one-client-per-root rule.
 type AgentSessionControl interface {
 	GetStatus(context.Context) (SessionStatus, error)
 	Stop(context.Context) (SessionStatus, error)

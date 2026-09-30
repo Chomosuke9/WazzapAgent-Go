@@ -123,7 +123,7 @@ func TestResolveMessageTargetKeepsProviderFieldsAtAdapterEdge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve message target: %v", err)
 	}
-	if chat != candidate.ProviderChatAddress || providerMessage != candidate.ProviderMessageID || sender != candidate.SenderLID.String() || occurredAt.IsZero() {
+	if chat != candidate.ProviderChatAddress || providerMessage != candidate.ProviderMessageID || sender != candidate.SenderUserID.String() || occurredAt.IsZero() {
 		t.Fatalf("resolved provider target = %q/%q/%q/%v", chat, providerMessage, sender, occurredAt)
 	}
 	otherKey := testKey(t)
@@ -405,7 +405,7 @@ func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T)
 	second := first
 	second.ProviderMessageID = "sender-ref-2"
 	second.ProviderSenderPhone = "15550000033@s.whatsapp.net"
-	second.SenderLID, _ = identity.ParseLID("10000000033@lid")
+	second.SenderUserID, _ = identity.ParseUserID("10000000033@lid")
 	secondClaim, err := store.Inbound().ClaimAndResolveSender(context.Background(), second)
 	if err != nil {
 		t.Fatalf("claim colliding sender: %v", err)
@@ -419,7 +419,7 @@ func TestSenderRefCollisionRetriesWithoutChangingExistingReference(t *testing.T)
 	}
 }
 
-func TestSenderRefAndLIDResolveBothWays(t *testing.T) {
+func TestSenderRefAndUserIDResolveBothWays(t *testing.T) {
 	store := openTestStore(t)
 	candidate := testCandidate(t, "lid-round-trip", "15550000041@s.whatsapp.net")
 	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
@@ -427,11 +427,11 @@ func TestSenderRefAndLIDResolveBothWays(t *testing.T) {
 		t.Fatalf("claim sender: %v", err)
 	}
 	key := agent.Key{TenantID: candidate.TenantID, AccountID: candidate.AccountID, ChatID: claimed.Message.ChatID}
-	lid, err := store.Inbound().ResolveLID(context.Background(), key, claimed.Message.SenderRef)
-	if err != nil || lid != candidate.SenderLID {
-		t.Fatalf("senderRef -> LID = %s, %v", lid, err)
+	lid, err := store.Inbound().ResolveUserID(context.Background(), key, claimed.Message.SenderRef)
+	if err != nil || lid != candidate.SenderUserID {
+		t.Fatalf("senderRef -> UserID = %s, %v", lid, err)
 	}
-	ref, err := store.Inbound().ResolveSenderRef(context.Background(), key, candidate.SenderLID)
+	ref, err := store.Inbound().ResolveSenderRef(context.Background(), key, candidate.SenderUserID)
 	if err != nil || ref != claimed.Message.SenderRef {
 		t.Fatalf("LID -> senderRef = %s, %v", ref, err)
 	}
@@ -446,11 +446,11 @@ func TestSenderRefAndLIDResolveBothWays(t *testing.T) {
 	}
 	conflict := aliasChanged
 	conflict.ProviderMessageID = "lid-conflicting-phone"
-	conflict.SenderLID, _ = identity.ParseLID("10000000042@lid")
+	conflict.SenderUserID, _ = identity.ParseUserID("10000000042@lid")
 	conflict.ReceivedAt = conflict.ReceivedAt.Add(time.Second)
 	conflict.OccurredAt = conflict.OccurredAt.Add(time.Second)
 	if _, err := store.Inbound().ClaimAndResolveSender(context.Background(), conflict); !agent.IsCode(err, agent.ErrorIntegrityFailure) {
-		t.Fatalf("conflicting LID/phone binding error = %v", err)
+		t.Fatalf("conflicting UserID/phone binding error = %v", err)
 	}
 }
 
@@ -458,10 +458,10 @@ func TestInboundMentionsKeepRawTextAndSurviveAsHistorySnapshots(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	firstCandidate := testCandidate(t, "mention-source", "15550000061@s.whatsapp.net")
-	targetLID, _ := identity.ParseLID("10000000077@lid")
+	targetUserID, _ := identity.ParseUserID("10000000077@lid")
 	firstCandidate.Text = "halo @10000000077 dan @999999"
 	firstCandidate.Mentions = []conversation.IncomingMention{
-		{Token: "@10000000077", TargetLID: targetLID, DisplayName: "Budi"},
+		{Token: "@10000000077", TargetUserID: targetUserID, DisplayName: "Budi"},
 		{Token: "@999999", Bot: true},
 	}
 	first, err := store.Inbound().ClaimAndResolveSender(ctx, firstCandidate)
@@ -1141,14 +1141,14 @@ func testCandidate(t *testing.T, providerMessageID, chat string) conversation.In
 	t.Helper()
 	tenantID, _ := identity.NewTenantID()
 	accountID, _ := identity.NewAccountID()
-	lid, _ := identity.ParseLID("10000000009@lid")
+	lid, _ := identity.ParseUserID("10000000009@lid")
 	now := time.Now().UTC()
 	return conversation.IncomingCandidate{
 		TenantID:            tenantID,
 		AccountID:           accountID,
 		ProviderMessageID:   providerMessageID,
 		ProviderChatAddress: chat,
-		SenderLID:           lid,
+		SenderUserID:        lid,
 		ProviderSenderPhone: "15550000009@s.whatsapp.net",
 		SenderName:          "Tester",
 		ChatKind:            conversation.ChatDirect,

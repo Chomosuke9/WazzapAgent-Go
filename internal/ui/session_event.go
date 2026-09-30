@@ -8,7 +8,7 @@ import (
 )
 
 // SessionLog records WhatsApp session status changes in the UI log. The UI
-// itself polls GetWhatsAppSessionStatus, so nothing is pushed to the frontend.
+// itself polls GetDiscordSessionStatus, so nothing is pushed to the frontend.
 type SessionLog struct{ Logs *observability.LogBuffer }
 
 // TryPublish writes a safe summary of the status change. It never records

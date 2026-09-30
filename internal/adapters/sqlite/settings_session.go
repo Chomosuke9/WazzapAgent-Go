@@ -36,11 +36,11 @@ func (repository *SessionBindingRepository) LoadSessionBinding(ctx context.Conte
 	return loadSessionBinding(ctx, store.db)
 }
 
-func (repository *SessionBindingRepository) BeginSessionPairing(ctx context.Context, scope control.SessionScope) error {
+func (repository *SessionBindingRepository) BeginSessionLink(ctx context.Context, scope control.SessionScope) error {
 	if err := validateSessionScope(scope); err != nil {
 		return err
 	}
-	tx, unlock, err := repository.begin(ctx, "begin session pairing")
+	tx, unlock, err := repository.begin(ctx, "begin session link")
 	if err != nil {
 		return err
 	}
@@ -50,28 +50,28 @@ func (repository *SessionBindingRepository) BeginSessionPairing(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	if binding.State == control.SessionPaired {
-		return agent.NewError(agent.ErrorConflict, "begin session pairing", errors.New("WhatsApp session is already paired"))
+	if binding.State == control.SessionLinked {
+		return agent.NewError(agent.ErrorConflict, "begin session link", errors.New("a Discord bot is already linked"))
 	}
 	if binding.HasPendingScope {
-		return agent.NewError(agent.ErrorConflict, "begin session pairing", errors.New("another session scope change is pending"))
+		return agent.NewError(agent.ErrorConflict, "begin session link", errors.New("another session scope change is pending"))
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE session_state SET pending_tenant_id = ?, pending_account_id = ?, updated_at_ms = ? WHERE id = 1`, scope.TenantID.String(), scope.AccountID.String(), time.Now().UTC().UnixMilli())
 	if err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "write pending session scope", err)
 	}
-	return commitSessionTx(tx, "begin session pairing")
+	return commitSessionTx(tx, "begin session link")
 }
 
-func (repository *SessionBindingRepository) MarkSessionPaired(ctx context.Context, scope control.SessionScope, whatsappAccountID string) error {
+func (repository *SessionBindingRepository) MarkSessionLinked(ctx context.Context, scope control.SessionScope, discordBotID string) error {
 	if err := validateSessionScope(scope); err != nil {
 		return err
 	}
-	whatsappAccountID = strings.TrimSpace(whatsappAccountID)
-	if whatsappAccountID == "" || len(whatsappAccountID) > 256 {
-		return agent.NewError(agent.ErrorInvalidArgument, "mark session paired", errors.New("WhatsApp account identity is invalid"))
+	discordBotID = strings.TrimSpace(discordBotID)
+	if discordBotID == "" || len(discordBotID) > 256 {
+		return agent.NewError(agent.ErrorInvalidArgument, "mark session linked", errors.New("Discord bot identity is invalid"))
 	}
-	tx, unlock, err := repository.begin(ctx, "mark session paired")
+	tx, unlock, err := repository.begin(ctx, "mark session linked")
 	if err != nil {
 		return err
 	}
@@ -83,26 +83,26 @@ func (repository *SessionBindingRepository) MarkSessionPaired(ctx context.Contex
 	}
 	if binding.HasPendingScope {
 		if binding.PendingScope != scope {
-			return agent.NewError(agent.ErrorConflict, "mark session paired", errors.New("pending session scope changed"))
+			return agent.NewError(agent.ErrorConflict, "mark session linked", errors.New("pending session scope changed"))
 		}
 	} else if !binding.HasActiveScope || binding.ActiveScope != scope {
-		return agent.NewError(agent.ErrorConflict, "mark session paired", errors.New("session scope is not active or pending"))
+		return agent.NewError(agent.ErrorConflict, "mark session linked", errors.New("session scope is not active or pending"))
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE session_state
-		SET active_tenant_id = ?, active_account_id = ?, whatsapp_account_id = ?, state = 'paired',
+		SET active_tenant_id = ?, active_account_id = ?, discord_bot_id = ?, state = 'linked',
 		    pending_tenant_id = NULL, pending_account_id = NULL, updated_at_ms = ?
-		WHERE id = 1`, scope.TenantID.String(), scope.AccountID.String(), whatsappAccountID, time.Now().UTC().UnixMilli())
+		WHERE id = 1`, scope.TenantID.String(), scope.AccountID.String(), discordBotID, time.Now().UTC().UnixMilli())
 	if err != nil {
-		return agent.NewError(agent.ErrorStorageFailure, "write paired session", err)
+		return agent.NewError(agent.ErrorStorageFailure, "write linked session", err)
 	}
-	return commitSessionTx(tx, "mark session paired")
+	return commitSessionTx(tx, "mark session linked")
 }
 
-func (repository *SessionBindingRepository) AbortSessionPairing(ctx context.Context, scope control.SessionScope) error {
+func (repository *SessionBindingRepository) AbortSessionLink(ctx context.Context, scope control.SessionScope) error {
 	if err := validateSessionScope(scope); err != nil {
 		return err
 	}
-	tx, unlock, err := repository.begin(ctx, "abort session pairing")
+	tx, unlock, err := repository.begin(ctx, "abort session link")
 	if err != nil {
 		return err
 	}
@@ -116,13 +116,13 @@ func (repository *SessionBindingRepository) AbortSessionPairing(ctx context.Cont
 		return nil
 	}
 	if binding.PendingScope != scope {
-		return agent.NewError(agent.ErrorConflict, "abort session pairing", errors.New("pending session scope changed"))
+		return agent.NewError(agent.ErrorConflict, "abort session link", errors.New("pending session scope changed"))
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE session_state SET pending_tenant_id = NULL, pending_account_id = NULL, updated_at_ms = ? WHERE id = 1`, time.Now().UTC().UnixMilli())
 	if err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "clear pending session scope", err)
 	}
-	return commitSessionTx(tx, "abort session pairing")
+	return commitSessionTx(tx, "abort session link")
 }
 
 func (repository *SessionBindingRepository) MarkSessionRevoked(ctx context.Context, scope control.SessionScope) error {
@@ -145,10 +145,10 @@ func (repository *SessionBindingRepository) MarkSessionRevoked(ctx context.Conte
 	if binding.State == control.SessionRevoked {
 		return nil
 	}
-	if binding.State != control.SessionPaired {
-		return agent.NewError(agent.ErrorConflict, "mark session revoked", errors.New("WhatsApp session is not paired"))
+	if binding.State != control.SessionLinked {
+		return agent.NewError(agent.ErrorConflict, "mark session revoked", errors.New("no Discord bot is linked"))
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE session_state SET whatsapp_account_id = NULL, state = 'revoked', updated_at_ms = ? WHERE id = 1`, time.Now().UTC().UnixMilli())
+	_, err = tx.ExecContext(ctx, `UPDATE session_state SET state = 'revoked', updated_at_ms = ? WHERE id = 1`, time.Now().UTC().UnixMilli())
 	if err != nil {
 		return agent.NewError(agent.ErrorStorageFailure, "write revoked session", err)
 	}
@@ -181,18 +181,18 @@ type sessionBindingQuerier interface {
 }
 
 func loadSessionBinding(ctx context.Context, query sessionBindingQuerier) (control.SessionBinding, error) {
-	var activeTenant, activeAccount, whatsappID, pendingTenant, pendingAccount sql.NullString
+	var activeTenant, activeAccount, discordID, pendingTenant, pendingAccount sql.NullString
 	var state string
 	var updatedMS int64
-	if err := query.QueryRowContext(ctx, `SELECT active_tenant_id, active_account_id, whatsapp_account_id, state,
+	if err := query.QueryRowContext(ctx, `SELECT active_tenant_id, active_account_id, discord_bot_id, state,
 		pending_tenant_id, pending_account_id, updated_at_ms FROM session_state WHERE id = 1`).Scan(
-		&activeTenant, &activeAccount, &whatsappID, &state, &pendingTenant, &pendingAccount, &updatedMS,
+		&activeTenant, &activeAccount, &discordID, &state, &pendingTenant, &pendingAccount, &updatedMS,
 	); err != nil {
 		return control.SessionBinding{}, agent.NewError(agent.ErrorStorageFailure, "read session binding", err)
 	}
 	binding := control.SessionBinding{State: control.SessionBindingState(state), UpdatedAt: time.UnixMilli(updatedMS).UTC()}
 	switch binding.State {
-	case control.SessionUnpaired, control.SessionPaired, control.SessionRevoked:
+	case control.SessionUnlinked, control.SessionLinked, control.SessionRevoked:
 	default:
 		return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode session binding", errors.New("session state is invalid"))
 	}
@@ -217,9 +217,9 @@ func loadSessionBinding(ctx context.Context, query sessionBindingQuerier) (contr
 		}
 		binding.HasPendingScope = true
 	}
-	binding.WhatsAppAccountID = whatsappID.String
-	if binding.State == control.SessionPaired && (!binding.HasActiveScope || binding.WhatsAppAccountID == "") {
-		return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode session binding", errors.New("paired session is incomplete"))
+	binding.DiscordBotID = discordID.String
+	if binding.State == control.SessionLinked && (!binding.HasActiveScope || binding.DiscordBotID == "") {
+		return control.SessionBinding{}, agent.NewError(agent.ErrorIntegrityFailure, "decode session binding", errors.New("linked session is incomplete"))
 	}
 	return binding, nil
 }

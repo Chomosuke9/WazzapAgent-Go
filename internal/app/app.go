@@ -12,18 +12,20 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
-	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
 )
 
 // Options contains process-owned dependencies which are intentionally kept out
-// of config.Snapshot. GUI callers can provide a pairing sink without making
-// the core runtime write to a terminal.
+// of config.Snapshot.
 type Options struct {
 	SystemPolicy string
-	Pairing      whatsapp.PairingSink
+	// DiscordToken, when set, is the bot token to run with instead of the
+	// one saved in the account's token file. The CLI passes it from its
+	// environment.
+	DiscordToken string
 }
 
 type runtimeHandle interface {
@@ -48,7 +50,7 @@ type Application struct {
 	ready        atomic.Bool
 	started      chan struct{} // closed once composition finished and workers run
 	accountState atomic.Pointer[account.Runtime]
-	adapterState atomic.Pointer[whatsapp.Adapter]
+	adapterState atomic.Pointer[discordadapter.Adapter]
 	runtimeState atomic.Pointer[conversationRuntime]
 	metrics      *observability.Metrics
 
@@ -137,7 +139,7 @@ func (application *Application) run(parent context.Context, diagnostics bool, st
 	}
 
 	var runtime runtimeHandle
-	if application.config.WhatsAppEnabled() {
+	if application.config.DiscordEnabled() {
 		runtime, err = application.runtimeFactory(runCtx)
 		if err != nil {
 			return fmt.Errorf("compose conversation runtime: %w", err)

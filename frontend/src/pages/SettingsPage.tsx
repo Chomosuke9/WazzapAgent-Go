@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
-import { applyAgentSettings, getAgentRuntimeStatus, getSettings, resetWhatsAppChatSettings, saveSettings, type AgentRuntimeStatusDTO, type SettingsValuesDTO, type SettingsViewDTO } from "../services/backend";
+import { applyAgentSettings, getAgentRuntimeStatus, getSettings, resetDiscordChatSettings, saveSettings, type AgentRuntimeStatusDTO, type SettingsValuesDTO, type SettingsViewDTO } from "../services/backend";
 
 const secretKeep = () => ({ action: "keep", value: "" });
 const settingsCategories = [
@@ -135,7 +135,7 @@ export function SettingsPage() {
     setError(null);
     setResetMessage("");
     try {
-      const result = await resetWhatsAppChatSettings({
+      const result = await resetDiscordChatSettings({
         expectedSettingsRevision: snapshot.revision,
         category,
       });
@@ -173,7 +173,7 @@ export function SettingsPage() {
         <label><span>Owner WhatsApp ID</span><input value={draft.ownerJID} onChange={(event) => update("ownerJID", event.target.value)} /></label>
         <label className="wide"><span>Allowed chat IDs</span><input value={(draft.chatAllowlist ?? []).join(", ")} onChange={(event) => update("chatAllowlist", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} /></label>
         <label className="wide"><span>Assistant instructions</span><textarea rows={4} value={draft.basePrompt} onChange={(event) => update("basePrompt", event.target.value)} /></label>
-        <label><span>WhatsApp mode</span><select value={draft.whatsAppEnabled ? "enabled" : "disabled"} onChange={(event) => update("whatsAppEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label><span>WhatsApp mode</span><select value={draft.discordEnabled ? "enabled" : "disabled"} onChange={(event) => update("discordEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Agent mode</span><select value={draft.agentEnabled ? "enabled" : "disabled"} onChange={(event) => update("agentEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Start on launch</span><select value={draft.startOnLaunch ? "enabled" : "disabled"} onChange={(event) => update("startOnLaunch", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
       </div>

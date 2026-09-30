@@ -1,6 +1,7 @@
 // Package identity contains validated semantic identifiers shared by the core.
-// Delivery addresses and credentials deliberately do not belong here. WhatsApp
-// LID is the canonical participant identity and is represented explicitly.
+// Delivery addresses and credentials deliberately do not belong here. The
+// Discord user ID is the canonical participant identity and is represented
+// explicitly.
 package identity
 
 import (
@@ -24,14 +25,14 @@ type InvocationID struct{ value string }
 type CausationID struct{ value string }
 type SenderRef struct{ value string }
 
-// LID is WhatsApp's canonical participant identity. Phone JIDs are aliases only.
-type LID struct{ value string }
+// UserID is a Discord user snowflake, the canonical participant identity.
+type UserID struct{ value string }
 type ProviderID struct{ value string }
 type PolicyID struct{ value string }
 
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,62}$`)
 var senderRefPattern = regexp.MustCompile(`^[0-9a-z]{6}$`)
-var lidPattern = regexp.MustCompile(`^[0-9]{1,32}@(hosted\.)?lid$`)
+var userIDPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 const (
 	senderRefAlphabet      = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -91,11 +92,11 @@ func ParseSenderRef(value string) (SenderRef, error) {
 	return SenderRef{value: value}, nil
 }
 
-func ParseLID(value string) (LID, error) {
-	if !lidPattern.MatchString(value) {
-		return LID{}, errors.New("LID must be a numeric WhatsApp @lid or @hosted.lid address")
+func ParseUserID(value string) (UserID, error) {
+	if !userIDPattern.MatchString(value) {
+		return UserID{}, errors.New("user ID must be a numeric Discord snowflake")
 	}
-	return LID{value: value}, nil
+	return UserID{value: value}, nil
 }
 
 func ParseProviderID(value string) (ProviderID, error) {
@@ -157,7 +158,7 @@ func (id EffectID) String() string      { return id.value }
 func (id InvocationID) String() string  { return id.value }
 func (id CausationID) String() string   { return id.value }
 func (id SenderRef) String() string     { return id.value }
-func (id LID) String() string           { return id.value }
+func (id UserID) String() string        { return id.value }
 func (id ProviderID) String() string    { return id.value }
 func (id PolicyID) String() string      { return id.value }
 
@@ -171,7 +172,7 @@ func (id EffectID) IsZero() bool      { return id.value == "" }
 func (id InvocationID) IsZero() bool  { return id.value == "" }
 func (id CausationID) IsZero() bool   { return id.value == "" }
 func (id SenderRef) IsZero() bool     { return id.value == "" }
-func (id LID) IsZero() bool           { return id.value == "" }
+func (id UserID) IsZero() bool        { return id.value == "" }
 func (id ProviderID) IsZero() bool    { return id.value == "" }
 func (id PolicyID) IsZero() bool      { return id.value == "" }
 

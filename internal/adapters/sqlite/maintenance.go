@@ -76,6 +76,16 @@ func (store *Store) Maintain(ctx context.Context, request maintenance.Request) (
 	); err != nil {
 		return maintenance.Result{}, storageError("delete expired sent stickers", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM receipt_aliases
+      WHERE rowid IN (
+        SELECT rowid FROM receipt_aliases
+        WHERE tenant_id = ? AND created_at_ms <= ?
+        ORDER BY created_at_ms LIMIT ?
+      )`,
+		request.TenantID.String(), request.DeleteBefore.UnixMilli(), request.BatchSize,
+	); err != nil {
+		return maintenance.Result{}, storageError("delete expired receipt aliases", err)
+	}
 	if request.HistoryKeepLatest > 0 {
 		historyResult, err := tx.ExecContext(ctx, `DELETE FROM history_entries WHERE sequence IN (
           SELECT sequence FROM (

@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   getSettings,
-  getWhatsAppChatSettings,
-  saveWhatsAppChatSettings,
-  type WhatsAppChatSettingsDTO,
+  getDiscordChatSettings,
+  saveDiscordChatSettings,
+  type DiscordChatSettingsDTO,
 } from "../services/backend";
 import { errorMessage } from "./ChatTasks";
 
-type Values = Omit<WhatsAppChatSettingsDTO, "version">;
+type Values = Omit<DiscordChatSettingsDTO, "version">;
 
 const maxSmartRules = 10;
 
@@ -26,7 +26,7 @@ function ruleList(rules: string): string[] {
 // level and the chat's custom instructions. Every change is saved at once,
 // like the same change made with /trigger, /permission or /prompt in the chat.
 export function ChatSettings({ chatID, isGroup }: { chatID: string; isGroup: boolean }) {
-  const [settings, setSettings] = useState<WhatsAppChatSettingsDTO | null>(null);
+  const [settings, setSettings] = useState<DiscordChatSettingsDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null);
@@ -41,7 +41,7 @@ export function ChatSettings({ chatID, isGroup }: { chatID: string; isGroup: boo
     let mounted = true;
     setLoading(true);
     setNotice(null);
-    void getWhatsAppChatSettings(chatID)
+    void getDiscordChatSettings(chatID)
       .then((result) => {
         if (!mounted) return;
         setSettings(result);
@@ -64,7 +64,7 @@ export function ChatSettings({ chatID, isGroup }: { chatID: string; isGroup: boo
     setSaving(true);
     setNotice(null);
     try {
-      const updated = await saveWhatsAppChatSettings({
+      const updated = await saveDiscordChatSettings({
         chatID,
         expectedVersion: settings.version,
         moderationLevel: next.moderationLevel,

@@ -9,8 +9,8 @@ import (
 type SessionBindingState string
 
 const (
-	SessionUnpaired SessionBindingState = "unpaired"
-	SessionPaired   SessionBindingState = "paired"
+	SessionUnlinked SessionBindingState = "unlinked"
+	SessionLinked   SessionBindingState = "linked"
 	SessionRevoked  SessionBindingState = "revoked"
 )
 
@@ -19,7 +19,7 @@ type SessionRuntimeState string
 const (
 	RuntimeStopped      SessionRuntimeState = "stopped"
 	RuntimeStarting     SessionRuntimeState = "starting"
-	RuntimePairing      SessionRuntimeState = "pairing"
+	RuntimeLinking      SessionRuntimeState = "linking"
 	RuntimeConnecting   SessionRuntimeState = "connecting"
 	RuntimeConnected    SessionRuntimeState = "connected"
 	RuntimeReconnecting SessionRuntimeState = "reconnecting"
@@ -29,61 +29,48 @@ const (
 	RuntimeFailed       SessionRuntimeState = "failed"
 )
 
-type PairingMethod string
-
-const (
-	PairingQR        PairingMethod = "qr"
-	PairingPhoneCode PairingMethod = "phone_code"
-)
-
 type SessionRunMode string
 
 const (
-	SessionRunResume  SessionRunMode = "resume"
-	SessionRunPairing SessionRunMode = "pairing"
+	SessionRunResume SessionRunMode = "resume"
+	SessionRunLink   SessionRunMode = "link"
 )
 
 type SessionBinding struct {
-	State             SessionBindingState
-	ActiveScope       SessionScope
-	HasActiveScope    bool
-	WhatsAppAccountID string
-	PendingScope      SessionScope
-	HasPendingScope   bool
-	UpdatedAt         time.Time
+	State           SessionBindingState
+	ActiveScope     SessionScope
+	HasActiveScope  bool
+	DiscordBotID    string
+	PendingScope    SessionScope
+	HasPendingScope bool
+	UpdatedAt       time.Time
 }
 
+// SessionRunRequest starts a session. Token is set only when linking: it is
+// the bot token to verify and save. It is never persisted outside the
+// account scope's token file or written to logs.
 type SessionRunRequest struct {
-	Mode   SessionRunMode
-	Method PairingMethod
-	Phone  string
-}
-
-// SessionPairing contains short-lived link material. It is never persisted or
-// written to logs. QRCodeDataURL is generated locally from the provider code.
-type SessionPairing struct {
-	Method        PairingMethod
-	Code          string
-	QRCodeDataURL string
-	Generation    uint64
-	ExpiresAt     time.Time
+	Mode  SessionRunMode
+	Token string
 }
 
 type SessionRuntimeEvent struct {
-	State             SessionRuntimeState
-	Pairing           *SessionPairing
-	WhatsAppAccountID string
-	ErrorCode         agent.ErrorCode
+	State        SessionRuntimeState
+	DiscordBotID string
+	BotName      string
+	ErrorCode    agent.ErrorCode
 }
 
 type SessionStatus struct {
-	BindingState      SessionBindingState
-	RuntimeState      SessionRuntimeState
-	SessionPresent    bool
-	WhatsAppAccountID string
-	OperationID       string
-	Pairing           *SessionPairing
-	ErrorCode         agent.ErrorCode
+	BindingState   SessionBindingState
+	RuntimeState   SessionRuntimeState
+	SessionPresent bool
+	DiscordBotID   string
+	// BotName is the bot's Discord username, known once it has connected in
+	// this process.
+	BotName     string
+	OperationID string
+	ErrorCode   agent.ErrorCode
 }
 
 type SessionEvent struct {
@@ -96,7 +83,7 @@ type SessionOperation struct {
 	Status      SessionStatus
 }
 
-type BeginPairingRequest struct {
-	Method PairingMethod
-	Phone  string
+// BeginLinkRequest links a Discord bot by its token.
+type BeginLinkRequest struct {
+	Token string
 }

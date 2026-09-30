@@ -48,8 +48,8 @@ func TestSerializeDotEnvIsCanonicalAndSafeByDefault(t *testing.T) {
 	values := map[string]string{
 		"DISCORDAGENT_LLM_API_KEY": "secret",
 		"DISCORDAGENT_TENANT_ID":   "tenant",
-		"Z":                  "line\nquote \" slash \\$ unicode ✓",
-		"A":                  "",
+		"Z":                        "line\nquote \" slash \\$ unicode ✓",
+		"A":                        "",
 	}
 	got, err := SerializeDotEnv(values, DotEnvExportOptions{})
 	if err != nil {

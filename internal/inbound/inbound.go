@@ -66,7 +66,6 @@ type IgnoreReason string
 
 const (
 	IgnoreFromMe            IgnoreReason = "from_me"
-	IgnoreStatus            IgnoreReason = "status"
 	IgnoreNotAllowlisted    IgnoreReason = "not_allowlisted"
 	IgnoreGroupNotMentioned IgnoreReason = "group_not_mentioned"
 	IgnorePolicyDenied      IgnoreReason = "policy_denied"
@@ -75,7 +74,7 @@ const (
 
 func (reason IgnoreReason) Valid() bool {
 	switch reason {
-	case IgnoreFromMe, IgnoreStatus, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted:
+	case IgnoreFromMe, IgnoreNotAllowlisted, IgnoreGroupNotMentioned, IgnorePolicyDenied, IgnoreMuted:
 		return true
 	default:
 		return false

@@ -9,8 +9,8 @@ import (
 
 const (
 	ChatAllowlistAll    = "*"
-	ChatAllowlistDirect = "*@lid"
-	ChatAllowlistGroup  = "*@g.us"
+	ChatAllowlistDirect = "dm:*"
+	ChatAllowlistGroup  = "server:*"
 )
 
 func IsChatAllowlistWildcard(value string) bool {
@@ -82,10 +82,11 @@ func (gate InboundGate) IsOwner(addresses ...string) bool {
 	return false
 }
 
-// ChatAllowlisted matches the chat address, then kind wildcards. Alternative
-// addresses (a direct chat's phone alias) are honored only outside groups so a
-// group sender's alias can never admit the whole group.
-func (gate InboundGate) ChatAllowlisted(kind conversation.ChatKind, address string, alternatives ...string) bool {
+// ChatAllowlisted matches the chat address, then kind wildcards, then the
+// chat's scopes: its server, a thread's parent channel, or a direct chat's
+// user. Scopes are properties of the chat itself, never of the sender, so a
+// sender can not admit a server channel on their own.
+func (gate InboundGate) ChatAllowlisted(kind conversation.ChatKind, address string, scopes ...string) bool {
 	if _, exists := gate.allowlist[address]; exists {
 		return true
 	}
@@ -94,14 +95,11 @@ func (gate InboundGate) ChatAllowlisted(kind conversation.ChatKind, address stri
 			return true
 		}
 	}
-	if kind == conversation.ChatGroup {
-		return false
-	}
-	for _, alternative := range alternatives {
-		if alternative == "" {
+	for _, scope := range scopes {
+		if scope == "" {
 			continue
 		}
-		if _, exists := gate.allowlist[alternative]; exists {
+		if _, exists := gate.allowlist[scope]; exists {
 			return true
 		}
 	}

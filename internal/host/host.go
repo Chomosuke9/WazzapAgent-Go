@@ -1,5 +1,5 @@
 // Package host starts the settings-driven application shared by the desktop
-// app and the web server: the data-root lock, settings, the WhatsApp session,
+// app and the web server: the data-root lock, settings, the Discord session,
 // the Agent runtime and the UI service on top of them.
 package host
 
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
-	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	coreapp "github.com/Chomosuke9/DiscordAgent-Go/internal/app"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
@@ -90,7 +90,7 @@ func Open(ctx context.Context, paths platform.Paths, version string) (_ *Host, r
 	if err != nil {
 		return nil, err
 	}
-	host.sessions, err = control.NewSessionController(repository, bindings, platform.SessionScopeResolver{}, whatsapp.NewSessionFactory(), ui.SessionLog{Logs: logs}, lease.Root())
+	host.sessions, err = control.NewSessionController(repository, bindings, platform.SessionScopeResolver{}, &discordadapter.SessionFactory{Logger: host.Logger}, ui.SessionLog{Logs: logs}, lease.Root())
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (host *Host) StartOnLaunch(ctx context.Context) {
 	}()
 }
 
-// Close stops the Agent and the WhatsApp session, then releases storage and
+// Close stops the Agent and the Discord session, then releases storage and
 // the data root. If a runtime does not stop in time, storage and the lock stay
 // held until the process exits: closing them under a live runtime is unsafe.
 func (host *Host) Close() error {

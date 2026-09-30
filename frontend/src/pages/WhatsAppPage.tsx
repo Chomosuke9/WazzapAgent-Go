@@ -1,20 +1,20 @@
 import { useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
 import {
-  beginWhatsAppPairing,
-  cancelWhatsAppPairing,
-  getWhatsAppSessionStatus,
-  logoutWhatsAppSession,
-  reconnectWhatsAppSession,
-  resumeWhatsAppSession,
-  stopWhatsAppSession,
-  type WhatsAppSessionOperationDTO,
-  type WhatsAppSessionStatusDTO,
+  beginDiscordLink,
+  cancelDiscordLink,
+  getDiscordSessionStatus,
+  unlinkDiscordBot,
+  reconnectDiscordSession,
+  resumeDiscordSession,
+  stopDiscordSession,
+  type DiscordSessionOperationDTO,
+  type DiscordSessionStatusDTO,
 } from "../services/backend";
 
 const activeRuntimeStates = new Set(["starting", "pairing", "connecting", "connected", "open", "reconnecting", "stopping", "draining", "logging_out"]);
 
-function statusLabel(status: WhatsAppSessionStatusDTO | null): string {
+function statusLabel(status: DiscordSessionStatusDTO | null): string {
   if (!status) return "Loading status";
   if (status.bindingState === "paired" && (status.runtimeState === "connected" || status.runtimeState === "open")) return "Connected";
   if (status.bindingState === "paired" && status.runtimeState === "reconnecting") return "Reconnecting";
@@ -29,8 +29,8 @@ function expired(expiresAt?: string): boolean {
   return !expiresAt || Date.parse(expiresAt) <= Date.now();
 }
 
-export function WhatsAppPage() {
-  const [status, setStatus] = useState<WhatsAppSessionStatusDTO | null>(null);
+export function DiscordPage() {
+  const [status, setStatus] = useState<DiscordSessionStatusDTO | null>(null);
   const [method, setMethod] = useState<"qr" | "phone_code">("qr");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,7 +38,7 @@ export function WhatsAppPage() {
 
   // The page polls the backend for session status; there is no push channel.
   function refreshStatus() {
-    void getWhatsAppSessionStatus()
+    void getDiscordSessionStatus()
       .then(setStatus)
       .catch(() => setError("Could not load session status. Try restarting the app."));
   }
@@ -53,7 +53,7 @@ export function WhatsAppPage() {
   const paired = status?.bindingState === "paired";
   const pairingActive = status?.runtimeState === "pairing" && Boolean(status.operationID);
   const pairingExpired = pairingActive && expired(status?.pairing?.expiresAt);
-  async function runOperation(action: () => Promise<WhatsAppSessionOperationDTO>) {
+  async function runOperation(action: () => Promise<DiscordSessionOperationDTO>) {
     setBusy(true);
     setError("");
     try {
@@ -66,7 +66,7 @@ export function WhatsAppPage() {
     }
   }
 
-  async function runStatusOperation(action: () => Promise<WhatsAppSessionStatusDTO>) {
+  async function runStatusOperation(action: () => Promise<DiscordSessionStatusDTO>) {
     setBusy(true);
     setError("");
     try {
@@ -80,23 +80,23 @@ export function WhatsAppPage() {
   }
 
   function pair() {
-    void runOperation(() => beginWhatsAppPairing({ method, phone: method === "phone_code" ? phone : "" }));
+    void runOperation(() => beginDiscordLink({ method, phone: method === "phone_code" ? phone : "" }));
   }
 
   function logout() {
     if (window.confirm("Remove the DiscordAgent device from this WhatsApp account?")) {
-      void runOperation(logoutWhatsAppSession);
+      void runOperation(unlinkDiscordBot);
     }
   }
 
   function cancelPairing() {
     const operationID = status?.operationID;
     if (!operationID) return;
-    void runStatusOperation(() => cancelWhatsAppPairing(operationID));
+    void runStatusOperation(() => cancelDiscordLink(operationID));
   }
 
   function stopSession() {
-    void runStatusOperation(stopWhatsAppSession);
+    void runStatusOperation(stopDiscordSession);
   }
 
   return <div className="page">
@@ -117,7 +117,7 @@ export function WhatsAppPage() {
           <p className="eyebrow">DEVICE STATUS</p>
           <h2>{statusLabel(status)}</h2>
         </div>
-        {paired && status?.whatsAppAccountID && <span className="session-account">{status.whatsAppAccountID}</span>}
+        {paired && status?.discordBotID && <span className="session-account">{status.discordBotID}</span>}
       </div>
       <p className="muted session-explainer">{status?.agentActive ? "Your assistant is using this connection to receive and respond to messages." : "This session only maintains the WhatsApp connection. The Agent will not process or reply to messages until it is started."}</p>
 
@@ -148,9 +148,9 @@ export function WhatsAppPage() {
 
       {paired && !status?.agentActive && <div className="session-actions session-connected-actions">
         {running ? <>
-          <button className="button secondary" disabled={busy || status?.runtimeState === "reconnecting"} onClick={() => void runOperation(reconnectWhatsAppSession)}>{status?.runtimeState === "reconnecting" ? "Connecting…" : "Reconnect"}</button>
+          <button className="button secondary" disabled={busy || status?.runtimeState === "reconnecting"} onClick={() => void runOperation(reconnectDiscordSession)}>{status?.runtimeState === "reconnecting" ? "Connecting…" : "Reconnect"}</button>
           <button className="button secondary" disabled={busy} onClick={stopSession}>Stop connection</button>
-        </> : <button className="button primary" disabled={busy} onClick={() => void runOperation(resumeWhatsAppSession)}>{busy ? "Connecting…" : "Reconnect saved session"}</button>}
+        </> : <button className="button primary" disabled={busy} onClick={() => void runOperation(resumeDiscordSession)}>{busy ? "Connecting…" : "Reconnect saved session"}</button>}
         <button className="button danger" disabled={busy} onClick={logout}>Log out of WhatsApp</button>
       </div>}
 

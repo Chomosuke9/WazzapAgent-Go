@@ -32,7 +32,7 @@ func TestControlSettingsRepositoryPersistsTypedValues(t *testing.T) {
 		t.Fatalf("initial view = %#v", initial)
 	}
 	draft := config.DefaultSettings()
-	draft.WhatsAppEnabled = false
+	draft.DiscordEnabled = false
 	draft.AgentEnabled = false
 	draft.AssistantName = "persisted"
 	result, err := controller.Save(ctx, initial.Revision, control.SettingsPatch{Draft: draft})

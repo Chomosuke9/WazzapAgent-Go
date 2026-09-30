@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/app"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/backup"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
@@ -57,13 +57,13 @@ func run() int {
 		return 2
 	}
 
-	var pairing whatsapp.PairingSink
-	if cfg.PairingOutput() == "terminal" {
-		pairing = &whatsapp.TerminalPairingSink{Writer: os.Stdout}
-	}
+	// DISCORDAGENT_DISCORD_TOKEN is read here, never stored in settings: it
+	// is a credential for this process only. Without it the CLI uses the
+	// token the desktop app linked for this data directory.
+	token, _ := os.LookupEnv("DISCORDAGENT_DISCORD_TOKEN")
 	application := app.New(cfg, logger, app.Options{
 		SystemPolicy: app.RenderSystemPolicy(cfg.AssistantName()),
-		Pairing:      pairing,
+		DiscordToken: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(token), "Bot ")),
 	})
 	if err := application.RunCLI(ctx); err != nil {
 		logger.Error("application stopped with error", "error", err)

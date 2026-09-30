@@ -58,12 +58,6 @@ type SendTextRequest struct {
 	Choices []string
 }
 
-// SendCopyCodeRequest sends Code behind a single "copy" button.
-type SendCopyCodeRequest struct {
-	Key  agent.Key
-	Code string
-}
-
 // Button is one quick-reply button. Tapping it sends ID back as the user's
 // message, so a slash-command ID ("/trigger mention off") re-enters that command.
 type Button struct {
@@ -108,9 +102,6 @@ type SendTextResult struct {
 type TextSender interface {
 	Ready() bool
 	SendText(context.Context, SendTextRequest) (SendTextResult, error)
-	// SendCopyCode is a best-effort follow-up; its error never changes the
-	// outcome of the reply it follows.
-	SendCopyCode(context.Context, SendCopyCodeRequest) error
 }
 
 type Observer interface {
@@ -182,7 +173,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 	text, choices := SplitChoices(action.Text)
 	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Choices: choices})
 	if sendErr != nil {
-		// The request may have reached WhatsApp. Never send it a second time.
+		// The request may have reached Discord. Never send it a second time.
 		code := agent.CodeOf(sendErr)
 		record(func(ctx context.Context) error {
 			return dispatcher.store.MarkUnknown(ctx, ref, code, dispatcher.clock.Now())
@@ -195,9 +186,6 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 			return dispatcher.store.MarkUnknown(ctx, ref, agent.ErrorStorageFailure, dispatcher.clock.Now())
 		})
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", fmt.Errorf("complete storage failed: %w", err))
-	}
-	if code := FirstCodeBlock(text); code != "" {
-		_ = dispatcher.sender.SendCopyCode(ctx, SendCopyCodeRequest{Key: ref.Key, Code: code})
 	}
 	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded, CompletedAt: &completedAt}, nil
 }

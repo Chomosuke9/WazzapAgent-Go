@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
 import { NavIcon, type PageId } from "../layouts/AppLayout";
-import { getAgentRuntimeStatus, getWhatsAppUsage, startAgent, stopAgent, type AgentRuntimeStatusDTO, type WhatsAppUsageDTO } from "../services/backend";
+import { getAgentRuntimeStatus, getDiscordUsage, startAgent, stopAgent, type AgentRuntimeStatusDTO, type DiscordUsageDTO } from "../services/backend";
 
 const agentLabels: Record<string, string> = {
   stopped: "Stopped",
@@ -11,7 +11,7 @@ const agentLabels: Record<string, string> = {
   failed: "Failed",
 };
 
-function whatsappLabel(state: string): string {
+function discordLabel(state: string): string {
   const labels: Record<string, string> = {
     stopped: "Inactive",
     starting: "Starting connection",
@@ -32,7 +32,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
   const [runtime, setRuntime] = useState<AgentRuntimeStatusDTO | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [usage, setUsage] = useState<WhatsAppUsageDTO | null>(null);
+  const [usage, setUsage] = useState<DiscordUsageDTO | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -47,7 +47,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
 
   const refreshUsage = useCallback(async () => {
     try {
-      setUsage(await getWhatsAppUsage(1));
+      setUsage(await getDiscordUsage(1));
       setUsageError(null);
     } catch (reason: unknown) {
       setUsageError(reason instanceof Error ? reason.message : "Could not load message activity.");
@@ -89,7 +89,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
     }
   }
 
-  const connected = runtime?.whatsAppState === "connected" || runtime?.whatsAppState === "open";
+  const connected = runtime?.discordState === "connected" || runtime?.discordState === "open";
   const running = runtime?.state === "running";
   const heading = statusError ? "Status unavailable" : running ? "Your assistant is on duty." : runtime?.state === "starting" ? "Getting things ready…" : runtime?.state === "stopping" ? "Wrapping things up…" : runtime?.state === "failed" ? "Your assistant needs attention." : runtime ? "Ready when you are." : "Checking your workspace…";
   const description = statusError ? "We couldn't check your assistant. Try refreshing its status." : running ? "Your assistant is active. Keep an eye on conversations and manage your messages from here." : runtime?.state === "failed" ? "Check your settings and recent activity, then try starting your assistant again." : inTransition ? "This usually takes a moment. Your status will update automatically." : "Connect WhatsApp, set up your assistant, and start handling conversations in one place.";
@@ -111,7 +111,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
       <div className={`assistant-emblem${running && !statusError ? " is-running" : ""}`} aria-hidden="true"><NavIcon id="whatsapp" /><span /></div>
     </section>
     <div className="workspace-stats">
-      <section className="card status-card"><span className="section-icon"><NavIcon id="whatsapp" /></span><p>WhatsApp</p><h3>{statusError ? "Unavailable" : runtime ? whatsappLabel(runtime.whatsAppState) : "Checking…"}</h3><button className="text-button" onClick={() => onNavigate("whatsapp")}>{connected ? "Manage connection" : "Set up connection"} <span aria-hidden="true">→</span></button></section>
+      <section className="card status-card"><span className="section-icon"><NavIcon id="whatsapp" /></span><p>WhatsApp</p><h3>{statusError ? "Unavailable" : runtime ? discordLabel(runtime.discordState) : "Checking…"}</h3><button className="text-button" onClick={() => onNavigate("whatsapp")}>{connected ? "Manage connection" : "Set up connection"} <span aria-hidden="true">→</span></button></section>
       <section className="card status-card"><span className="section-icon"><NavIcon id="settings" /></span><p>Configuration</p><h3>{statusError ? "Unavailable" : !runtime ? "Checking…" : runtime.pendingChanges ? "Changes to apply" : running ? "Up to date" : "Saved settings"}</h3><button className="text-button" onClick={() => onNavigate("settings")}>{runtime?.pendingChanges ? "Review changes" : "Manage settings"} <span aria-hidden="true">→</span></button></section>
       <section className="card status-card"><span className="section-icon"><NavIcon id="logs" /></span><p>Assistant</p><h3>{statusError ? "Unavailable" : running ? "Active" : agentLabels[runtime?.state ?? ""] ?? "Checking…"}</h3><button className="text-button" onClick={() => onNavigate("logs")}>View recent activity <span aria-hidden="true">→</span></button></section>
     </div>

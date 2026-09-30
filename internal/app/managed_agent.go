@@ -20,10 +20,10 @@ func (factory ManagedAgentRuntimeFactory) OpenAgentRuntime(_ context.Context, sn
 
 // Snapshot reports WhatsApp connection state for the GUI controller.
 func (application *Application) Snapshot() control.AgentRuntimeSnapshot {
-	result := control.AgentRuntimeSnapshot{WhatsAppState: "stopped"}
-	if accountSnapshot, ok := application.WhatsAppSnapshot(); ok {
-		result.WhatsAppState = accountSnapshot.State.String()
-		result.WhatsAppErrorCode = accountSnapshot.ErrorCode
+	result := control.AgentRuntimeSnapshot{DiscordState: "stopped"}
+	if accountSnapshot, ok := application.DiscordSnapshot(); ok {
+		result.DiscordState = accountSnapshot.State.String()
+		result.DiscordErrorCode = accountSnapshot.ErrorCode
 	}
 	return result
 }

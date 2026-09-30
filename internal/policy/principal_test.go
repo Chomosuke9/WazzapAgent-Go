@@ -17,17 +17,17 @@ func TestHumanPrincipalCarriesOnlyVerifiedInboundIdentity(t *testing.T) {
 	messageID, _ := identity.NewMessageID()
 	invocationID, _ := identity.NewInvocationID()
 	causationID, _ := identity.NewCausationID()
-	lid, _ := identity.ParseLID("10000000001@lid")
+	lid, _ := identity.ParseUserID("10000000001@lid")
 	ref, _ := identity.ParseSenderRef("012345")
 	now := time.Now().UTC()
 	message := conversation.IncomingMessage{
 		ID: messageID, InvocationID: invocationID, CausationID: causationID,
 		TenantID: tenantID, AccountID: accountID, ChatID: chatID,
-		SenderID: participantID, SenderLID: lid, SenderRef: ref,
+		SenderID: participantID, SenderUserID: lid, SenderRef: ref,
 		ChatKind: conversation.ChatDirect, Text: "hello", OccurredAt: now, ReceivedAt: now,
 	}
 	principal, err := policy.HumanPrincipal(message)
-	if err != nil || principal.Kind != policy.PrincipalHuman || principal.LID != lid || principal.ParticipantID != participantID || !principal.InvocationID.IsZero() {
+	if err != nil || principal.Kind != policy.PrincipalHuman || principal.UserID != lid || principal.ParticipantID != participantID || !principal.InvocationID.IsZero() {
 		t.Fatalf("human principal = %#v, %v", principal, err)
 	}
 }

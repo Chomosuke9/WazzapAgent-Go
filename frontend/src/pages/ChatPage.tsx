@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
-  deleteWhatsAppMessage,
-  getWhatsAppConversations,
-  getWhatsAppGroupMembers,
-  getWhatsAppMessages,
-  kickWhatsAppGroupMember,
-  sendWhatsAppMessage,
-  type WhatsAppConversationDTO,
-  type WhatsAppGroupMemberDTO,
-  type WhatsAppMentionDTO,
-  type WhatsAppMessageDTO,
-  type WhatsAppQuoteDTO,
+  deleteDiscordMessage,
+  getDiscordConversations,
+  getDiscordGroupMembers,
+  getDiscordMessages,
+  kickDiscordGroupMember,
+  sendDiscordMessage,
+  type DiscordConversationDTO,
+  type DiscordGroupMemberDTO,
+  type DiscordMentionDTO,
+  type DiscordMessageDTO,
+  type DiscordQuoteDTO,
 } from "../services/backend";
 import { ChatSettings } from "./ChatSettings";
 import { ChatTasks } from "./ChatTasks";
@@ -74,7 +74,7 @@ function mentionInsertionText(name: string, senderRef: string): string {
 
 function renderMessageText(
   text: string,
-  mentions: WhatsAppMentionDTO[] = [],
+  mentions: DiscordMentionDTO[] = [],
   onMentionClick?: (name: string, senderRef: string) => void,
 ): ReactNode[] {
   if (!text) return [];
@@ -143,25 +143,25 @@ function renderMessageText(
   return result;
 }
 
-function replyRoleLabel(quote: WhatsAppQuoteDTO): string {
+function replyRoleLabel(quote: DiscordQuoteDTO): string {
   return quote.role === "assistant" ? "You" : quote.sender || "Contact";
 }
 
 export function ChatPage() {
-  const [conversations, setConversations] = useState<WhatsAppConversationDTO[]>([]);
+  const [conversations, setConversations] = useState<DiscordConversationDTO[]>([]);
   const [chatQuery, setChatQuery] = useState("");
   const [selectedChatID, setSelectedChatID] = useState("");
   const [mobileConversationOpen, setMobileConversationOpen] = useState(false);
-  const [messages, setMessages] = useState<WhatsAppMessageDTO[]>([]);
+  const [messages, setMessages] = useState<DiscordMessageDTO[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [conversationError, setConversationError] = useState("");
   const [messagesError, setMessagesError] = useState("");
   const [actionError, setActionError] = useState("");
   const [draft, setDraft] = useState("");
-  const [replyTarget, setReplyTarget] = useState<WhatsAppMessageDTO | null>(null);
+  const [replyTarget, setReplyTarget] = useState<DiscordMessageDTO | null>(null);
   const [sending, setSending] = useState(false);
-  const [members, setMembers] = useState<WhatsAppGroupMemberDTO[]>([]);
+  const [members, setMembers] = useState<DiscordGroupMemberDTO[]>([]);
   const [botIsGroupAdmin, setBotIsGroupAdmin] = useState(false);
   const [groupAdminChecked, setGroupAdminChecked] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -195,7 +195,7 @@ export function ChatPage() {
       if (requestInFlight || document.hidden) return;
       requestInFlight = true;
       try {
-        const result = await getWhatsAppConversations();
+        const result = await getDiscordConversations();
         if (!mounted) return;
         setConversations(result);
         setSelectedChatID((current) => current && result.some((item) => item.id === current)
@@ -237,7 +237,7 @@ export function ChatPage() {
       if (requestInFlight || document.hidden) return;
       requestInFlight = true;
       try {
-        const result = await getWhatsAppMessages(selectedChatID);
+        const result = await getDiscordMessages(selectedChatID);
         if (mounted) {
           setMessages(result);
           setMessagesError("");
@@ -283,7 +283,7 @@ export function ChatPage() {
     setBotIsGroupAdmin(false);
     setLoadingMembers(true);
     setMembersError("");
-    void getWhatsAppGroupMembers(selectedChatID)
+    void getDiscordGroupMembers(selectedChatID)
       .then((result) => {
         if (!mounted) return;
         setMembers(result.members ?? []);
@@ -306,7 +306,7 @@ export function ChatPage() {
     setSending(true);
     setActionError("");
     try {
-      const message = await sendWhatsAppMessage(selectedChatID, draft, replyTarget?.id ?? "");
+      const message = await sendDiscordMessage(selectedChatID, draft, replyTarget?.id ?? "");
       stickToLatest.current = true;
       forceLatestOnLoad.current = true;
       setMessages((current) => current.some((item) => item.id === message.id)
@@ -334,11 +334,11 @@ export function ChatPage() {
     pendingCaretPosition.current = start + insertion.length;
   }
 
-  async function deleteMessage(message: WhatsAppMessageDTO) {
+  async function deleteMessage(message: DiscordMessageDTO) {
     setBusyMessage(message.id);
     setActionError("");
     try {
-      await deleteWhatsAppMessage(selectedChatID, message.id);
+      await deleteDiscordMessage(selectedChatID, message.id);
       setMessages((current) => current.map((item) => item.id === message.id
         ? { ...item, deleted: true, content: "This message was deleted on WhatsApp." }
         : item));
@@ -349,12 +349,12 @@ export function ChatPage() {
     }
   }
 
-  async function kickMember(member: WhatsAppGroupMemberDTO) {
+  async function kickMember(member: DiscordGroupMemberDTO) {
     if (!window.confirm(`Remove ${member.name} from this WhatsApp group?`)) return;
     setBusyMember(member.id);
     setActionError("");
     try {
-      await kickWhatsAppGroupMember(selectedChatID, member.id);
+      await kickDiscordGroupMember(selectedChatID, member.id);
       setMembers((current) => current.filter((item) => item.id !== member.id));
     } catch (error) {
       setMembersError(actionErrorMessage(error, "Could not remove the member. Check the connection and the WhatsApp account's admin permissions."));

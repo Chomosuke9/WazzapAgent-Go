@@ -263,18 +263,18 @@ func testEnabledApplicationWith(t *testing.T, overrides map[string]string) *Appl
 	t.Helper()
 	dataDir := t.TempDir()
 	values := map[string]string{
-		"DISCORDAGENT_DATA_DIR":         dataDir,
+		"DISCORDAGENT_DATA_DIR":        dataDir,
 		"DISCORDAGENT_DISCORD_ENABLED": "true",
-		"DISCORDAGENT_AGENT_ENABLED":    "false",
-		"DISCORDAGENT_TENANT_ID":        "11111111-1111-4111-8111-111111111111",
-		"DISCORDAGENT_ACCOUNT_ID":       "22222222-2222-4222-8222-222222222222",
+		"DISCORDAGENT_AGENT_ENABLED":   "false",
+		"DISCORDAGENT_TENANT_ID":       "11111111-1111-4111-8111-111111111111",
+		"DISCORDAGENT_ACCOUNT_ID":      "22222222-2222-4222-8222-222222222222",
 		"DISCORDAGENT_OWNER_ID":        "15550000001@s.whatsapp.net",
-		"DISCORDAGENT_CHAT_ALLOWLIST":   "15550000002@s.whatsapp.net",
-		"DISCORDAGENT_LLM_ENDPOINT":     "https://llm.example.invalid/v1/chat/completions",
-		"DISCORDAGENT_LLM_API_KEY":      "test-key",
-		"DISCORDAGENT_LLM_MODEL":        "test-model",
-		"DISCORDAGENT_BASE_PROMPT":      "test prompt",
-		"ASSISTANT_NAME":          "Test Bot",
+		"DISCORDAGENT_CHAT_ALLOWLIST":  "15550000002@s.whatsapp.net",
+		"DISCORDAGENT_LLM_ENDPOINT":    "https://llm.example.invalid/v1/chat/completions",
+		"DISCORDAGENT_LLM_API_KEY":     "test-key",
+		"DISCORDAGENT_LLM_MODEL":       "test-model",
+		"DISCORDAGENT_BASE_PROMPT":     "test prompt",
+		"ASSISTANT_NAME":               "Test Bot",
 	}
 	for key, value := range overrides {
 		values[key] = value

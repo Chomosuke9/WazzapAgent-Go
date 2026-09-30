@@ -283,13 +283,15 @@ func logLevelName(level slog.Level) string {
 var sensitiveLogValue = regexp.MustCompile(`(?i)(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|password|secret|authorization)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)`)
 var bearerLogValue = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]+`)
 
-// whatsAppAddress matches every numeric WhatsApp address (phone, LID, hosted,
-// group, newsletter and so on); the server part is kept so the kind of chat
-// stays readable.
-var whatsAppAddress = regexp.MustCompile(`\b[0-9]+(?:[-.:][0-9]+)*@(s\.whatsapp\.net|c\.us|hosted\.lid|lid|hosted|g\.us|broadcast|newsletter|msgr|interop|bot)\b`)
+// discordMention matches Discord's user, role and channel mention markup.
+var discordMention = regexp.MustCompile(`<(@!?|@&|#)[0-9]{15,20}>`)
 
-// whatsAppMessageID matches WhatsApp message IDs (long upper-case hex).
-var whatsAppMessageID = regexp.MustCompile(`\b[0-9A-F]{16,}\b`)
+// discordSnowflake matches a bare Discord ID: users, channels, servers and
+// messages are all 15 to 20 digit snowflakes.
+var discordSnowflake = regexp.MustCompile(`\b[0-9]{15,20}\b`)
+
+// discordToken matches a bot token: three base64url parts joined by dots.
+var discordToken = regexp.MustCompile(`\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}\b`)
 
 func sanitizeLogText(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
@@ -311,7 +313,7 @@ func sanitizeFullText(value string) string {
 	value = strings.ReplaceAll(value, "\r\n", "\n")
 	value = sensitiveLogValue.ReplaceAllString(value, "$1=<redacted>")
 	value = bearerLogValue.ReplaceAllString(value, "Bearer <redacted>")
-	value = RedactWhatsAppIdentifiers(value)
+	value = RedactDiscordIdentifiers(value)
 	value = strings.TrimSpace(value)
 	if len(value) > maxFullLogText {
 		value = strings.ToValidUTF8(value[:maxFullLogText], "") + "\n…(truncated)"
@@ -319,11 +321,12 @@ func sanitizeFullText(value string) string {
 	return value
 }
 
-// RedactWhatsAppIdentifiers hides WhatsApp addresses and message IDs in free
-// text, such as a library error message.
-func RedactWhatsAppIdentifiers(value string) string {
-	value = whatsAppAddress.ReplaceAllString(value, "<redacted>@$1")
-	return whatsAppMessageID.ReplaceAllString(value, "<message-id>")
+// RedactDiscordIdentifiers hides Discord IDs, mentions and bot tokens in
+// free text, such as a library error message.
+func RedactDiscordIdentifiers(value string) string {
+	value = discordToken.ReplaceAllString(value, "<token>")
+	value = discordMention.ReplaceAllString(value, "<$1redacted>")
+	return discordSnowflake.ReplaceAllString(value, "<id>")
 }
 
 func errorsJoin(failures []error) error {

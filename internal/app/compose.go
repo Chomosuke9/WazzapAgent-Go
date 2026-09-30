@@ -14,7 +14,7 @@ import (
 	llmopenai "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/llm/openai"
 	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/typesafe"
-	whatsapp "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/command"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
@@ -36,7 +36,7 @@ type conversationRuntime struct {
 	configDefaults   agent.ConfigValues
 	langSmith        *observability.LangSmith
 	account          *account.Runtime
-	adapter          *whatsapp.Adapter
+	adapter          *discordadapter.Adapter
 	gate             *policy.FixedGate
 	dispatcher       *action.Dispatcher
 	effectDispatcher *effect.Dispatcher
@@ -138,14 +138,20 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	waAdapter, err := whatsapp.Open(ctx, whatsapp.Config{
+	token := application.options.DiscordToken
+	if token == "" {
+		if token, err = discordadapter.ReadToken(application.config.DiscordTokenPath()); err != nil {
+			return nil, agent.NewError(agent.ErrorStorageFailure, "read Discord bot token", err)
+		}
+	}
+	dcAdapter, err := discordadapter.Open(ctx, discordadapter.Config{
 		TenantID: application.config.TenantID(), AccountID: application.config.AccountID(),
-		DeviceStorePath: application.config.WhatsAppDatabasePath(), OwnerAddress: application.config.OwnerAddress(),
+		Token: token, OwnerAddress: application.config.OwnerAddress(),
 		Allowlist: application.config.Allowlist(), QueueCapacity: application.config.InboundQueue(),
 		Workers: application.config.InboundWorkers(), ConnectTimeout: application.config.ConnectTimeout(),
-		SendTimeout: application.config.SendTimeout(), Pairing: application.options.Pairing,
-		Targets: store.Inbound(), GroupNames: store.Inbound(), GroupMetadata: store.Inbound(), Broadcasts: store,
-		Stickers: store.Stickers(), Logger: application.logger,
+		SendTimeout: application.config.SendTimeout(),
+		Targets: store.Inbound(), ChannelNames: store.Inbound(), Broadcasts: store,
+		Sent: store.Sent(), Logger: application.logger,
 	})
 	if err != nil {
 		return nil, err
@@ -153,10 +159,10 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	adapterOwned := true
 	defer func() {
 		if resultErr != nil && adapterOwned {
-			_ = waAdapter.Stop(context.Background())
+			_ = dcAdapter.Stop(context.Background())
 		}
 	}()
-	gate, err := policy.NewFixedGate(application.config.PolicyID(), application.config.PolicyRevision(), store.Configs(), store.Inbound(), waAdapter, application.config.AssistantName(), application.config.AgentEnabled())
+	gate, err := policy.NewFixedGate(application.config.PolicyID(), application.config.PolicyRevision(), store.Configs(), store.Inbound(), dcAdapter, application.config.AssistantName(), application.config.AgentEnabled())
 	if err != nil {
 		return nil, err
 	}
@@ -167,16 +173,16 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		}
 		gate.SetResponseJudge(typesafe.NewResponseJudge(client, store.History(), application.config.AssistantName(), application.logger))
 	}
-	dispatcher, err := action.NewDispatcher(store.Actions(), gate, waAdapter, agent.SystemClock{}, application.metrics)
+	dispatcher, err := action.NewDispatcher(store.Actions(), gate, dcAdapter, agent.SystemClock{}, application.metrics)
 	if err != nil {
 		return nil, err
 	}
-	effectDispatcher, err := effect.NewDispatcher(store.Effects(), gate, waAdapter, agent.SystemClock{})
+	effectDispatcher, err := effect.NewDispatcher(store.Effects(), gate, dcAdapter, agent.SystemClock{})
 	if err != nil {
 		return nil, err
 	}
 	agentLogs := observability.NewAgentLogger(application.logger)
-	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound()}
+	chatState := chatStateReader{chats: dcAdapter, tasks: store.Inbound()}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
@@ -186,8 +192,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		})
 	})
 	commandPlatform := command.Platform{
-		Text: waAdapter, Buttons: waAdapter, Group: waAdapter,
-		Media: waAdapter, Stickers: waAdapter, Catalog: store.Stickers(),
+		Text: dcAdapter, Buttons: dcAdapter, Group: dcAdapter,
 		AssistantName: application.config.AssistantName(),
 	}
 	registry, err := agent.NewRegistry(factory)
@@ -200,7 +205,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
+		Activity: dcAdapter, Events: agentLogs, ChatContext: chatState, Muter: dcAdapter, Stickers: dcAdapter,
 		Report: func(err error) {
 			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 		},
@@ -217,7 +222,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err := effectDispatcher.BindCommandExecutor(modelCommands); err != nil {
 		return nil, err
 	}
-	if err := waAdapter.BindHandler(inboundDispatch); err != nil {
+	if err := dcAdapter.BindHandler(inboundDispatch); err != nil {
 		return nil, err
 	}
 	maintenanceWorker, err := maintenance.NewWorker(application.config.TenantID(), store, agent.SystemClock{}, maintenanceInterval, terminalRetentionAge, 500,
@@ -225,12 +230,12 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	accountRuntime, err := account.NewRuntime(application.config.TenantID(), application.config.AccountID(), waAdapter, application.config.ShutdownTimeout())
+	accountRuntime, err := account.NewRuntime(application.config.TenantID(), application.config.AccountID(), dcAdapter, application.config.ShutdownTimeout())
 	if err != nil {
 		return nil, err
 	}
 	adapterOwned = false
-	return &conversationRuntime{store: store, configDefaults: defaults, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
+	return &conversationRuntime{store: store, configDefaults: defaults, langSmith: langSmith, account: accountRuntime, adapter: dcAdapter,
 		gate: gate, dispatcher: dispatcher, effectDispatcher: effectDispatcher, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
 		tenantID: application.config.TenantID(), logger: application.logger,
 		shutdownTimeout: application.config.ShutdownTimeout()}, nil

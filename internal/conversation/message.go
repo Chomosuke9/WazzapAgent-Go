@@ -47,19 +47,20 @@ func AuthoredText(text string) string {
 type ChatKind uint8
 
 const (
+	// ChatDirect is a direct-message channel; ChatGroup is a server
+	// channel or thread shared by several members.
 	ChatDirect ChatKind = iota + 1
 	ChatGroup
-	ChatStatus
 )
 
 // IncomingMention is provider metadata for one raw token in IncomingCandidate
-// text. Human targets carry a canonical LID; the current bot is represented
+// text. Human targets carry a canonical user ID; the current bot is represented
 // explicitly because it intentionally has no chat-scoped senderRef.
 type IncomingMention struct {
-	Token       string
-	TargetLID   identity.LID
-	DisplayName string
-	Bot         bool
+	Token        string
+	TargetUserID identity.UserID
+	DisplayName  string
+	Bot          bool
 }
 
 // MentionBinding is the durable, provider-neutral identity bound to a raw
@@ -82,27 +83,25 @@ type IncomingCandidate struct {
 	// the model context.
 	ProviderQuotedMessageJSON []byte
 	ProviderQuotedFromMe      *bool
-	// ProviderMediaJSON is set only for slash commands that carry an image,
-	// video or sticker, or reply to one. It is the provider's serialized media
-	// message, kept so the command can download it; it never enters the model
-	// context.
-	ProviderMediaJSON   []byte
-	ProviderChatAddress string
-	SenderLID           identity.LID
-	// ProviderSenderPhone is an optional delivery/addressing alias, never identity.
-	ProviderSenderPhone string
-	SenderName          string
-	SenderIsAdmin       bool
-	SenderIsSuperAdmin  bool
-	ChatKind            ChatKind
-	Text                string
-	Mentions            []IncomingMention
-	MentionsBot         bool
-	FromMe              bool
-	Owner               bool
-	Allowlisted         bool
-	OccurredAt          time.Time
-	ReceivedAt          time.Time
+	ProviderChatAddress       string
+	// ProviderGuildAddress is the chat's server, empty for a direct chat.
+	// ProviderAliasAddress is a thread's parent channel, or a direct chat's
+	// user. Both are allowlist scopes only, never identity.
+	ProviderGuildAddress string
+	ProviderAliasAddress string
+	SenderUserID         identity.UserID
+	SenderName           string
+	SenderIsAdmin        bool
+	SenderIsSuperAdmin   bool
+	ChatKind             ChatKind
+	Text                 string
+	Mentions             []IncomingMention
+	MentionsBot          bool
+	FromMe               bool
+	Owner                bool
+	Allowlisted          bool
+	OccurredAt           time.Time
+	ReceivedAt           time.Time
 }
 
 func (candidate IncomingCandidate) Validate() error {
@@ -120,23 +119,19 @@ func (candidate IncomingCandidate) Validate() error {
 			(strings.TrimSpace(candidate.ProviderQuotedMessageID) == "" || !json.Valid(candidate.ProviderQuotedMessageJSON))) {
 		return fmt.Errorf("provider quoted message payload is invalid")
 	}
-	if len(candidate.ProviderMediaJSON) > MaxRawQuotedMessageBytes ||
-		(len(candidate.ProviderMediaJSON) > 0 && !json.Valid(candidate.ProviderMediaJSON)) {
-		return fmt.Errorf("provider media payload is invalid")
-	}
 	if candidate.ProviderQuotedFromMe != nil && len(candidate.ProviderQuotedMessageJSON) == 0 {
 		return fmt.Errorf("provider quoted message origin has no payload")
 	}
 	if strings.TrimSpace(candidate.ProviderChatAddress) == "" || len(candidate.ProviderChatAddress) > 512 {
 		return fmt.Errorf("provider chat address is invalid")
 	}
-	if candidate.SenderLID.IsZero() {
-		return fmt.Errorf("sender LID is required")
+	if len(candidate.ProviderGuildAddress) > 512 || len(candidate.ProviderAliasAddress) > 512 {
+		return fmt.Errorf("provider scope address is invalid")
 	}
-	if len(candidate.ProviderSenderPhone) > 512 {
-		return fmt.Errorf("provider sender phone alias is invalid")
+	if candidate.SenderUserID.IsZero() {
+		return fmt.Errorf("sender user ID is required")
 	}
-	if candidate.ChatKind != ChatDirect && candidate.ChatKind != ChatGroup && candidate.ChatKind != ChatStatus {
+	if candidate.ChatKind != ChatDirect && candidate.ChatKind != ChatGroup {
 		return fmt.Errorf("chat kind is invalid")
 	}
 	if candidate.Text == "" || !utf8.ValidString(candidate.Text) || len(candidate.Text) > MaxTextBytes {
@@ -186,7 +181,7 @@ type IncomingMessage struct {
 	AccountID          identity.AccountID
 	ChatID             identity.ChatID
 	SenderID           identity.ParticipantID
-	SenderLID          identity.LID
+	SenderUserID       identity.UserID
 	SenderRef          identity.SenderRef
 	SenderName         string
 	SenderIsAdmin      bool
@@ -207,10 +202,10 @@ type IncomingMessage struct {
 func (message IncomingMessage) Validate() error {
 	if message.ID.IsZero() || message.InvocationID.IsZero() || message.CausationID.IsZero() ||
 		message.TenantID.IsZero() || message.AccountID.IsZero() || message.ChatID.IsZero() ||
-		message.SenderID.IsZero() || message.SenderLID.IsZero() || message.SenderRef.IsZero() {
+		message.SenderID.IsZero() || message.SenderUserID.IsZero() || message.SenderRef.IsZero() {
 		return fmt.Errorf("canonical message identities are required")
 	}
-	if message.ChatKind != ChatDirect && message.ChatKind != ChatGroup && message.ChatKind != ChatStatus {
+	if message.ChatKind != ChatDirect && message.ChatKind != ChatGroup {
 		return fmt.Errorf("chat kind is invalid")
 	}
 	if message.Text == "" || !utf8.ValidString(message.Text) || len(message.Text) > MaxTextBytes {
@@ -278,7 +273,7 @@ func validateIncomingMentions(text string, mentions []IncomingMention) error {
 			return fmt.Errorf("mention token is duplicated")
 		}
 		seen[binding.Token] = struct{}{}
-		if binding.Bot != binding.TargetLID.IsZero() {
+		if binding.Bot != binding.TargetUserID.IsZero() {
 			return fmt.Errorf("mention target is invalid")
 		}
 		if !utf8.ValidString(binding.DisplayName) || len(binding.DisplayName) > 512 {

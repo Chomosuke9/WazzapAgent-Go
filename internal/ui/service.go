@@ -35,34 +35,34 @@ type LogEntryDTO struct {
 	HasFull bool   `json:"hasFull"`
 }
 
-type WhatsAppConversationDTO struct {
-	ID                  string               `json:"id"`
-	Kind                string               `json:"kind"`
-	Name                string               `json:"name"`
-	LastMessage         string               `json:"lastMessage"`
-	LastMessageAt       string               `json:"lastMessageAt"`
-	LastFromBot         bool                 `json:"lastFromBot"`
-	MessageCount        uint64               `json:"messageCount"`
-	LastMessageMentions []WhatsAppMentionDTO `json:"lastMessageMentions"`
+type DiscordConversationDTO struct {
+	ID                  string              `json:"id"`
+	Kind                string              `json:"kind"`
+	Name                string              `json:"name"`
+	LastMessage         string              `json:"lastMessage"`
+	LastMessageAt       string              `json:"lastMessageAt"`
+	LastFromBot         bool                `json:"lastFromBot"`
+	MessageCount        uint64              `json:"messageCount"`
+	LastMessageMentions []DiscordMentionDTO `json:"lastMessageMentions"`
 }
 
-type WhatsAppUsageDTO struct {
-	TotalMessages        uint64                  `json:"totalMessages"`
-	TotalInvocations     uint64                  `json:"totalInvocations"`
-	TotalChats           uint64                  `json:"totalChats"`
-	MessagesInPeriod     uint64                  `json:"messagesInPeriod"`
-	InvocationsInPeriod  uint64                  `json:"invocationsInPeriod"`
-	ActiveChatsInPeriod  uint64                  `json:"activeChatsInPeriod"`
-	TotalGroups          uint64                  `json:"totalGroups"`
-	ActiveGroupsInPeriod uint64                  `json:"activeGroupsInPeriod"`
-	PeriodStart          string                  `json:"periodStart"`
-	PeriodDays           uint32                  `json:"periodDays"`
-	Groups               []WhatsAppGroupUsageDTO `json:"groups"`
-	InvocationGroups     []WhatsAppGroupUsageDTO `json:"invocationGroups"`
-	DailyActivity        []WhatsAppDailyUsageDTO `json:"dailyActivity"`
+type DiscordUsageDTO struct {
+	TotalMessages        uint64                 `json:"totalMessages"`
+	TotalInvocations     uint64                 `json:"totalInvocations"`
+	TotalChats           uint64                 `json:"totalChats"`
+	MessagesInPeriod     uint64                 `json:"messagesInPeriod"`
+	InvocationsInPeriod  uint64                 `json:"invocationsInPeriod"`
+	ActiveChatsInPeriod  uint64                 `json:"activeChatsInPeriod"`
+	TotalGroups          uint64                 `json:"totalGroups"`
+	ActiveGroupsInPeriod uint64                 `json:"activeGroupsInPeriod"`
+	PeriodStart          string                 `json:"periodStart"`
+	PeriodDays           uint32                 `json:"periodDays"`
+	Groups               []DiscordGroupUsageDTO `json:"groups"`
+	InvocationGroups     []DiscordGroupUsageDTO `json:"invocationGroups"`
+	DailyActivity        []DiscordDailyUsageDTO `json:"dailyActivity"`
 }
 
-type WhatsAppGroupUsageDTO struct {
+type DiscordGroupUsageDTO struct {
 	Name                string `json:"name"`
 	Messages            uint64 `json:"messages"`
 	MessagesInPeriod    uint64 `json:"messagesInPeriod"`
@@ -70,45 +70,45 @@ type WhatsAppGroupUsageDTO struct {
 	InvocationsInPeriod uint64 `json:"invocationsInPeriod"`
 }
 
-type WhatsAppDailyUsageDTO struct {
+type DiscordDailyUsageDTO struct {
 	Date        string `json:"date"`
 	Messages    uint64 `json:"messages"`
 	Invocations uint64 `json:"invocations"`
 }
 
-type WhatsAppMentionDTO struct {
+type DiscordMentionDTO struct {
 	Token       string `json:"token"`
 	SenderRef   string `json:"senderRef"`
 	DisplayName string `json:"displayName"`
 	Bot         bool   `json:"bot"`
 }
 
-type WhatsAppQuoteDTO struct {
-	MessageID    string               `json:"messageID"`
-	Role         string               `json:"role"`
-	Sender       string               `json:"sender"`
-	Content      string               `json:"content"`
-	IsAdmin      bool                 `json:"isAdmin"`
-	IsSuperAdmin bool                 `json:"isSuperAdmin"`
-	Mentions     []WhatsAppMentionDTO `json:"mentions"`
+type DiscordQuoteDTO struct {
+	MessageID    string              `json:"messageID"`
+	Role         string              `json:"role"`
+	Sender       string              `json:"sender"`
+	Content      string              `json:"content"`
+	IsAdmin      bool                `json:"isAdmin"`
+	IsSuperAdmin bool                `json:"isSuperAdmin"`
+	Mentions     []DiscordMentionDTO `json:"mentions"`
 }
 
-type WhatsAppMessageDTO struct {
-	ID           string               `json:"id"`
-	Role         string               `json:"role"`
-	Sender       string               `json:"sender"`
-	SenderRef    string               `json:"senderRef"`
-	Content      string               `json:"content"`
-	IsAdmin      bool                 `json:"isAdmin"`
-	IsSuperAdmin bool                 `json:"isSuperAdmin"`
-	CreatedAt    string               `json:"createdAt"`
-	Delivery     string               `json:"delivery"`
-	Deleted      bool                 `json:"deleted"`
-	Mentions     []WhatsAppMentionDTO `json:"mentions"`
-	Quote        *WhatsAppQuoteDTO    `json:"quote"`
+type DiscordMessageDTO struct {
+	ID           string              `json:"id"`
+	Role         string              `json:"role"`
+	Sender       string              `json:"sender"`
+	SenderRef    string              `json:"senderRef"`
+	Content      string              `json:"content"`
+	IsAdmin      bool                `json:"isAdmin"`
+	IsSuperAdmin bool                `json:"isSuperAdmin"`
+	CreatedAt    string              `json:"createdAt"`
+	Delivery     string              `json:"delivery"`
+	Deleted      bool                `json:"deleted"`
+	Mentions     []DiscordMentionDTO `json:"mentions"`
+	Quote        *DiscordQuoteDTO    `json:"quote"`
 }
 
-type WhatsAppGroupMemberDTO struct {
+type DiscordGroupMemberDTO struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	IsAdmin      bool   `json:"isAdmin"`
@@ -116,17 +116,17 @@ type WhatsAppGroupMemberDTO struct {
 	CanKick      bool   `json:"canKick"`
 }
 
-type WhatsAppGroupMembersDTO struct {
-	BotIsAdmin bool                     `json:"botIsAdmin"`
-	Members    []WhatsAppGroupMemberDTO `json:"members"`
+type DiscordGroupMembersDTO struct {
+	BotIsAdmin bool                    `json:"botIsAdmin"`
+	Members    []DiscordGroupMemberDTO `json:"members"`
 }
 
-type WhatsAppBroadcastGroupDTO struct {
+type DiscordBroadcastGroupDTO struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-type SendWhatsAppBroadcastRequestDTO struct {
+type SendDiscordBroadcastRequestDTO struct {
 	GroupIDs          []string `json:"groupIDs"`
 	Format            string   `json:"format"`
 	Payload           string   `json:"payload"`
@@ -134,7 +134,7 @@ type SendWhatsAppBroadcastRequestDTO struct {
 	BatchDelaySeconds int      `json:"batchDelaySeconds"`
 }
 
-type ScheduleWhatsAppBroadcastRequestDTO struct {
+type ScheduleDiscordBroadcastRequestDTO struct {
 	GroupIDs          []string `json:"groupIDs"`
 	Format            string   `json:"format"`
 	Payload           string   `json:"payload"`
@@ -143,30 +143,30 @@ type ScheduleWhatsAppBroadcastRequestDTO struct {
 	ScheduledAt       string   `json:"scheduledAt"`
 }
 
-type WhatsAppBroadcastGroupResultDTO struct {
+type DiscordBroadcastGroupResultDTO struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Sent      bool   `json:"sent"`
 	ErrorCode string `json:"errorCode"`
 }
 
-type WhatsAppBroadcastScheduleResultDTO struct {
+type DiscordBroadcastScheduleResultDTO struct {
 	Name      string `json:"name"`
 	Sent      bool   `json:"sent"`
 	ErrorCode string `json:"errorCode"`
 }
 
-type WhatsAppBroadcastScheduleDTO struct {
-	ID                string                               `json:"id"`
-	ScheduledAt       string                               `json:"scheduledAt"`
-	BatchSize         int                                  `json:"batchSize"`
-	BatchDelaySeconds int                                  `json:"batchDelaySeconds"`
-	GroupCount        int                                  `json:"groupCount"`
-	Status            string                               `json:"status"`
-	Results           []WhatsAppBroadcastScheduleResultDTO `json:"results"`
+type DiscordBroadcastScheduleDTO struct {
+	ID                string                              `json:"id"`
+	ScheduledAt       string                              `json:"scheduledAt"`
+	BatchSize         int                                 `json:"batchSize"`
+	BatchDelaySeconds int                                 `json:"batchDelaySeconds"`
+	GroupCount        int                                 `json:"groupCount"`
+	Status            string                              `json:"status"`
+	Results           []DiscordBroadcastScheduleResultDTO `json:"results"`
 }
 
-type WhatsAppChatSettingsDTO struct {
+type DiscordChatSettingsDTO struct {
 	Version            string `json:"version"`
 	ModerationLevel    uint8  `json:"moderationLevel"`
 	PromptOverrideMode string `json:"promptOverrideMode"`
@@ -180,8 +180,8 @@ type WhatsAppChatSettingsDTO struct {
 	TriggerSmartRules  string `json:"triggerSmartRules"`
 }
 
-// WhatsAppChatTaskDTO is a chat's scheduled (one-off) or daily task.
-type WhatsAppChatTaskDTO struct {
+// DiscordChatTaskDTO is a chat's scheduled (one-off) or daily task.
+type DiscordChatTaskDTO struct {
 	ID     string `json:"id"`
 	Prompt string `json:"prompt"`
 	// NextRun is RFC 3339 with the bot's UTC offset.
@@ -189,10 +189,10 @@ type WhatsAppChatTaskDTO struct {
 	Daily   bool   `json:"daily"`
 }
 
-// AddWhatsAppChatTaskRequestDTO adds a task that runs once at RunAt (RFC
+// AddDiscordChatTaskRequestDTO adds a task that runs once at RunAt (RFC
 // 3339, within 24 hours) or, when Daily, every day at Time ("HH:MM" in the
 // bot's time zone).
-type AddWhatsAppChatTaskRequestDTO struct {
+type AddDiscordChatTaskRequestDTO struct {
 	ChatID string `json:"chatID"`
 	Prompt string `json:"prompt"`
 	Daily  bool   `json:"daily"`
@@ -200,7 +200,7 @@ type AddWhatsAppChatTaskRequestDTO struct {
 	Time   string `json:"time"`
 }
 
-type SaveWhatsAppChatSettingsRequestDTO struct {
+type SaveDiscordChatSettingsRequestDTO struct {
 	ChatID             string `json:"chatID"`
 	ExpectedVersion    string `json:"expectedVersion"`
 	ModerationLevel    uint8  `json:"moderationLevel"`
@@ -215,12 +215,12 @@ type SaveWhatsAppChatSettingsRequestDTO struct {
 	TriggerSmartRules  string `json:"triggerSmartRules"`
 }
 
-type ResetWhatsAppChatSettingsRequestDTO struct {
+type ResetDiscordChatSettingsRequestDTO struct {
 	ExpectedSettingsRevision string `json:"expectedSettingsRevision"`
 	Category                 string `json:"category"`
 }
 
-type ResetWhatsAppChatSettingsResultDTO struct {
+type ResetDiscordChatSettingsResultDTO struct {
 	ChangedChats int64 `json:"changedChats"`
 }
 
@@ -299,7 +299,7 @@ func (s *AppService) GetLogDetails(id uint64) (string, error) {
 	return full, nil
 }
 
-func (s *AppService) GetWhatsAppConversations() ([]WhatsAppConversationDTO, error) {
+func (s *AppService) GetDiscordConversations() ([]DiscordConversationDTO, error) {
 	if s.conversations == nil {
 		return nil, errors.New("conversation controller is not initialized")
 	}
@@ -307,55 +307,55 @@ func (s *AppService) GetWhatsAppConversations() ([]WhatsAppConversationDTO, erro
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppConversationDTO, len(conversations))
+	result := make([]DiscordConversationDTO, len(conversations))
 	for index, item := range conversations {
-		result[index] = WhatsAppConversationDTO{
+		result[index] = DiscordConversationDTO{
 			ID: item.ID.String(), Kind: item.Kind, Name: item.Name, LastMessage: item.LastMessage,
 			LastMessageAt: item.LastMessageAt, LastFromBot: item.LastFromBot, MessageCount: item.MessageCount,
-			LastMessageMentions: whatsAppMentions(item.LastMessageMentions),
+			LastMessageMentions: discordMentions(item.LastMessageMentions),
 		}
 	}
 	return result, nil
 }
 
-func (s *AppService) GetWhatsAppUsage(periodDays uint32) (WhatsAppUsageDTO, error) {
+func (s *AppService) GetDiscordUsage(periodDays uint32) (DiscordUsageDTO, error) {
 	if s.conversations == nil {
-		return WhatsAppUsageDTO{}, errors.New("conversation controller is not initialized")
+		return DiscordUsageDTO{}, errors.New("conversation controller is not initialized")
 	}
 	usage, err := s.conversations.Usage(context.Background(), periodDays)
 	if err != nil {
-		return WhatsAppUsageDTO{}, err
+		return DiscordUsageDTO{}, err
 	}
-	dto := WhatsAppUsageDTO{
+	dto := DiscordUsageDTO{
 		TotalMessages: usage.TotalMessages, TotalInvocations: usage.TotalInvocations, TotalChats: usage.TotalChats,
 		MessagesInPeriod: usage.MessagesInPeriod, InvocationsInPeriod: usage.InvocationsInPeriod,
 		ActiveChatsInPeriod: usage.ActiveChatsInPeriod,
 		TotalGroups:         usage.TotalGroups, ActiveGroupsInPeriod: usage.ActiveGroupsInPeriod,
 		PeriodStart: usage.PeriodStart, PeriodDays: usage.PeriodDays,
-		Groups:           make([]WhatsAppGroupUsageDTO, len(usage.Groups)),
-		InvocationGroups: make([]WhatsAppGroupUsageDTO, len(usage.InvocationGroups)),
-		DailyActivity:    make([]WhatsAppDailyUsageDTO, len(usage.DailyActivity)),
+		Groups:           make([]DiscordGroupUsageDTO, len(usage.Groups)),
+		InvocationGroups: make([]DiscordGroupUsageDTO, len(usage.InvocationGroups)),
+		DailyActivity:    make([]DiscordDailyUsageDTO, len(usage.DailyActivity)),
 	}
 	for index, group := range usage.Groups {
-		dto.Groups[index] = whatsAppGroupUsage(group)
+		dto.Groups[index] = discordGroupUsage(group)
 	}
 	for index, group := range usage.InvocationGroups {
-		dto.InvocationGroups[index] = whatsAppGroupUsage(group)
+		dto.InvocationGroups[index] = discordGroupUsage(group)
 	}
 	for index, day := range usage.DailyActivity {
-		dto.DailyActivity[index] = WhatsAppDailyUsageDTO{Date: day.Date, Messages: day.Messages, Invocations: day.Invocations}
+		dto.DailyActivity[index] = DiscordDailyUsageDTO{Date: day.Date, Messages: day.Messages, Invocations: day.Invocations}
 	}
 	return dto, nil
 }
 
-func whatsAppGroupUsage(group control.BotGroupUsage) WhatsAppGroupUsageDTO {
-	return WhatsAppGroupUsageDTO{
+func discordGroupUsage(group control.BotGroupUsage) DiscordGroupUsageDTO {
+	return DiscordGroupUsageDTO{
 		Name: group.Name, Messages: group.Messages, MessagesInPeriod: group.MessagesInPeriod,
 		Invocations: group.Invocations, InvocationsInPeriod: group.InvocationsInPeriod,
 	}
 }
 
-func (s *AppService) GetWhatsAppMessages(chatID string) ([]WhatsAppMessageDTO, error) {
+func (s *AppService) GetDiscordMessages(chatID string) ([]DiscordMessageDTO, error) {
 	if s.conversations == nil {
 		return nil, errors.New("conversation controller is not initialized")
 	}
@@ -363,41 +363,41 @@ func (s *AppService) GetWhatsAppMessages(chatID string) ([]WhatsAppMessageDTO, e
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppMessageDTO, len(messages))
+	result := make([]DiscordMessageDTO, len(messages))
 	for index, item := range messages {
-		result[index] = whatsAppMessage(item)
+		result[index] = discordMessage(item)
 	}
 	return result, nil
 }
 
-func whatsAppMessage(item control.BotMessage) WhatsAppMessageDTO {
-	result := WhatsAppMessageDTO{
+func discordMessage(item control.BotMessage) DiscordMessageDTO {
+	result := DiscordMessageDTO{
 		ID: item.ID.String(), Role: item.Role, Sender: item.Sender, Content: item.Content,
 		IsAdmin: item.IsAdmin, IsSuperAdmin: item.IsSuperAdmin,
 		CreatedAt: item.CreatedAt, Delivery: item.Delivery, Deleted: item.Deleted,
-		Mentions: whatsAppMentions(item.Mentions),
+		Mentions: discordMentions(item.Mentions),
 	}
 	if !item.SenderRef.IsZero() {
 		result.SenderRef = item.SenderRef.String()
 	}
 	if item.Quote != nil {
-		result.Quote = &WhatsAppQuoteDTO{
+		result.Quote = &DiscordQuoteDTO{
 			MessageID: item.Quote.MessageID.String(), Role: item.Quote.Role,
 			Sender: item.Quote.Sender, Content: item.Quote.Content,
 			IsAdmin: item.Quote.IsAdmin, IsSuperAdmin: item.Quote.IsSuperAdmin,
-			Mentions: whatsAppMentions(item.Quote.Mentions),
+			Mentions: discordMentions(item.Quote.Mentions),
 		}
 	}
 	return result
 }
 
-func whatsAppMentions(mentions []control.BotMention) []WhatsAppMentionDTO {
+func discordMentions(mentions []control.BotMention) []DiscordMentionDTO {
 	if len(mentions) == 0 {
 		return nil
 	}
-	result := make([]WhatsAppMentionDTO, len(mentions))
+	result := make([]DiscordMentionDTO, len(mentions))
 	for index, mention := range mentions {
-		result[index] = WhatsAppMentionDTO{
+		result[index] = DiscordMentionDTO{
 			Token: mention.Token, DisplayName: mention.DisplayName, Bot: mention.Bot,
 		}
 		if !mention.SenderRef.IsZero() {
@@ -407,7 +407,7 @@ func whatsAppMentions(mentions []control.BotMention) []WhatsAppMentionDTO {
 	return result
 }
 
-func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMembersDTO, error) {
+func (s *AppService) GetDiscordGroupMembers(chatID string) (DiscordGroupMembersDTO, error) {
 	var group control.AgentGroupMembers
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -415,11 +415,11 @@ func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMember
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppGroupMembersDTO{}, err
+		return DiscordGroupMembersDTO{}, err
 	}
-	result := WhatsAppGroupMembersDTO{BotIsAdmin: group.BotIsAdmin, Members: make([]WhatsAppGroupMemberDTO, len(group.Members))}
+	result := DiscordGroupMembersDTO{BotIsAdmin: group.BotIsAdmin, Members: make([]DiscordGroupMemberDTO, len(group.Members))}
 	for index, member := range group.Members {
-		result.Members[index] = WhatsAppGroupMemberDTO{
+		result.Members[index] = DiscordGroupMemberDTO{
 			ID: member.ID, Name: member.Name, IsAdmin: member.IsAdmin,
 			IsSuperAdmin: member.IsSuperAdmin, CanKick: member.CanKick,
 		}
@@ -427,7 +427,7 @@ func (s *AppService) GetWhatsAppGroupMembers(chatID string) (WhatsAppGroupMember
 	return result, nil
 }
 
-func (s *AppService) GetWhatsAppBroadcastGroups() ([]WhatsAppBroadcastGroupDTO, error) {
+func (s *AppService) GetDiscordBroadcastGroups() ([]DiscordBroadcastGroupDTO, error) {
 	var groups []control.AgentBroadcastGroup
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -437,18 +437,18 @@ func (s *AppService) GetWhatsAppBroadcastGroups() ([]WhatsAppBroadcastGroupDTO, 
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppBroadcastGroupDTO, len(groups))
+	result := make([]DiscordBroadcastGroupDTO, len(groups))
 	for index, group := range groups {
-		result[index] = WhatsAppBroadcastGroupDTO{ID: group.ID, Name: group.Name}
+		result[index] = DiscordBroadcastGroupDTO{ID: group.ID, Name: group.Name}
 	}
 	return result, nil
 }
 
-func (s *AppService) NormalizeWhatsAppBroadcastPayload(payload string) (string, error) {
-	return agentapp.NormalizeWhatsAppBroadcastPayload(payload)
+func (s *AppService) NormalizeDiscordBroadcastPayload(payload string) (string, error) {
+	return agentapp.NormalizeDiscordBroadcastPayload(payload)
 }
 
-func (s *AppService) SendWhatsAppBroadcast(request SendWhatsAppBroadcastRequestDTO) ([]WhatsAppBroadcastGroupResultDTO, error) {
+func (s *AppService) SendDiscordBroadcast(request SendDiscordBroadcastRequestDTO) ([]DiscordBroadcastGroupResultDTO, error) {
 	format := request.Format
 	if format != "text" && format != "payload" {
 		format = "invalid"
@@ -457,16 +457,16 @@ func (s *AppService) SendWhatsAppBroadcast(request SendWhatsAppBroadcastRequestD
 	var results []control.AgentBroadcastGroupResult
 	err := s.withBroadcastActions(broadcastActionTimeout(len(request.GroupIDs), request.BatchSize, request.BatchDelaySeconds), func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
-		results, actionErr = runtime.BroadcastWhatsAppGroups(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds)
+		results, actionErr = runtime.BroadcastDiscordGroups(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds)
 		return actionErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppBroadcastGroupResultDTO, len(results))
+	result := make([]DiscordBroadcastGroupResultDTO, len(results))
 	sent := 0
 	for index, item := range results {
-		result[index] = WhatsAppBroadcastGroupResultDTO{ID: item.ID, Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
+		result[index] = DiscordBroadcastGroupResultDTO{ID: item.ID, Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
 		if item.Sent {
 			sent++
 		}
@@ -507,44 +507,44 @@ func broadcastResultLogDetails(results []control.AgentBroadcastGroupResult, sent
 	return details + " · error_codes=" + strings.Join(counts, ",")
 }
 
-func (s *AppService) ScheduleWhatsAppBroadcast(request ScheduleWhatsAppBroadcastRequestDTO) (WhatsAppBroadcastScheduleDTO, error) {
+func (s *AppService) ScheduleDiscordBroadcast(request ScheduleDiscordBroadcastRequestDTO) (DiscordBroadcastScheduleDTO, error) {
 	scheduledAt, err := time.Parse(time.RFC3339, request.ScheduledAt)
 	if err != nil {
-		return WhatsAppBroadcastScheduleDTO{}, errors.New("Scheduled time is invalid.")
+		return DiscordBroadcastScheduleDTO{}, errors.New("Scheduled time is invalid.")
 	}
 	var schedule control.AgentBroadcastSchedule
 	err = s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
-		schedule, actionErr = runtime.ScheduleWhatsAppBroadcast(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds, scheduledAt)
+		schedule, actionErr = runtime.ScheduleDiscordBroadcast(ctx, request.GroupIDs, request.Format, request.Payload, request.BatchSize, request.BatchDelaySeconds, scheduledAt)
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppBroadcastScheduleDTO{}, err
+		return DiscordBroadcastScheduleDTO{}, err
 	}
 	s.recordChatAction("INFO", "WhatsApp broadcast scheduled", nil)
 	return broadcastScheduleDTO(schedule), nil
 }
 
-func (s *AppService) GetWhatsAppBroadcastSchedules() ([]WhatsAppBroadcastScheduleDTO, error) {
+func (s *AppService) GetDiscordBroadcastSchedules() ([]DiscordBroadcastScheduleDTO, error) {
 	var schedules []control.AgentBroadcastSchedule
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
-		schedules, actionErr = runtime.ListWhatsAppBroadcastSchedules(ctx)
+		schedules, actionErr = runtime.ListDiscordBroadcastSchedules(ctx)
 		return actionErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppBroadcastScheduleDTO, len(schedules))
+	result := make([]DiscordBroadcastScheduleDTO, len(schedules))
 	for index, schedule := range schedules {
 		result[index] = broadcastScheduleDTO(schedule)
 	}
 	return result, nil
 }
 
-func (s *AppService) CancelWhatsAppBroadcastSchedule(id string) error {
+func (s *AppService) CancelDiscordBroadcastSchedule(id string) error {
 	err := s.withBroadcastActions(chatActionTimeout, func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
-		return runtime.CancelWhatsAppBroadcastSchedule(ctx, id)
+		return runtime.CancelDiscordBroadcastSchedule(ctx, id)
 	})
 	if err != nil {
 		return err
@@ -553,20 +553,20 @@ func (s *AppService) CancelWhatsAppBroadcastSchedule(id string) error {
 	return nil
 }
 
-func broadcastScheduleDTO(schedule control.AgentBroadcastSchedule) WhatsAppBroadcastScheduleDTO {
-	result := WhatsAppBroadcastScheduleDTO{
+func broadcastScheduleDTO(schedule control.AgentBroadcastSchedule) DiscordBroadcastScheduleDTO {
+	result := DiscordBroadcastScheduleDTO{
 		ID: schedule.ID, ScheduledAt: schedule.ScheduledAt.UTC().Format(time.RFC3339),
 		BatchSize: schedule.BatchSize, BatchDelaySeconds: schedule.BatchDelaySeconds,
 		GroupCount: schedule.GroupCount, Status: schedule.Status,
-		Results: make([]WhatsAppBroadcastScheduleResultDTO, len(schedule.Results)),
+		Results: make([]DiscordBroadcastScheduleResultDTO, len(schedule.Results)),
 	}
 	for index, item := range schedule.Results {
-		result.Results[index] = WhatsAppBroadcastScheduleResultDTO{Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
+		result.Results[index] = DiscordBroadcastScheduleResultDTO{Name: item.Name, Sent: item.Sent, ErrorCode: item.ErrorCode}
 	}
 	return result
 }
 
-func (s *AppService) GetWhatsAppChatSettings(chatID string) (WhatsAppChatSettingsDTO, error) {
+func (s *AppService) GetDiscordChatSettings(chatID string) (DiscordChatSettingsDTO, error) {
 	var settings control.AgentChatSettings
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -574,26 +574,26 @@ func (s *AppService) GetWhatsAppChatSettings(chatID string) (WhatsAppChatSetting
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppChatSettingsDTO{}, err
+		return DiscordChatSettingsDTO{}, err
 	}
 	s.recordChatAction("INFO", "Chat settings opened", nil)
 	return chatSettingsDTO(settings), nil
 }
 
-func (s *AppService) ResetWhatsAppChatSettings(request ResetWhatsAppChatSettingsRequestDTO) (ResetWhatsAppChatSettingsResultDTO, error) {
+func (s *AppService) ResetDiscordChatSettings(request ResetDiscordChatSettingsRequestDTO) (ResetDiscordChatSettingsResultDTO, error) {
 	if s.control == nil {
-		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("settings controller is not initialized")
+		return ResetDiscordChatSettingsResultDTO{}, errors.New("settings controller is not initialized")
 	}
 	expectedRevision, err := strconv.ParseUint(request.ExpectedSettingsRevision, 10, 64)
 	if err != nil || expectedRevision == 0 {
-		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("settings revision is invalid")
+		return ResetDiscordChatSettingsResultDTO{}, errors.New("settings revision is invalid")
 	}
 	view, err := s.control.GetSettings(context.Background())
 	if err != nil {
-		return ResetWhatsAppChatSettingsResultDTO{}, err
+		return ResetDiscordChatSettingsResultDTO{}, err
 	}
 	if view.Revision != expectedRevision {
-		return ResetWhatsAppChatSettingsResultDTO{}, errors.New("Saved settings changed. Reload Settings and try again.")
+		return ResetDiscordChatSettingsResultDTO{}, errors.New("Saved settings changed. Reload Settings and try again.")
 	}
 	var changed int64
 	err = s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
@@ -602,16 +602,16 @@ func (s *AppService) ResetWhatsAppChatSettings(request ResetWhatsAppChatSettings
 		return resetErr
 	})
 	if err != nil {
-		return ResetWhatsAppChatSettingsResultDTO{}, err
+		return ResetDiscordChatSettingsResultDTO{}, err
 	}
 	s.recordChatAction("INFO", "Saved chat settings reset", nil)
-	return ResetWhatsAppChatSettingsResultDTO{ChangedChats: changed}, nil
+	return ResetDiscordChatSettingsResultDTO{ChangedChats: changed}, nil
 }
 
-func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRequestDTO) (WhatsAppChatSettingsDTO, error) {
+func (s *AppService) SaveDiscordChatSettings(request SaveDiscordChatSettingsRequestDTO) (DiscordChatSettingsDTO, error) {
 	expectedVersion, err := strconv.ParseUint(request.ExpectedVersion, 10, 64)
 	if err != nil || expectedVersion == 0 {
-		return WhatsAppChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("settings revision is invalid")))
+		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("settings revision is invalid")))
 	}
 	mode := agent.PromptOverrideMode(0)
 	switch strings.TrimSpace(request.PromptOverrideMode) {
@@ -621,7 +621,7 @@ func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRe
 	case "replace":
 		mode = agent.PromptReplace
 	default:
-		return WhatsAppChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("prompt mode is invalid")))
+		return DiscordChatSettingsDTO{}, safeChatActionError(agent.NewError(agent.ErrorInvalidArgument, "save WhatsApp chat settings", errors.New("prompt mode is invalid")))
 	}
 	var settings control.AgentChatSettings
 	err = s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
@@ -634,13 +634,13 @@ func (s *AppService) SaveWhatsAppChatSettings(request SaveWhatsAppChatSettingsRe
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppChatSettingsDTO{}, err
+		return DiscordChatSettingsDTO{}, err
 	}
 	s.recordChatAction("INFO", "Chat settings saved", nil)
 	return chatSettingsDTO(settings), nil
 }
 
-func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO {
+func chatSettingsDTO(settings control.AgentChatSettings) DiscordChatSettingsDTO {
 	mode := ""
 	switch settings.PromptOverrideMode {
 	case agent.PromptAppend:
@@ -648,7 +648,7 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 	case agent.PromptReplace:
 		mode = "replace"
 	}
-	return WhatsAppChatSettingsDTO{
+	return DiscordChatSettingsDTO{
 		Version: strconv.FormatUint(uint64(settings.Version), 10), ModerationLevel: uint8(settings.ModerationLevel),
 		PromptOverrideMode: mode, PromptOverrideText: settings.PromptOverrideText,
 		TriggerMention: settings.Triggers.Mention, TriggerName: settings.Triggers.Name, TriggerReply: settings.Triggers.Reply,
@@ -657,7 +657,7 @@ func chatSettingsDTO(settings control.AgentChatSettings) WhatsAppChatSettingsDTO
 	}
 }
 
-func (s *AppService) GetWhatsAppChatTasks(chatID string) ([]WhatsAppChatTaskDTO, error) {
+func (s *AppService) GetDiscordChatTasks(chatID string) ([]DiscordChatTaskDTO, error) {
 	var tasks []control.AgentChatTask
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -667,25 +667,25 @@ func (s *AppService) GetWhatsAppChatTasks(chatID string) ([]WhatsAppChatTaskDTO,
 	if err != nil {
 		return nil, err
 	}
-	result := make([]WhatsAppChatTaskDTO, len(tasks))
+	result := make([]DiscordChatTaskDTO, len(tasks))
 	for index, task := range tasks {
 		result[index] = chatTaskDTO(task)
 	}
 	return result, nil
 }
 
-func (s *AppService) AddWhatsAppChatTask(request AddWhatsAppChatTaskRequestDTO) (WhatsAppChatTaskDTO, error) {
+func (s *AppService) AddDiscordChatTask(request AddDiscordChatTaskRequestDTO) (DiscordChatTaskDTO, error) {
 	input := control.AgentChatTaskInput{Prompt: request.Prompt, Daily: request.Daily}
 	if request.Daily {
 		clock, err := time.Parse("15:04", strings.TrimSpace(request.Time))
 		if err != nil {
-			return WhatsAppChatTaskDTO{}, errors.New("Choose a time of day, such as 07:00.")
+			return DiscordChatTaskDTO{}, errors.New("Choose a time of day, such as 07:00.")
 		}
 		input.DailyMinute = clock.Hour()*60 + clock.Minute()
 	} else {
 		runAt, err := time.Parse(time.RFC3339, request.RunAt)
 		if err != nil {
-			return WhatsAppChatTaskDTO{}, errors.New("Choose when the task should run.")
+			return DiscordChatTaskDTO{}, errors.New("Choose when the task should run.")
 		}
 		input.RunAt = runAt
 	}
@@ -696,13 +696,13 @@ func (s *AppService) AddWhatsAppChatTask(request AddWhatsAppChatTaskRequestDTO) 
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppChatTaskDTO{}, err
+		return DiscordChatTaskDTO{}, err
 	}
 	s.recordChatAction("INFO", "Chat task added", nil)
 	return chatTaskDTO(task), nil
 }
 
-func (s *AppService) DeleteWhatsAppChatTask(chatID, taskID string, daily bool) error {
+func (s *AppService) DeleteDiscordChatTask(chatID, taskID string, daily bool) error {
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		return runtime.DeleteChatTask(ctx, chatID, taskID, daily)
 	})
@@ -713,11 +713,11 @@ func (s *AppService) DeleteWhatsAppChatTask(chatID, taskID string, daily bool) e
 	return nil
 }
 
-func chatTaskDTO(task control.AgentChatTask) WhatsAppChatTaskDTO {
-	return WhatsAppChatTaskDTO{ID: task.ID, Prompt: task.Prompt, NextRun: task.NextRun.Format(time.RFC3339), Daily: task.Daily}
+func chatTaskDTO(task control.AgentChatTask) DiscordChatTaskDTO {
+	return DiscordChatTaskDTO{ID: task.ID, Prompt: task.Prompt, NextRun: task.NextRun.Format(time.RFC3339), Daily: task.Daily}
 }
 
-func (s *AppService) SendWhatsAppMessage(chatID, text, replyToMessageID string) (WhatsAppMessageDTO, error) {
+func (s *AppService) SendDiscordMessage(chatID, text, replyToMessageID string) (DiscordMessageDTO, error) {
 	var message control.BotMessage
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -729,13 +729,13 @@ func (s *AppService) SendWhatsAppMessage(chatID, text, replyToMessageID string) 
 		return actionErr
 	})
 	if err != nil {
-		return WhatsAppMessageDTO{}, err
+		return DiscordMessageDTO{}, err
 	}
 	s.recordChatAction("INFO", "WhatsApp message sent from Chat", nil)
-	return whatsAppMessage(message), nil
+	return discordMessage(message), nil
 }
 
-func (s *AppService) DeleteWhatsAppMessage(chatID, messageID string) error {
+func (s *AppService) DeleteDiscordMessage(chatID, messageID string) error {
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		return runtime.DeleteChatMessage(ctx, chatID, messageID)
 	})
@@ -747,7 +747,7 @@ func (s *AppService) DeleteWhatsAppMessage(chatID, messageID string) error {
 	return nil
 }
 
-func (s *AppService) KickWhatsAppGroupMember(chatID, memberID string) error {
+func (s *AppService) KickDiscordGroupMember(chatID, memberID string) error {
 	err := s.withChatActions(func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		return runtime.KickGroupMember(ctx, chatID, memberID)
 	})
@@ -992,22 +992,22 @@ func (s *AppService) effectiveDataRoot(fallback string) string {
 	return fallback
 }
 
-func (s *AppService) GetWhatsAppSessionStatus() (WhatsAppSessionStatusDTO, error) {
+func (s *AppService) GetDiscordSessionStatus() (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	status, err := s.sessions.GetStatus(context.Background())
 	if err != nil {
-		return WhatsAppSessionStatusDTO{}, err
+		return DiscordSessionStatusDTO{}, err
 	}
-	dto := whatsappSessionStatusDTO(status)
+	dto := discordSessionStatusDTO(status)
 	if s.agent != nil && s.agent.IsActive() {
 		agentStatus, agentErr := s.agent.GetStatus(context.Background())
 		if agentErr != nil {
-			return WhatsAppSessionStatusDTO{}, agentErr
+			return DiscordSessionStatusDTO{}, agentErr
 		}
 		dto.AgentActive = true
-		dto.RuntimeState = agentStatus.WhatsAppState
+		dto.RuntimeState = agentStatus.DiscordState
 		dto.ErrorCode = string(agentStatus.ErrorCode)
 	}
 	return dto, nil
@@ -1074,27 +1074,27 @@ func (s *AppService) withSessionControl(action func() error) error {
 	return s.agent.WithSessionControl(action)
 }
 
-func (s *AppService) BeginWhatsAppPairing(request BeginWhatsAppPairingRequestDTO) (WhatsAppSessionOperationDTO, error) {
+func (s *AppService) BeginDiscordLink(request BeginDiscordLinkRequestDTO) (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
 		var err error
-		operation, err = s.sessions.BeginPairing(context.Background(), control.BeginPairingRequest{Method: control.PairingMethod(request.Method), Phone: request.Phone})
+		operation, err = s.sessions.BeginLink(context.Background(), control.BeginLinkRequest{Token: request.Token})
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not start WhatsApp pairing", err)
-		return WhatsAppSessionOperationDTO{}, err
+		s.recordLog("ERROR", "Could not link the Discord bot", err)
+		return DiscordSessionOperationDTO{}, err
 	}
-	s.recordLog("INFO", "WhatsApp pairing started", nil)
-	return whatsappSessionOperationDTO(operation), nil
+	s.recordLog("INFO", "Discord bot link started", nil)
+	return discordSessionOperationDTO(operation), nil
 }
 
-func (s *AppService) ResumeWhatsAppSession() (WhatsAppSessionOperationDTO, error) {
+func (s *AppService) ResumeDiscordSession() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1104,15 +1104,15 @@ func (s *AppService) ResumeWhatsAppSession() (WhatsAppSessionOperationDTO, error
 	})
 	if err != nil {
 		s.recordLog("ERROR", "Could not resume WhatsApp session", err)
-		return WhatsAppSessionOperationDTO{}, err
+		return DiscordSessionOperationDTO{}, err
 	}
 	s.recordLog("INFO", "Resuming WhatsApp session", nil)
-	return whatsappSessionOperationDTO(operation), nil
+	return discordSessionOperationDTO(operation), nil
 }
 
-func (s *AppService) StopWhatsAppSession() (WhatsAppSessionStatusDTO, error) {
+func (s *AppService) StopDiscordSession() (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var status control.SessionStatus
 	err := s.withSessionControl(func() error {
@@ -1122,33 +1122,33 @@ func (s *AppService) StopWhatsAppSession() (WhatsAppSessionStatusDTO, error) {
 	})
 	if err != nil {
 		s.recordLog("ERROR", "Could not stop WhatsApp session", err)
-		return WhatsAppSessionStatusDTO{}, err
+		return DiscordSessionStatusDTO{}, err
 	}
 	s.recordLog("INFO", "WhatsApp session stopped", nil)
-	return whatsappSessionStatusDTO(status), nil
+	return discordSessionStatusDTO(status), nil
 }
 
-func (s *AppService) CancelWhatsAppPairing(operationID string) (WhatsAppSessionStatusDTO, error) {
+func (s *AppService) CancelDiscordLink(operationID string) (DiscordSessionStatusDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionStatusDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var status control.SessionStatus
 	err := s.withSessionControl(func() error {
 		var err error
-		status, err = s.sessions.CancelPairing(context.Background(), operationID)
+		status, err = s.sessions.CancelLink(context.Background(), operationID)
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not cancel WhatsApp pairing", err)
-		return WhatsAppSessionStatusDTO{}, err
+		s.recordLog("ERROR", "Could not cancel the Discord bot link", err)
+		return DiscordSessionStatusDTO{}, err
 	}
-	s.recordLog("INFO", "WhatsApp pairing canceled", nil)
-	return whatsappSessionStatusDTO(status), nil
+	s.recordLog("INFO", "Discord bot link canceled", nil)
+	return discordSessionStatusDTO(status), nil
 }
 
-func (s *AppService) ReconnectWhatsAppSession() (WhatsAppSessionOperationDTO, error) {
+func (s *AppService) ReconnectDiscordSession() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1158,15 +1158,15 @@ func (s *AppService) ReconnectWhatsAppSession() (WhatsAppSessionOperationDTO, er
 	})
 	if err != nil {
 		s.recordLog("ERROR", "Could not reconnect WhatsApp session", err)
-		return WhatsAppSessionOperationDTO{}, err
+		return DiscordSessionOperationDTO{}, err
 	}
 	s.recordLog("INFO", "WhatsApp reconnection started", nil)
-	return whatsappSessionOperationDTO(operation), nil
+	return discordSessionOperationDTO(operation), nil
 }
 
-func (s *AppService) LogoutWhatsAppSession() (WhatsAppSessionOperationDTO, error) {
+func (s *AppService) UnlinkDiscordBot() (DiscordSessionOperationDTO, error) {
 	if s.sessions == nil {
-		return WhatsAppSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
+		return DiscordSessionOperationDTO{}, errors.New("WhatsApp session controller is not initialized")
 	}
 	var operation control.SessionOperation
 	err := s.withSessionControl(func() error {
@@ -1175,9 +1175,9 @@ func (s *AppService) LogoutWhatsAppSession() (WhatsAppSessionOperationDTO, error
 		return err
 	})
 	if err != nil {
-		s.recordLog("ERROR", "Could not log out of WhatsApp", err)
-		return WhatsAppSessionOperationDTO{}, err
+		s.recordLog("ERROR", "Could not unlink the Discord bot", err)
+		return DiscordSessionOperationDTO{}, err
 	}
-	s.recordLog("INFO", "WhatsApp logout completed", nil)
-	return whatsappSessionOperationDTO(operation), nil
+	s.recordLog("INFO", "Discord bot unlinked", nil)
+	return discordSessionOperationDTO(operation), nil
 }

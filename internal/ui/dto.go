@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"reflect"
 	"strconv"
 	"strings"
@@ -21,10 +22,10 @@ type SettingsValuesDTO struct {
 	BasePrompt    string              `json:"basePrompt"`
 	ChatDefaults  config.ChatDefaults `json:"chatDefaults"`
 
-	WhatsAppEnabled bool     `json:"whatsAppEnabled"`
-	AgentEnabled    bool     `json:"agentEnabled"`
-	OwnerJID        string   `json:"ownerJID"`
-	ChatAllowlist   []string `json:"chatAllowlist"`
+	DiscordEnabled bool     `json:"discordEnabled"`
+	AgentEnabled   bool     `json:"agentEnabled"`
+	OwnerID        string   `json:"ownerID"`
+	ChatAllowlist  []string `json:"chatAllowlist"`
 
 	LLMEndpoint      string `json:"llmEndpoint"`
 	LLMModel         string `json:"llmModel"`
@@ -61,7 +62,6 @@ type SettingsValuesDTO struct {
 	DataDir       string `json:"dataDir"`
 	EnvFile       string `json:"envFile"`
 	HTTPAddress   string `json:"httpAddress"`
-	PairingOutput string `json:"pairingOutput"`
 	NoColor       bool   `json:"noColor"`
 	ForceColor    bool   `json:"forceColor"`
 	StartOnLaunch bool   `json:"startOnLaunch"`
@@ -152,7 +152,7 @@ type AgentRuntimeStatusDTO struct {
 	SavedRevision  string `json:"savedRevision"`
 	ActiveRevision string `json:"activeRevision"`
 	PendingChanges bool   `json:"pendingChanges"`
-	WhatsAppState  string `json:"whatsAppState"`
+	DiscordState   string `json:"discordState"`
 	ErrorCode      string `json:"errorCode,omitempty"`
 	OperationID    string `json:"operationID,omitempty"`
 }
@@ -161,64 +161,51 @@ type ApplyAgentSettingsRequestDTO struct {
 	ExpectedRevision string `json:"expectedRevision"`
 }
 
-type BeginWhatsAppPairingRequestDTO struct {
-	Method string `json:"method"`
-	Phone  string `json:"phone,omitempty"`
+// BeginDiscordLinkRequestDTO links a bot by the token from the Discord
+// Developer Portal. The token is never sent back to the UI.
+type BeginDiscordLinkRequestDTO struct {
+	Token string `json:"token"`
 }
 
-type WhatsAppPairingDTO struct {
-	Method        string `json:"method"`
-	Code          string `json:"code,omitempty"`
-	QRCodeDataURL string `json:"qrCodeDataURL,omitempty"`
-	Generation    uint64 `json:"generation"`
-	ExpiresAt     string `json:"expiresAt"`
+type DiscordSessionStatusDTO struct {
+	BindingState   string `json:"bindingState"`
+	RuntimeState   string `json:"runtimeState"`
+	SessionPresent bool   `json:"sessionPresent"`
+	AgentActive    bool   `json:"agentActive"`
+	DiscordBotID   string `json:"discordBotID,omitempty"`
+	BotName        string `json:"botName,omitempty"`
+	// InviteURL adds the bot to a server with the permissions it uses.
+	InviteURL   string `json:"inviteURL,omitempty"`
+	OperationID string `json:"operationID,omitempty"`
+	ErrorCode   string `json:"errorCode,omitempty"`
 }
 
-type WhatsAppSessionStatusDTO struct {
-	BindingState      string              `json:"bindingState"`
-	RuntimeState      string              `json:"runtimeState"`
-	SessionPresent    bool                `json:"sessionPresent"`
-	AgentActive       bool                `json:"agentActive"`
-	WhatsAppAccountID string              `json:"whatsAppAccountID,omitempty"`
-	OperationID       string              `json:"operationID,omitempty"`
-	Pairing           *WhatsAppPairingDTO `json:"pairing,omitempty"`
-	ErrorCode         string              `json:"errorCode,omitempty"`
-}
-
-type WhatsAppSessionOperationDTO struct {
-	OperationID string                   `json:"operationID"`
-	Status      WhatsAppSessionStatusDTO `json:"status"`
+type DiscordSessionOperationDTO struct {
+	OperationID string                  `json:"operationID"`
+	Status      DiscordSessionStatusDTO `json:"status"`
 }
 
 type SettingsView = SettingsViewDTO
 type ValidationResult = ValidationResultDTO
 type SaveSettingsResult = SaveSettingsResultDTO
 
-func whatsappSessionStatusDTO(status control.SessionStatus) WhatsAppSessionStatusDTO {
-	dto := WhatsAppSessionStatusDTO{
+func discordSessionStatusDTO(status control.SessionStatus) DiscordSessionStatusDTO {
+	return DiscordSessionStatusDTO{
 		BindingState: string(status.BindingState), RuntimeState: string(status.RuntimeState),
-		SessionPresent: status.SessionPresent, WhatsAppAccountID: status.WhatsAppAccountID,
-		OperationID: status.OperationID, ErrorCode: string(status.ErrorCode),
+		SessionPresent: status.SessionPresent, DiscordBotID: status.DiscordBotID, BotName: status.BotName,
+		InviteURL: discordadapter.InviteURL(status.DiscordBotID), OperationID: status.OperationID, ErrorCode: string(status.ErrorCode),
 	}
-	if status.Pairing != nil {
-		dto.Pairing = &WhatsAppPairingDTO{
-			Method: string(status.Pairing.Method), Code: status.Pairing.Code,
-			QRCodeDataURL: status.Pairing.QRCodeDataURL, Generation: status.Pairing.Generation,
-			ExpiresAt: formatTime(status.Pairing.ExpiresAt),
-		}
-	}
-	return dto
 }
 
-func whatsappSessionOperationDTO(operation control.SessionOperation) WhatsAppSessionOperationDTO {
-	return WhatsAppSessionOperationDTO{OperationID: operation.OperationID, Status: whatsappSessionStatusDTO(operation.Status)}
+func discordSessionOperationDTO(operation control.SessionOperation) DiscordSessionOperationDTO {
+	return DiscordSessionOperationDTO{OperationID: operation.OperationID, Status: discordSessionStatusDTO(operation.Status)}
 }
 
 func agentRuntimeStatusDTO(status control.AgentRuntimeStatus) AgentRuntimeStatusDTO {
 	return AgentRuntimeStatusDTO{
 		State: string(status.State), SavedRevision: strconv.FormatUint(status.SavedRevision, 10),
 		ActiveRevision: strconv.FormatUint(status.ActiveRevision, 10), PendingChanges: status.PendingChanges,
-		WhatsAppState: status.WhatsAppState, ErrorCode: string(status.ErrorCode), OperationID: status.OperationID,
+		DiscordState: status.DiscordState, ErrorCode: string(status.ErrorCode), OperationID: status.OperationID,
 	}
 }
 
@@ -254,9 +241,9 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 	settings := values.Settings
 	return SettingsValuesDTO{
 		AssistantName: settings.AssistantName, BasePrompt: settings.BasePrompt,
-		ChatDefaults:    settings.ChatDefaults,
-		WhatsAppEnabled: settings.WhatsAppEnabled, AgentEnabled: settings.AgentEnabled,
-		OwnerJID: settings.OwnerJID, ChatAllowlist: append([]string(nil), settings.ChatAllowlist...),
+		ChatDefaults:   settings.ChatDefaults,
+		DiscordEnabled: settings.DiscordEnabled, AgentEnabled: settings.AgentEnabled,
+		OwnerID: settings.OwnerID, ChatAllowlist: append([]string(nil), settings.ChatAllowlist...),
 		LLMEndpoint: settings.LLMEndpoint, LLMModel: settings.LLMModel, LLMProviderID: settings.LLMProviderID,
 		FallbackEndpoint: settings.FallbackEndpoint, TypeSafeEndpoint: settings.TypeSafeEndpoint, TypeSafeModel: settings.TypeSafeModel,
 		LLMTimeout: settings.LLMTimeout.String(), LLMConcurrency: settings.LLMConcurrency,
@@ -270,7 +257,7 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		PolicyID: settings.PolicyID, PolicyRevision: strconv.FormatUint(settings.PolicyRevision, 10),
 		LogLevel: settings.LogLevel, LogFormat: settings.LogFormat,
 		DataDir: settings.DataDir, EnvFile: settings.EnvFile, HTTPAddress: settings.HTTPAddress,
-		PairingOutput: settings.PairingOutput, NoColor: settings.NoColor, ForceColor: settings.ForceColor,
+		NoColor: settings.NoColor, ForceColor: settings.ForceColor,
 		StartOnLaunch: settings.StartOnLaunch, TenantID: settings.TenantID.String(), AccountID: settings.AccountID.String(),
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
 		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
@@ -344,8 +331,8 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	}
 	settings.AssistantName, settings.BasePrompt = values.AssistantName, values.BasePrompt
 	settings.ChatDefaults = values.ChatDefaults
-	settings.WhatsAppEnabled, settings.AgentEnabled = values.WhatsAppEnabled, values.AgentEnabled
-	settings.OwnerJID, settings.ChatAllowlist = values.OwnerJID, append([]string(nil), values.ChatAllowlist...)
+	settings.DiscordEnabled, settings.AgentEnabled = values.DiscordEnabled, values.AgentEnabled
+	settings.OwnerID, settings.ChatAllowlist = values.OwnerID, append([]string(nil), values.ChatAllowlist...)
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
 	settings.FallbackEndpoint, settings.TypeSafeEndpoint, settings.TypeSafeModel = values.FallbackEndpoint, values.TypeSafeEndpoint, values.TypeSafeModel
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
@@ -353,7 +340,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers
 	settings.MessageBurstCap = values.MessageBurstCap
 	settings.PolicyID, settings.LogLevel, settings.LogFormat = values.PolicyID, values.LogLevel, values.LogFormat
-	settings.DataDir, settings.EnvFile, settings.HTTPAddress, settings.PairingOutput = values.DataDir, values.EnvFile, values.HTTPAddress, values.PairingOutput
+	settings.DataDir, settings.EnvFile, settings.HTTPAddress = values.DataDir, values.EnvFile, values.HTTPAddress
 	settings.NoColor, settings.ForceColor, settings.StartOnLaunch = values.NoColor, values.ForceColor, values.StartOnLaunch
 	return settings, nil
 }

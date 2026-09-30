@@ -11,7 +11,7 @@ import (
 
 func TestChatDefaultsPersistAndReachRuntime(t *testing.T) {
 	settings := DefaultSettings()
-	settings.WhatsAppEnabled = false
+	settings.DiscordEnabled = false
 	settings.AgentEnabled = false
 	settings.ChatDefaults = ChatDefaults{ModerationLevel: 2, PromptMode: "replace", PromptText: "Use short replies", TriggerName: true, TriggerNameRegex: true, TriggerNamePattern: `(?i)vivy`}
 	encoded, err := json.Marshal(settings)
@@ -74,7 +74,7 @@ func TestZeroValueSettingsUseNonSecretDefaults(t *testing.T) {
 	if err := ValidateDraft(Settings{}); err != nil {
 		t.Fatalf("zero-value draft rejected: %v", err)
 	}
-	settings := Settings{WhatsAppEnabled: false, AgentEnabled: false}
+	settings := Settings{DiscordEnabled: false, AgentEnabled: false}
 	snapshot, err := SnapshotFromSettings(settings)
 	if err != nil {
 		t.Fatalf("zero-value snapshot: %v", err)
@@ -88,7 +88,7 @@ func TestSettingsSnapshotValidAgentHasNoExternalReads(t *testing.T) {
 	settings := DefaultSettings()
 	settings.AssistantName = "Vivy"
 	settings.BasePrompt = "Jawab singkat."
-	settings.OwnerJID = "15550000001@s.whatsapp.net"
+	settings.OwnerID = "15550000001@s.whatsapp.net"
 	settings.ChatAllowlist = []string{"15550000002@s.whatsapp.net"}
 	settings.LLMEndpoint = "https://llm.example.invalid/v1/chat/completions"
 	settings.LLMAPIKey = "test-secret"
@@ -138,7 +138,7 @@ func TestSettingsRejectMalformedValuesWithoutLeakingSecrets(t *testing.T) {
 	}
 
 	settings = DefaultSettings()
-	settings.WhatsAppEnabled = false
+	settings.DiscordEnabled = false
 	settings.AgentEnabled = true
 	if err := ValidateDraft(settings); err == nil || !strings.Contains(err.Error(), "DISCORDAGENT_AGENT_ENABLED") {
 		t.Fatalf("invalid mode error = %v", err)

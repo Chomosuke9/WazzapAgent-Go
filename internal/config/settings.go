@@ -64,10 +64,10 @@ type Settings struct {
 	BasePrompt    string
 	ChatDefaults  ChatDefaults
 
-	WhatsAppEnabled bool
-	AgentEnabled    bool
-	OwnerJID        string
-	ChatAllowlist   []string
+	DiscordEnabled bool
+	AgentEnabled   bool
+	OwnerID        string
+	ChatAllowlist  []string
 
 	LLMEndpoint      string
 	LLMAPIKey        string
@@ -110,7 +110,6 @@ type Settings struct {
 	DataDir       string
 	EnvFile       string
 	HTTPAddress   string
-	PairingOutput string
 	NoColor       bool
 	ForceColor    bool
 	StartOnLaunch bool
@@ -156,7 +155,7 @@ func DefaultSettings() Settings {
 		LogLevel: defaultLogLevel, LogFormat: defaultLogFormat,
 		TypeSafeEndpoint: defaultTypeSafeEndpoint, TypeSafeModel: defaultTypeSafeModel,
 		ShutdownTimeout: defaultShutdownTimeout,
-		WhatsAppEnabled: defaultWhatsAppEnabled, AgentEnabled: defaultWhatsAppEnabled,
+		DiscordEnabled:  defaultDiscordEnabled, AgentEnabled: defaultDiscordEnabled,
 		LLMProviderID: defaultProviderID, PolicyID: defaultPolicyID, PolicyRevision: 1,
 		LLMTimeout: defaultLLMTimeout, LLMConcurrency: defaultLLMConcurrency,
 		MaxOutputTokens: defaultMaxOutputTokens, MaxResponseBytes: defaultMaxResponseBytes,
@@ -165,14 +164,13 @@ func DefaultSettings() Settings {
 		HistoryWindow: defaultHistoryWindow, MaxContextBytes: defaultMaxContextBytes,
 		HistoryKeepLatest: defaultHistoryKeepLatest, HistoryMaxAge: defaultHistoryMaxAge,
 		ConnectTimeout: defaultConnectTimeout, SendTimeout: defaultSendTimeout,
-		PairingOutput: defaultPairingOutput,
 		StartOnLaunch: false,
 		ChatDefaults:  DefaultChatDefaults(),
 	}
 }
 
 // SessionContext supplies the data-root and identity state available to a
-// session controller. It is optional for validation of a new, unpaired draft.
+// session controller. It is optional for validation of a new, unlinked draft.
 type SessionContext struct {
 	DataDir       string
 	TenantID      identity.TenantID
@@ -218,7 +216,7 @@ func ValidateDraft(settings Settings) error {
 	return ValidationIssues(issues)
 }
 
-// ValidateSession validates values needed to open WhatsApp in either pairing
+// ValidateSession validates values needed to open Discord in either linking
 // or Agent mode. When context is supplied, it also validates the data root and
 // identity state without touching the filesystem.
 func ValidateSession(settings Settings, context ...SessionContext) error {
@@ -313,9 +311,9 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		dataDir: dataDir, httpAddress: nonempty(settings.HTTPAddress, defaultHTTPAddress),
 		logLevel:        nonempty(strings.ToLower(settings.LogLevel), defaultLogLevel),
 		logFormat:       nonempty(strings.ToLower(settings.LogFormat), defaultLogFormat),
-		shutdownTimeout: settings.ShutdownTimeout, whatsAppEnabled: settings.WhatsAppEnabled,
+		shutdownTimeout: settings.ShutdownTimeout, discordEnabled: settings.DiscordEnabled,
 		agentEnabled: settings.AgentEnabled, tenantID: settings.TenantID, accountID: settings.AccountID,
-		ownerAddress: strings.TrimSpace(settings.OwnerJID), allowlist: cloneStrings(settings.ChatAllowlist),
+		ownerAddress: strings.TrimSpace(settings.OwnerID), allowlist: cloneStrings(settings.ChatAllowlist),
 		llmEndpoint: strings.TrimSpace(settings.LLMEndpoint), llmAPIKey: settings.LLMAPIKey,
 		llmFallbackEndpoint: strings.TrimSpace(settings.FallbackEndpoint), llmFallbackAPIKey: settings.FallbackAPIKey,
 		langsmithAPIKey: settings.LangSmithAPIKey, typesafeAPIKey: strings.TrimSpace(settings.TypeSafeAPIKey), llmModel: strings.TrimSpace(settings.LLMModel),
@@ -330,17 +328,17 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		historyWindow: settings.HistoryWindow, maxContextBytes: settings.MaxContextBytes,
 		historyKeepLatest: settings.HistoryKeepLatest, historyMaxAge: settings.HistoryMaxAge,
 		connectTimeout: settings.ConnectTimeout,
-		sendTimeout:    settings.SendTimeout, pairingOutput: nonempty(strings.ToLower(settings.PairingOutput), defaultPairingOutput),
-		assistantName: strings.TrimSpace(settings.AssistantName),
+		sendTimeout:    settings.SendTimeout,
+		assistantName:  strings.TrimSpace(settings.AssistantName),
 	}, nil
 }
 
 // SessionSnapshotFromSettings creates the reduced snapshot needed for a
-// WhatsApp-only session. Pairing and resume do not require Agent, owner, LLM,
-// prompt, or allowlist readiness. The WhatsApp path and shared connection
+// Discord-only session. Linking and resume do not require Agent, owner, LLM,
+// prompt, or allowlist readiness. The token path and shared connection
 // settings still use the same typed validation/defaults as the full runtime.
 func SessionSnapshotFromSettings(settings Settings) (Snapshot, error) {
-	settings.WhatsAppEnabled = true
+	settings.DiscordEnabled = true
 	settings.AgentEnabled = false
 	return SnapshotFromSettings(settings)
 }
@@ -406,7 +404,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "DISCORDAGENT_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "DISCORDAGENT_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
 		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true}, {Key: "TYPESAFE_ENDPOINT", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeEndpoint},
 		{Key: "TYPESAFE_MODEL", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeModel},
-		{Key: "DISCORDAGENT_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "DISCORDAGENT_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "DISCORDAGENT_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "DISCORDAGENT_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
+		{Key: "DISCORDAGENT_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "DISCORDAGENT_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "DISCORDAGENT_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress},
 		{Key: "DISCORDAGENT_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "DISCORDAGENT_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
 		{Key: "startOnLaunch", Group: "application", Kind: FieldBool, Default: "false"},
 	}
@@ -487,9 +485,6 @@ func (settings Settings) withDefaults() Settings {
 	if settings.SendTimeout == 0 {
 		settings.SendTimeout = defaults.SendTimeout
 	}
-	if strings.TrimSpace(settings.PairingOutput) == "" {
-		settings.PairingOutput = defaults.PairingOutput
-	}
 	settings.ChatAllowlist = cloneStrings(settings.ChatAllowlist)
 	return settings
 }
@@ -509,8 +504,8 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	add := func(field, code, message string) {
 		issues = append(issues, ReadinessIssue{Field: field, Code: code, Message: message})
 	}
-	if settings.WhatsAppEnabled == false && settings.AgentEnabled {
-		add("DISCORDAGENT_AGENT_ENABLED", "incompatible", "Agent requires WhatsApp to be enabled")
+	if settings.DiscordEnabled == false && settings.AgentEnabled {
+		add("DISCORDAGENT_AGENT_ENABLED", "incompatible", "Agent requires Discord to be enabled")
 	}
 	if settings.DataDir != "" {
 		if _, err := resolveDataDir(settings.DataDir); err != nil {
@@ -527,9 +522,6 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	}
 	if settings.LogFormat != "" && !oneOf(strings.ToLower(settings.LogFormat), "json", "text", "compact") {
 		add("DISCORDAGENT_LOG_FORMAT", "invalid", "must be json, text, or compact")
-	}
-	if settings.PairingOutput != "" && !oneOf(strings.ToLower(settings.PairingOutput), "disabled", "terminal") {
-		add("DISCORDAGENT_PAIRING_OUTPUT", "invalid", "must be disabled or terminal")
 	}
 	if settings.LLMProviderID != "" {
 		if _, err := identity.ParseProviderID(settings.LLMProviderID); err != nil {
@@ -590,7 +582,7 @@ func draftIssues(settings Settings) []ReadinessIssue {
 		}
 	}
 	for _, item := range settings.ChatAllowlist {
-		if strings.TrimSpace(item) == "" || validateOpaqueAddress(strings.TrimSpace(item)) != nil {
+		if !validAllowlistEntry(strings.TrimSpace(item)) {
 			add("DISCORDAGENT_CHAT_ALLOWLIST", "invalid", "allowlist contains an invalid address")
 			break
 		}
@@ -603,16 +595,16 @@ func agentIssues(settings Settings) []ReadinessIssue {
 	add := func(field, code, message string) {
 		issues = append(issues, ReadinessIssue{Field: field, Code: code, Message: message})
 	}
-	if !settings.WhatsAppEnabled {
-		add("DISCORDAGENT_DISCORD_ENABLED", "required", "WhatsApp must be enabled for Agent mode")
+	if !settings.DiscordEnabled {
+		add("DISCORDAGENT_DISCORD_ENABLED", "required", "Discord must be enabled for Agent mode")
 	}
 	if strings.TrimSpace(settings.AssistantName) == "" {
 		add("ASSISTANT_NAME", "required", "assistant name is required for Agent mode")
 	}
-	if strings.TrimSpace(settings.OwnerJID) == "" {
-		add("DISCORDAGENT_OWNER_ID", "required", "owner JID is required for Agent mode")
-	} else if validateOpaqueAddress(strings.TrimSpace(settings.OwnerJID)) != nil {
-		add("DISCORDAGENT_OWNER_ID", "invalid", "owner JID is invalid")
+	if strings.TrimSpace(settings.OwnerID) == "" {
+		add("DISCORDAGENT_OWNER_ID", "required", "owner user ID is required for Agent mode")
+	} else if !validSnowflake(strings.TrimSpace(settings.OwnerID)) {
+		add("DISCORDAGENT_OWNER_ID", "invalid", "owner must be a numeric Discord user ID")
 	}
 	if len(settings.ChatAllowlist) == 0 {
 		add("DISCORDAGENT_CHAT_ALLOWLIST", "required", "at least one allowlist target is required for Agent mode")

@@ -5,20 +5,20 @@ import (
 	"errors"
 	"time"
 
-	whatsappadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/whatsapp/hypermeow"
+	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
 	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
 	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
 )
 
-func NormalizeWhatsAppBroadcastPayload(payload string) (string, error) {
-	return whatsappadapter.NormalizeBroadcastPayload(payload)
+func NormalizeDiscordBroadcastPayload(payload string) (string, error) {
+	return discordadapter.NormalizeBroadcastPayload(payload)
 }
 
 func (application *Application) ListBroadcastGroups(ctx context.Context) ([]control.AgentBroadcastGroup, error) {
 	adapter := application.adapterState.Load()
 	if adapter == nil {
-		return nil, agent.NewError(agent.ErrorNotReady, "list WhatsApp broadcast groups", errors.New("WhatsApp Agent is not running"))
+		return nil, agent.NewError(agent.ErrorNotReady, "list Discord broadcast groups", errors.New("Discord Agent is not running"))
 	}
 	groups, err := adapter.ListBroadcastGroups(ctx)
 	if err != nil {
@@ -31,10 +31,10 @@ func (application *Application) ListBroadcastGroups(ctx context.Context) ([]cont
 	return result, nil
 }
 
-func (application *Application) BroadcastWhatsAppGroups(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int) ([]control.AgentBroadcastGroupResult, error) {
+func (application *Application) BroadcastDiscordGroups(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int) ([]control.AgentBroadcastGroupResult, error) {
 	adapter := application.adapterState.Load()
 	if adapter == nil {
-		return nil, agent.NewError(agent.ErrorNotReady, "send WhatsApp broadcast", errors.New("WhatsApp Agent is not running"))
+		return nil, agent.NewError(agent.ErrorNotReady, "send Discord broadcast", errors.New("Discord Agent is not running"))
 	}
 	results, err := adapter.BroadcastGroups(ctx, groupIDs, format, payload, batchSize, batchDelaySeconds)
 	if err != nil {
@@ -49,10 +49,10 @@ func (application *Application) BroadcastWhatsAppGroups(ctx context.Context, gro
 	return converted, nil
 }
 
-func (application *Application) ScheduleWhatsAppBroadcast(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int, scheduledAt time.Time) (control.AgentBroadcastSchedule, error) {
+func (application *Application) ScheduleDiscordBroadcast(ctx context.Context, groupIDs []string, format, payload string, batchSize, batchDelaySeconds int, scheduledAt time.Time) (control.AgentBroadcastSchedule, error) {
 	adapter := application.adapterState.Load()
 	if adapter == nil {
-		return control.AgentBroadcastSchedule{}, agent.NewError(agent.ErrorNotReady, "schedule WhatsApp broadcast", errors.New("WhatsApp Agent is not running"))
+		return control.AgentBroadcastSchedule{}, agent.NewError(agent.ErrorNotReady, "schedule Discord broadcast", errors.New("Discord Agent is not running"))
 	}
 	schedule, err := adapter.ScheduleBroadcast(ctx, groupIDs, format, payload, batchSize, batchDelaySeconds, scheduledAt)
 	if err != nil {
@@ -61,10 +61,10 @@ func (application *Application) ScheduleWhatsAppBroadcast(ctx context.Context, g
 	return agentBroadcastSchedule(schedule), nil
 }
 
-func (application *Application) ListWhatsAppBroadcastSchedules(ctx context.Context) ([]control.AgentBroadcastSchedule, error) {
+func (application *Application) ListDiscordBroadcastSchedules(ctx context.Context) ([]control.AgentBroadcastSchedule, error) {
 	adapter := application.adapterState.Load()
 	if adapter == nil {
-		return nil, agent.NewError(agent.ErrorNotReady, "list WhatsApp broadcast schedules", errors.New("WhatsApp Agent is not running"))
+		return nil, agent.NewError(agent.ErrorNotReady, "list Discord broadcast schedules", errors.New("Discord Agent is not running"))
 	}
 	schedules, err := adapter.ListBroadcastSchedules(ctx)
 	if err != nil {
@@ -77,10 +77,10 @@ func (application *Application) ListWhatsAppBroadcastSchedules(ctx context.Conte
 	return result, nil
 }
 
-func (application *Application) CancelWhatsAppBroadcastSchedule(ctx context.Context, id string) error {
+func (application *Application) CancelDiscordBroadcastSchedule(ctx context.Context, id string) error {
 	adapter := application.adapterState.Load()
 	if adapter == nil {
-		return agent.NewError(agent.ErrorNotReady, "cancel WhatsApp broadcast schedule", errors.New("WhatsApp Agent is not running"))
+		return agent.NewError(agent.ErrorNotReady, "cancel Discord broadcast schedule", errors.New("Discord Agent is not running"))
 	}
 	return adapter.CancelBroadcastSchedule(ctx, id)
 }

@@ -24,8 +24,8 @@ const (
 // AgentRuntimeSnapshot contains only safe process state. It never crosses the
 // UI boundary with a settings snapshot, prompt, or credential.
 type AgentRuntimeSnapshot struct {
-	WhatsAppState     string
-	WhatsAppErrorCode agent.ErrorCode
+	DiscordState     string
+	DiscordErrorCode agent.ErrorCode
 }
 
 type AgentRuntimeStatus struct {
@@ -33,7 +33,7 @@ type AgentRuntimeStatus struct {
 	SavedRevision  uint64
 	ActiveRevision uint64
 	PendingChanges bool
-	WhatsAppState  string
+	DiscordState   string
 	ErrorCode      agent.ErrorCode
 	OperationID    string
 }
@@ -50,9 +50,9 @@ type agentRuntimeRun struct {
 	err             error // guarded by AgentController.mu; read after done closes
 }
 
-// AgentController owns the bot runtime for one leased data root. Pairing is
+// AgentController owns the bot runtime for one leased data root. Linking is
 // still performed by SessionController; starting bot mode first stops that
-// session-only client so only one WhatsApp client owns the device store.
+// session-only client so only one Discord client uses the bot token.
 type AgentController struct {
 	settings SettingsRepository
 	bindings SessionBindingRepository
@@ -109,18 +109,18 @@ func (controller *AgentController) GetStatus(ctx context.Context) (AgentRuntimeS
 	status := AgentRuntimeStatus{
 		State: state, SavedRevision: saved.Revision, ActiveRevision: activeRevision,
 		PendingChanges: activeRevision != 0 && activeRevision != saved.Revision,
-		WhatsAppState:  string(RuntimeStopped), ErrorCode: lastError, OperationID: operationID,
+		DiscordState:   string(RuntimeStopped), ErrorCode: lastError, OperationID: operationID,
 	}
 	if run != nil {
 		runtimeStatus := run.runtime.Snapshot()
-		if runtimeStatus.WhatsAppState != "" {
-			status.WhatsAppState = runtimeStatus.WhatsAppState
+		if runtimeStatus.DiscordState != "" {
+			status.DiscordState = runtimeStatus.DiscordState
 		}
-		if runtimeStatus.WhatsAppErrorCode != "" {
-			status.ErrorCode = runtimeStatus.WhatsAppErrorCode
+		if runtimeStatus.DiscordErrorCode != "" {
+			status.ErrorCode = runtimeStatus.DiscordErrorCode
 		}
 	} else if sessionStatus, sessionErr := controller.sessions.GetStatus(ctx); sessionErr == nil {
-		status.WhatsAppState = string(sessionStatus.RuntimeState)
+		status.DiscordState = string(sessionStatus.RuntimeState)
 		if sessionStatus.ErrorCode != "" {
 			status.ErrorCode = sessionStatus.ErrorCode
 		}
@@ -220,10 +220,10 @@ func (controller *AgentController) IsActive() bool {
 }
 
 // WithSessionControl serializes session-only mutations with Agent startup and
-// rejects them while the bot owns the WhatsApp client.
+// rejects them while the bot owns the Discord client.
 func (controller *AgentController) WithSessionControl(action func() error) error {
 	if controller == nil || action == nil {
-		return agent.NewError(agent.ErrorUnavailable, "change WhatsApp session", errors.New("Agent controller is unavailable"))
+		return agent.NewError(agent.ErrorUnavailable, "change Discord session", errors.New("Agent controller is unavailable"))
 	}
 	controller.operations.Lock()
 	defer controller.operations.Unlock()
@@ -232,10 +232,10 @@ func (controller *AgentController) WithSessionControl(action func() error) error
 	active := controller.run != nil && (controller.state == BotStarting || controller.state == BotRunning || controller.state == BotStopping)
 	controller.mu.RUnlock()
 	if closed {
-		return agent.NewError(agent.ErrorNotReady, "change WhatsApp session", errors.New("Agent controller is closing"))
+		return agent.NewError(agent.ErrorNotReady, "change Discord session", errors.New("Agent controller is closing"))
 	}
 	if active {
-		return agent.NewError(agent.ErrorConflict, "change WhatsApp session", errors.New("stop the Agent before changing its WhatsApp session"))
+		return agent.NewError(agent.ErrorConflict, "change Discord session", errors.New("stop the Agent before changing its Discord session"))
 	}
 	return action()
 }
@@ -275,10 +275,10 @@ func (controller *AgentController) runtimeSnapshot(ctx context.Context, expected
 	}
 	binding, err := controller.bindings.LoadSessionBinding(ctx)
 	if err != nil {
-		return config.Snapshot{}, 0, sessionRepositoryError("load WhatsApp binding for Agent", err)
+		return config.Snapshot{}, 0, sessionRepositoryError("load Discord binding for Agent", err)
 	}
-	if binding.State != SessionPaired || !binding.HasActiveScope {
-		return config.Snapshot{}, 0, agent.NewError(agent.ErrorNotReady, "start Agent", errors.New("pair a WhatsApp account before starting the Agent"))
+	if binding.State != SessionLinked || !binding.HasActiveScope {
+		return config.Snapshot{}, 0, agent.NewError(agent.ErrorNotReady, "start Agent", errors.New("link a Discord bot before starting the Agent"))
 	}
 	settings.DataDir = controller.dataRoot
 	settings.TenantID = binding.ActiveScope.TenantID

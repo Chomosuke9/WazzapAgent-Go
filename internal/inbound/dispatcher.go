@@ -246,10 +246,7 @@ func (dispatcher *Dispatcher) runCommand(ctx context.Context, key agent.Key, mes
 	// FromMe command messages intentionally run here too. The command's
 	// permission expression decides whether the bot may run them; the AI
 	// path still ignores ordinary FromMe messages to prevent self-replies.
-	switch {
-	case message.ChatKind == conversation.ChatStatus:
-		return dispatcher.ignore(ctx, message, IgnoreStatus)
-	case !message.Allowlisted:
+	if !message.Allowlisted {
 		return dispatcher.ignore(ctx, message, IgnoreNotAllowlisted)
 	}
 	dispatcher.mu.Lock()
@@ -277,8 +274,6 @@ func (dispatcher *Dispatcher) queueAI(ctx context.Context, key agent.Key, messag
 	switch {
 	case message.FromMe:
 		return dispatcher.ignore(ctx, message, IgnoreFromMe)
-	case message.ChatKind == conversation.ChatStatus:
-		return dispatcher.ignore(ctx, message, IgnoreStatus)
 	case !message.Allowlisted:
 		return dispatcher.ignore(ctx, message, IgnoreNotAllowlisted)
 	}
