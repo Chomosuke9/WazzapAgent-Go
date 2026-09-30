@@ -5,11 +5,12 @@ type MessageFormat = "text" | "payload";
 
 function errorLabel(code: string): string {
   switch (code) {
-    case "not_found": return "This account is no longer in the group.";
-    case "timeout": return "WhatsApp did not confirm before the timeout.";
+    case "not_found": return "The bot can no longer send in this channel.";
+    case "timeout": return "Discord did not confirm before the timeout.";
     case "cancelled": return "The send was cancelled.";
     case "unknown_outcome": return "The delivery status could not be confirmed.";
-    default: return "WhatsApp could not confirm this message.";
+    case "permission_denied": return "The bot lacks permission to send here.";
+    default: return "Discord could not confirm this message.";
   }
 }
 
@@ -71,7 +72,7 @@ export function BroadcastPage() {
     try {
       setGroups(await getDiscordBroadcastGroups());
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Could not load WhatsApp groups.");
+      setError(reason instanceof Error ? reason.message : "Could not load Discord channels.");
     } finally {
       setLoading(false);
     }
@@ -125,7 +126,7 @@ export function BroadcastPage() {
       const normalized = await normalizeDiscordBroadcastPayload(payload);
       setPayload(normalized);
       setResults([]);
-      setPayloadNormalizationMessage("Normalized and validated as a WhatsApp message payload.");
+      setPayloadNormalizationMessage("Formatted and validated as a Discord message.");
     } catch (reason: unknown) {
       setPayloadNormalizationFailed(true);
       setPayloadNormalizationMessage(`${reason instanceof Error ? reason.message : "Could not normalize this JSON."} The original text is unchanged.`);
@@ -136,9 +137,9 @@ export function BroadcastPage() {
 
   function validateReady(action: "send" | "schedule"): string | null {
     const body = messageValue.trim();
-    if (!selectedIDs.length) return "Select at least one group.";
+    if (!selectedIDs.length) return "Select at least one channel.";
     if (!body) return "Add a message before continuing.";
-    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) return "Batch size must be between 1 and 100 groups.";
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) return "Batch size must be between 1 and 100 channels.";
     if (!Number.isInteger(batchDelaySeconds) || batchDelaySeconds < 0 || batchDelaySeconds > 300) return "Batch delay must be between 0 and 300 seconds.";
     if (action === "schedule" && !scheduleTime) return "Choose a date and time for the schedule.";
     return null;
@@ -174,7 +175,7 @@ export function BroadcastPage() {
       return;
     }
     const formatLabel = format === "text" ? "plain text" : "JSON payload";
-    if (!window.confirm(`Schedule ${formatLabel} for ${selectedIDs.length} groups at ${scheduledAt.toLocaleString()}?`)) return;
+    if (!window.confirm(`Schedule ${formatLabel} for ${selectedIDs.length} channels at ${scheduledAt.toLocaleString()}?`)) return;
 
     setScheduling(true);
     setError("");
@@ -206,9 +207,9 @@ export function BroadcastPage() {
   return <div className="page">
     <header className="page-header">
       <div>
-        <p className="eyebrow">WHATSAPP</p>
+        <p className="eyebrow">DISCORD</p>
         <h1>Broadcasts</h1>
-        <p className="lede">Reach multiple groups with one message, now or at a time you choose.</p>
+        <p className="lede">Reach several channels with one message, now or at a time you choose.</p>
       </div>
       <span className="broadcast-selected-count">{selectedIDs.length} selected</span>
     </header>
@@ -217,47 +218,47 @@ export function BroadcastPage() {
     <form className="broadcast-form" onSubmit={(event) => void submit(event)}>
       <section className="card broadcast-card">
         <header className="broadcast-card-header">
-          <div><h2>Recipient groups</h2><p className="muted">This list shows groups the connected WhatsApp account has joined.</p></div>
-          <button type="button" className="button secondary" onClick={() => void refreshGroups()} disabled={loading || busy}>{loading ? "Loading…" : "Refresh groups"}</button>
+          <div><h2>Recipient channels</h2><p className="muted">Text and announcement channels, across your servers, where the bot may send messages.</p></div>
+          <button type="button" className="button secondary" onClick={() => void refreshGroups()} disabled={loading || busy}>{loading ? "Loading…" : "Refresh channels"}</button>
         </header>
         <div className="broadcast-toolbar">
-          <label className="chat-list-search"><span aria-hidden="true">⌕</span><span className="visually-hidden">Search groups</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search group names…" disabled={busy} /></label>
-          <button type="button" className="button secondary broadcast-select-all" onClick={toggleAllGroups} disabled={loading || busy || groups.length === 0}>{allSelected ? "Clear selection" : "Select all groups"}</button>
+          <label className="chat-list-search"><span aria-hidden="true">⌕</span><span className="visually-hidden">Search channels</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search channels or servers…" disabled={busy} /></label>
+          <button type="button" className="button secondary broadcast-select-all" onClick={toggleAllGroups} disabled={loading || busy || groups.length === 0}>{allSelected ? "Clear selection" : "Select all channels"}</button>
         </div>
-        {loading ? <p className="broadcast-empty">Loading groups from WhatsApp…</p> : groups.length === 0 && error ? <div className="broadcast-empty">The group list is unavailable.</div> : groups.length === 0 ? <div className="broadcast-empty"><strong>No groups are available.</strong><span>Make sure the Agent is running and WhatsApp is connected.</span></div> : visibleGroups.length === 0 ? <div className="broadcast-empty">No matching group names.</div> : <ul className="broadcast-group-list">
+        {loading ? <p className="broadcast-empty">Loading channels from Discord…</p> : groups.length === 0 && error ? <div className="broadcast-empty">The channel list is unavailable.</div> : groups.length === 0 ? <div className="broadcast-empty"><strong>No channels are available.</strong><span>Make sure the Agent is running and the bot is in a server where it may send messages.</span></div> : visibleGroups.length === 0 ? <div className="broadcast-empty">No matching channels.</div> : <ul className="broadcast-group-list">
           {visibleGroups.map((group) => <li key={group.id}>
             <label className="broadcast-group-option">
               <input type="checkbox" checked={selected.has(group.id)} onChange={() => toggleGroup(group.id)} disabled={busy} />
-              <span className="broadcast-group-avatar" aria-hidden="true">{group.name.trim().charAt(0).toLocaleUpperCase() || "G"}</span>
+              <span className="broadcast-group-avatar" aria-hidden="true">{group.name.trim().charAt(0).toLocaleUpperCase() || "#"}</span>
               <span className="broadcast-group-name">{group.name}</span>
             </label>
           </li>)}
         </ul>}
-        {groups.length > 0 && <p className="broadcast-list-footer">Showing {visibleGroups.length} of {groups.length} groups.</p>}
+        {groups.length > 0 && <p className="broadcast-list-footer">Showing {visibleGroups.length} of {groups.length} channels.</p>}
       </section>
 
       <section className="card broadcast-card broadcast-composer">
-        <header className="broadcast-card-header"><div><h2>Message</h2><p className="muted">The selected format is used for every group.</p></div></header>
+        <header className="broadcast-card-header"><div><h2>Message</h2><p className="muted">The selected format is used for every channel.</p></div></header>
         <div className="broadcast-format" role="group" aria-label="Message format">
           <button type="button" className={format === "text" ? "method-choice selected" : "method-choice"} onClick={() => { setFormat("text"); setResults([]); setPayloadNormalizationMessage(""); }} disabled={busy}>Plain text</button>
           <button type="button" className={format === "payload" ? "method-choice selected" : "method-choice"} onClick={() => { setFormat("payload"); setResults([]); setPayloadNormalizationMessage(""); }} disabled={busy}>Advanced JSON</button>
         </div>
         {format === "text" ? <label className="broadcast-editor">Message text
           <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Write a broadcast message…" maxLength={32768} rows={9} disabled={busy} />
-          <small>Text is sent as a regular WhatsApp text message. Mention with <code>@all</code> (everyone), <code>@admin</code> (group admins) or a phone number such as <code>@628123456789</code>.</small>
-        </label> : <label className="broadcast-editor">WhatsApp message JSON
+          <small>Text is sent as a regular Discord message, in several parts when it is longer than 2000 characters. Mentions in plain text never ping anyone; use Advanced JSON with <code>allowed_mentions</code> to ping.</small>
+        </label> : <label className="broadcast-editor">Discord message JSON
           <textarea className="broadcast-json" value={payload} onChange={(event) => { setPayload(event.target.value); setPayloadNormalizationMessage(""); }} spellCheck={false} maxLength={262144} rows={9} disabled={busy} />
-          <small>Use ProtoJSON for <code>waE2E.Message</code>. Text example: <code>{'{"conversation":"Hello everyone!"}'}</code>. Protobuf <code>bytes</code> fields use base64; media requires a complete WhatsApp payload.</small>
+          <small>A Discord message object with <code>content</code>, <code>embeds</code>, <code>components</code>, <code>poll</code>, <code>tts</code>, <code>flags</code> or <code>allowed_mentions</code>. Example: <code>{'{"content":"Hello everyone!","embeds":[{"title":"News"}]}'}</code>.</small>
         </label>}
         {format === "payload" && <div className="broadcast-normalizer-row">
-          <div><button type="button" className="button secondary" onClick={() => void normalizePayload()} disabled={busy || !payload.trim()}>{normalizingPayload ? "Normalizing…" : "Normalize JSON"}</button><small>Extracts JSON from code fences or a raw-message envelope, fixes safe formatting issues, and checks WhatsApp message fields.</small></div>
+          <div><button type="button" className="button secondary" onClick={() => void normalizePayload()} disabled={busy || !payload.trim()}>{normalizingPayload ? "Normalizing…" : "Normalize JSON"}</button><small>Takes the JSON out of a code fence, formats it, and checks it is a message Discord accepts.</small></div>
           {payloadNormalizationMessage && <p className={payloadNormalizationFailed ? "broadcast-normalizer-error" : "broadcast-normalizer-success"} role={payloadNormalizationFailed ? "alert" : "status"}>{payloadNormalizationMessage}</p>}
         </div>}
 
         <div className="broadcast-timing">
-          <header><h3>Batch and timing</h3><p className="muted">Groups in each batch are sent at the same time. The pause applies between batches.</p></header>
+          <header><h3>Batch and timing</h3><p className="muted">Channels in each batch are sent at the same time. The pause applies between batches.</p></header>
           <div className="broadcast-timing-grid">
-            <label>Groups per batch<input type="number" min={1} max={100} step={1} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} disabled={busy} /><small>Default: 20 groups.</small></label>
+            <label>Channels per batch<input type="number" min={1} max={100} step={1} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} disabled={busy} /><small>Default: 20 channels.</small></label>
             <label>Pause between batches (seconds)<input type="number" min={0} max={300} step={1} value={batchDelaySeconds} onChange={(event) => setBatchDelaySeconds(Number(event.target.value))} disabled={busy} /><small>0 seconds continues immediately.</small></label>
           </div>
         </div>
@@ -266,10 +267,10 @@ export function BroadcastPage() {
           <label>Schedule for<input type="datetime-local" value={scheduleTime} min={minimumScheduleTime()} onChange={(event) => setScheduleTime(event.target.value)} disabled={busy} /><small>If the Agent is offline at that time, it sends after the Agent reconnects.</small></label>
         </div>
         <div className="broadcast-send-row">
-          <p className="muted">{sending ? `Sending batch of up to ${batchSize} groups…` : scheduling ? "Saving schedule…" : `Recipients: ${selectedIDs.length} groups`}</p>
+          <p className="muted">{sending ? `Sending batch of up to ${batchSize} channels…` : scheduling ? "Saving schedule…" : `Recipients: ${selectedIDs.length} channels`}</p>
           <div className="broadcast-actions">
             <button type="button" className="button secondary" onClick={() => void submitSchedule()} disabled={busy || loading || selectedIDs.length === 0 || !messageValue.trim()}>{scheduling ? "Scheduling…" : "Schedule message"}</button>
-            <button type="submit" className="button primary" disabled={busy || loading || selectedIDs.length === 0 || !messageValue.trim()}>{sending ? "Sending…" : `Send to ${selectedIDs.length} groups`}</button>
+            <button type="submit" className="button primary" disabled={busy || loading || selectedIDs.length === 0 || !messageValue.trim()}>{sending ? "Sending…" : `Send to ${selectedIDs.length} channels`}</button>
           </div>
         </div>
       </section>
@@ -277,7 +278,7 @@ export function BroadcastPage() {
 
     <section className="card broadcast-results broadcast-schedules" aria-live="polite">
       <div className="broadcast-card-header">
-        <div><h2>Scheduled broadcasts</h2><p className="muted">Saved schedules are sent by the Agent when WhatsApp is connected.</p></div>
+        <div><h2>Scheduled broadcasts</h2><p className="muted">Saved schedules are sent by the Agent while the bot is connected.</p></div>
         <button type="button" className="button secondary" onClick={() => void refreshSchedules()} disabled={loadingSchedules || busy}>{loadingSchedules ? "Refreshing…" : "Refresh schedules"}</button>
       </div>
       {scheduleError && <p className="error-text" role="alert">{scheduleError}</p>}
@@ -287,9 +288,9 @@ export function BroadcastPage() {
           return <li key={schedule.id}>
             <div className="broadcast-schedule-summary">
               <strong>{new Date(schedule.scheduledAt).toLocaleString()}</strong>
-              <span>{schedule.groupCount} groups · batches of {schedule.batchSize} · {schedule.batchDelaySeconds}s pause</span>
+              <span>{schedule.groupCount} channels · batches of {schedule.batchSize} · {schedule.batchDelaySeconds}s pause</span>
               {failed.length > 0 && schedule.status !== "scheduled" && <details className="broadcast-schedule-errors">
-                <summary>{failed.length} group{failed.length === 1 ? "" : "s"} need attention</summary>
+                <summary>{failed.length} channel{failed.length === 1 ? "" : "s"} need attention</summary>
                 <ul>{failed.map((item, index) => <li key={`${item.name}-${index}`}><strong>{item.name}</strong><span>{errorLabel(item.errorCode)}</span></li>)}</ul>
               </details>}
             </div>
@@ -303,7 +304,7 @@ export function BroadcastPage() {
     </section>
 
     {results.length > 0 && <section className="card broadcast-results" aria-live="polite">
-      <div className="broadcast-card-header"><div><h2>Delivery results</h2><p className="muted">Sent to {sentCount} of {results.length} groups.</p></div></div>
+      <div className="broadcast-card-header"><div><h2>Delivery results</h2><p className="muted">Sent to {sentCount} of {results.length} channels.</p></div></div>
       <ul className="broadcast-result-list">{results.map((item) => <li key={item.id} className={item.sent ? "broadcast-result-sent" : "broadcast-result-failed"}><span><strong>{item.name}</strong>{!item.sent && <small>{errorLabel(item.errorCode)}</small>}</span><b>{item.sent ? "Sent" : "Failed"}</b></li>)}</ul>
     </section>}
   </div>;

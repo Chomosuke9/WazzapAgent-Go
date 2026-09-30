@@ -6,7 +6,7 @@ nantinya browser. Tidak ada frontend terpisah per platform.
 | Folder | Tanggung jawab |
 | --- | --- |
 | `src/components` | Komponen UI reusable, termasuk form dan indikator status |
-| `src/pages` | Overview, WhatsApp, Settings, serta App & Data |
+| `src/pages` | Overview, Discord, Chat, Broadcast, Settings, serta App & Data |
 | `src/layouts` | Layout responsive sidebar desktop dan navigasi mobile |
 | `src/hooks` | React hooks untuk state lokal, context, dan subscription |
 | `src/services` | Pemanggilan binding Go dan pemetaan response untuk UI |
@@ -16,7 +16,7 @@ nantinya browser. Tidak ada frontend terpisah per platform.
 | `bindings` | Hasil generator Wails, bukan tempat kode service manual |
 
 Mulai dengan React state/context. Tambahkan store lain hanya ketika diperlukan.
-Business logic, validasi otoritatif, sesi WhatsApp, serta pengaturan persistent
+Business logic, validasi otoritatif, token bot Discord, serta pengaturan persistent
 dimiliki backend Go. Jangan menyimpan kredensial atau data penting di localStorage,
 source frontend, atau environment Vite.
 

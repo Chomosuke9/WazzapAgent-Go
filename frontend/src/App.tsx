@@ -11,6 +11,6 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 
 export function App() {
   const [page, setPage] = useState<PageId>("overview");
-  const current = page === "overview" ? <OverviewPage onNavigate={setPage} /> : page === "analytics" ? <AnalyticsPage /> : page === "whatsapp" ? <DiscordPage /> : page === "broadcast" ? <BroadcastPage /> : page === "chat" ? <ChatPage /> : page === "settings" ? <SettingsPage /> : page === "logs" ? <LogsPage /> : <AppDataPage />;
+  const current = page === "overview" ? <OverviewPage onNavigate={setPage} /> : page === "analytics" ? <AnalyticsPage /> : page === "discord" ? <DiscordPage /> : page === "broadcast" ? <BroadcastPage /> : page === "chat" ? <ChatPage /> : page === "settings" ? <SettingsPage /> : page === "logs" ? <LogsPage /> : <AppDataPage />;
   return <AppLayout page={page} onNavigate={setPage}>{current}</AppLayout>;
 }

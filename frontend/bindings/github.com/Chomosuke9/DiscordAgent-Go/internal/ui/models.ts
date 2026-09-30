@@ -41,184 +41,12 @@ export interface ApplyAgentSettingsRequestDTO {
     "expectedRevision": string;
 }
 
+/**
+ * BeginDiscordLinkRequestDTO links a bot by the token from the Discord
+ * Developer Portal. The token is never sent back to the UI.
+ */
 export interface BeginDiscordLinkRequestDTO {
-    "method": string;
-    "phone"?: string;
-}
-
-export interface FieldDescriptorDTO {
-    "key": string;
-    "group": string;
-    "kind": string;
-    "sensitive": boolean;
-    "readOnly": boolean;
-    "cliOnly": boolean;
-    "default": string;
-}
-
-export interface LogEntryDTO {
-    "time": string;
-    "level": string;
-    "message": string;
-    "details": string;
-    "id": number;
-    "hasFull": boolean;
-}
-
-export interface ReadinessIssueDTO {
-    "field": string;
-    "code": string;
-    "message": string;
-}
-
-export interface ResetDiscordChatSettingsRequestDTO {
-    "expectedSettingsRevision": string;
-    "category": string;
-}
-
-export interface ResetDiscordChatSettingsResultDTO {
-    "changedChats": number;
-}
-
-export interface SaveSettingsRequestDTO {
-    "expectedRevision": string;
-    "patch": SettingsPatchDTO;
-}
-
-export interface SaveSettingsResultDTO {
-    "view": SettingsViewDTO;
-    "revision": string;
-    "pendingChanges": boolean;
-}
-
-export interface SaveDiscordChatSettingsRequestDTO {
-    "chatID": string;
-    "expectedVersion": string;
-    "moderationLevel": number;
-    "promptOverrideMode": string;
-    "promptOverrideText": string;
-    "triggerMention": boolean;
-    "triggerName": boolean;
-    "triggerReply": boolean;
-    "triggerNameRegex": boolean;
-    "triggerNamePattern": string;
-    "triggerSmart": boolean;
-    "triggerSmartRules": string;
-}
-
-export interface ScheduleDiscordBroadcastRequestDTO {
-    "groupIDs": string[] | null;
-    "format": string;
-    "payload": string;
-    "batchSize": number;
-    "batchDelaySeconds": number;
-    "scheduledAt": string;
-}
-
-export interface SecretPatchDTO {
-    "llmAPIKey": SecretUpdateDTO;
-    "fallbackAPIKey": SecretUpdateDTO;
-    "langSmithAPIKey": SecretUpdateDTO;
-    "typeSafeAPIKey": SecretUpdateDTO;
-}
-
-export interface SecretUpdateDTO {
-    "action": string;
-    "value"?: string;
-}
-
-export interface SendDiscordBroadcastRequestDTO {
-    "groupIDs": string[] | null;
-    "format": string;
-    "payload": string;
-    "batchSize": number;
-    "batchDelaySeconds": number;
-}
-
-/**
- * SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
- * remain harmless aliases for callers that use those names in their form
- * model; the first non-empty value wins in that order.
- */
-export interface SettingsPatchDTO {
-    "draft": SettingsValuesDTO;
-    "settings": SettingsValuesDTO;
-    "values": SettingsValuesDTO;
-    "secrets": SecretPatchDTO;
-}
-
-/**
- * SettingsValuesDTO is the public settings form value. It deliberately does
- * not contain any secret value; configured is represented by the three
- * boolean status fields below.
- */
-export interface SettingsValuesDTO {
-    "assistantName": string;
-    "basePrompt": string;
-    "chatDefaults": config$0.ChatDefaults;
-    "discordEnabled": boolean;
-    "agentEnabled": boolean;
-    "ownerJID": string;
-    "chatAllowlist": string[] | null;
-    "llmEndpoint": string;
-    "llmModel": string;
-    "llmProviderID": string;
-    "fallbackEndpoint": string;
-    "typeSafeEndpoint": string;
-    "typeSafeModel": string;
-    "llmTimeout": string;
-    "llmConcurrency": number;
-    "maxOutputTokens": number;
-    "maxResponseBytes": number;
-    "historyWindow": number;
-    "maxContextBytes": number;
-    "historyKeepLatest": number;
-    "historyMaxAge": string;
-    "inboundQueue": number;
-    "inboundWorkers": number;
-    "messageDebounce": string;
-    "messageBurstCap": number;
-    "connectTimeout": string;
-    "sendTimeout": string;
-    "shutdownTimeout": string;
-    "policyID": string;
-    "policyRevision": string;
-    "logLevel": string;
-    "logFormat": string;
-    "dataDir": string;
-    "envFile": string;
-    "httpAddress": string;
-    "pairingOutput": string;
-    "noColor": boolean;
-    "forceColor": boolean;
-    "startOnLaunch": boolean;
-
-    /**
-     * Identity is read-only bootstrap state. It is included so a complete
-     * settings draft can be round-tripped without changing it to zero.
-     */
-    "tenantID": string;
-    "accountID": string;
-    "llmAPIKeyConfigured": boolean;
-    "fallbackAPIKeyConfigured": boolean;
-    "langSmithAPIKeyConfigured": boolean;
-    "typeSafeAPIKeyConfigured": boolean;
-}
-
-export interface SettingsViewDTO {
-    "values": SettingsValuesDTO;
-    "revision": string;
-    "updatedAt": string;
-    "readiness": ReadinessIssueDTO[] | null;
-    "sessionReadiness": ReadinessIssueDTO[] | null;
-    "agentReadiness": ReadinessIssueDTO[] | null;
-}
-
-export interface ValidationResultDTO {
-    "valid": boolean;
-    "readiness": ReadinessIssueDTO[] | null;
-    "sessionReadiness": ReadinessIssueDTO[] | null;
-    "agentReadiness": ReadinessIssueDTO[] | null;
+    "token": string;
 }
 
 export interface DiscordBroadcastGroupDTO {
@@ -337,14 +165,6 @@ export interface DiscordMessageDTO {
     "quote": DiscordQuoteDTO | null;
 }
 
-export interface DiscordPairingDTO {
-    "method": string;
-    "code"?: string;
-    "qrCodeDataURL"?: string;
-    "generation": number;
-    "expiresAt": string;
-}
-
 export interface DiscordQuoteDTO {
     "messageID": string;
     "role": string;
@@ -366,8 +186,13 @@ export interface DiscordSessionStatusDTO {
     "sessionPresent": boolean;
     "agentActive": boolean;
     "discordBotID"?: string;
+    "botName"?: string;
+
+    /**
+     * InviteURL adds the bot to a server with the permissions it uses.
+     */
+    "inviteURL"?: string;
     "operationID"?: string;
-    "pairing"?: DiscordPairingDTO | null;
     "errorCode"?: string;
 }
 
@@ -385,4 +210,178 @@ export interface DiscordUsageDTO {
     "groups": DiscordGroupUsageDTO[] | null;
     "invocationGroups": DiscordGroupUsageDTO[] | null;
     "dailyActivity": DiscordDailyUsageDTO[] | null;
+}
+
+export interface FieldDescriptorDTO {
+    "key": string;
+    "group": string;
+    "kind": string;
+    "sensitive": boolean;
+    "readOnly": boolean;
+    "cliOnly": boolean;
+    "default": string;
+}
+
+export interface LogEntryDTO {
+    "time": string;
+    "level": string;
+    "message": string;
+    "details": string;
+    "id": number;
+    "hasFull": boolean;
+}
+
+export interface ReadinessIssueDTO {
+    "field": string;
+    "code": string;
+    "message": string;
+}
+
+export interface ResetDiscordChatSettingsRequestDTO {
+    "expectedSettingsRevision": string;
+    "category": string;
+}
+
+export interface ResetDiscordChatSettingsResultDTO {
+    "changedChats": number;
+}
+
+export interface SaveDiscordChatSettingsRequestDTO {
+    "chatID": string;
+    "expectedVersion": string;
+    "moderationLevel": number;
+    "promptOverrideMode": string;
+    "promptOverrideText": string;
+    "triggerMention": boolean;
+    "triggerName": boolean;
+    "triggerReply": boolean;
+    "triggerNameRegex": boolean;
+    "triggerNamePattern": string;
+    "triggerSmart": boolean;
+    "triggerSmartRules": string;
+}
+
+export interface SaveSettingsRequestDTO {
+    "expectedRevision": string;
+    "patch": SettingsPatchDTO;
+}
+
+export interface SaveSettingsResultDTO {
+    "view": SettingsViewDTO;
+    "revision": string;
+    "pendingChanges": boolean;
+}
+
+export interface ScheduleDiscordBroadcastRequestDTO {
+    "groupIDs": string[] | null;
+    "format": string;
+    "payload": string;
+    "batchSize": number;
+    "batchDelaySeconds": number;
+    "scheduledAt": string;
+}
+
+export interface SecretPatchDTO {
+    "llmAPIKey": SecretUpdateDTO;
+    "fallbackAPIKey": SecretUpdateDTO;
+    "langSmithAPIKey": SecretUpdateDTO;
+    "typeSafeAPIKey": SecretUpdateDTO;
+}
+
+export interface SecretUpdateDTO {
+    "action": string;
+    "value"?: string;
+}
+
+export interface SendDiscordBroadcastRequestDTO {
+    "groupIDs": string[] | null;
+    "format": string;
+    "payload": string;
+    "batchSize": number;
+    "batchDelaySeconds": number;
+}
+
+/**
+ * SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
+ * remain harmless aliases for callers that use those names in their form
+ * model; the first non-empty value wins in that order.
+ */
+export interface SettingsPatchDTO {
+    "draft": SettingsValuesDTO;
+    "settings": SettingsValuesDTO;
+    "values": SettingsValuesDTO;
+    "secrets": SecretPatchDTO;
+}
+
+/**
+ * SettingsValuesDTO is the public settings form value. It deliberately does
+ * not contain any secret value; configured is represented by the three
+ * boolean status fields below.
+ */
+export interface SettingsValuesDTO {
+    "assistantName": string;
+    "basePrompt": string;
+    "chatDefaults": config$0.ChatDefaults;
+    "discordEnabled": boolean;
+    "agentEnabled": boolean;
+    "ownerID": string;
+    "chatAllowlist": string[] | null;
+    "llmEndpoint": string;
+    "llmModel": string;
+    "llmProviderID": string;
+    "fallbackEndpoint": string;
+    "typeSafeEndpoint": string;
+    "typeSafeModel": string;
+    "llmTimeout": string;
+    "llmConcurrency": number;
+    "maxOutputTokens": number;
+    "maxResponseBytes": number;
+    "historyWindow": number;
+    "maxContextBytes": number;
+    "historyKeepLatest": number;
+    "historyMaxAge": string;
+    "inboundQueue": number;
+    "inboundWorkers": number;
+    "messageDebounce": string;
+    "messageBurstCap": number;
+    "connectTimeout": string;
+    "sendTimeout": string;
+    "shutdownTimeout": string;
+    "policyID": string;
+    "policyRevision": string;
+    "logLevel": string;
+    "logFormat": string;
+    "dataDir": string;
+    "envFile": string;
+    "httpAddress": string;
+    "noColor": boolean;
+    "forceColor": boolean;
+    "startOnLaunch": boolean;
+
+    /**
+     * Identity is read-only bootstrap state. It is included so a complete
+     * settings draft can be round-tripped without changing it to zero.
+     */
+    "tenantID": string;
+    "accountID": string;
+    "llmAPIKeyConfigured": boolean;
+    "fallbackAPIKeyConfigured": boolean;
+    "langSmithAPIKeyConfigured": boolean;
+    "typeSafeAPIKeyConfigured": boolean;
+}
+
+export interface SettingsViewDTO {
+    "values": SettingsValuesDTO;
+    "revision": string;
+    "updatedAt": string;
+    "readiness": ReadinessIssueDTO[] | null;
+    "sessionReadiness": ReadinessIssueDTO[] | null;
+    "agentReadiness": ReadinessIssueDTO[] | null;
+}
+
+export interface ValidationResultDTO {
+    "valid": boolean;
+    "readiness": ReadinessIssueDTO[] | null;
+    "sessionReadiness": ReadinessIssueDTO[] | null;
+    "agentReadiness": ReadinessIssueDTO[] | null;
 }

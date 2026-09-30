@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useApp } from "../hooks/AppProvider";
 import { useAuth } from "../hooks/AuthGate";
 
-export type PageId = "overview" | "whatsapp" | "broadcast" | "chat" | "analytics" | "settings" | "data" | "logs";
+export type PageId = "overview" | "discord" | "broadcast" | "chat" | "analytics" | "settings" | "data" | "logs";
 type Theme = "light" | "dark";
 
 const navigation: Array<{ id: PageId; label: string }> = [
@@ -10,7 +10,7 @@ const navigation: Array<{ id: PageId; label: string }> = [
   { id: "chat", label: "Inbox" },
   { id: "broadcast", label: "Broadcasts" },
   { id: "analytics", label: "Analytics" },
-  { id: "whatsapp", label: "WhatsApp" },
+  { id: "discord", label: "Discord" },
   { id: "settings", label: "Settings" },
   { id: "data", label: "App & data" },
   { id: "logs", label: "Activity" },
@@ -21,7 +21,7 @@ const navigationGroups: Array<{ label: string; items: Array<{ id: PageId; label:
   { label: "MANAGE", items: navigation.slice(4, 6) },
   { label: "SYSTEM", items: navigation.slice(6) },
 ];
-const mobileNavigation = navigation.filter((item) => ["overview", "chat", "broadcast", "whatsapp"].includes(item.id));
+const mobileNavigation = navigation.filter((item) => ["overview", "chat", "broadcast", "discord"].includes(item.id));
 const secondaryNavigation = navigation.filter((item) => !mobileNavigation.includes(item));
 
 function readTheme(): Theme {
@@ -40,7 +40,7 @@ function readCollapsed(): boolean {
 export function NavIcon({ id }: { id: PageId }) {
   const paths: Record<PageId, ReactNode> = {
     overview: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
-    whatsapp: <><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.2A8 8 0 1 1 20 11.5Z" /><path d="M9 9.5c.8 2.2 2.3 3.7 4.5 4.5l1.2-1" /></>,
+    discord: <><rect x="4" y="7" width="16" height="11" rx="4" /><path d="M9 4.5 10 7M15 4.5 14 7" /><circle cx="9.5" cy="12.5" r="1" /><circle cx="14.5" cy="12.5" r="1" /></>,
     broadcast: <><path d="M4 12h11" /><path d="m11 6 6 6-6 6" /><path d="M18 5.5 21 4v16l-3-1.5" /></>,
     chat: <><path d="M4 5.5h16v12H8l-4 3v-15Z" /><path d="M8 10h8M8 14h6" /></>,
     analytics: <><path d="M4 19V5M4 19h17" /><path d="m7 15 4-4 3 2 6-7" /><path d="M17 6h3v3" /></>,
@@ -96,7 +96,7 @@ export function AppLayout({ page, onNavigate, children }: { page: PageId; onNavi
   return <div className={`app-shell${page === "chat" ? " chat-mode" : ""}${collapsed ? " sidebar-collapsed" : ""}`}>
     <aside className="sidebar" aria-label="Application sidebar">
       <div className="sidebar-top">
-        <div className="brand"><span className="brand-mark"><NavIcon id="whatsapp" /></span><div className="brand-copy"><strong>DiscordAgent</strong><small>Your messaging workspace</small></div></div>
+        <div className="brand"><span className="brand-mark"><NavIcon id="discord" /></span><div className="brand-copy"><strong>DiscordAgent</strong><small>Your messaging workspace</small></div></div>
         <button type="button" className="sidebar-toggle" onClick={toggleSidebar} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={collapsed ? "M9 5l7 7-7 7" : "M15 5l-7 7 7 7"} /></svg>
         </button>

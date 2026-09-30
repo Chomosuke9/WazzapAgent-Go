@@ -156,7 +156,7 @@ export function ChatSettings({ chatID, isGroup }: { chatID: string; isGroup: boo
 
     {isGroup && <section className="chat-settings-section">
       <h2>Moderation</h2>
-      <p>What the Agent may do when a group admin asks or a smart rule says so. The bot account must be a group admin. In the chat: /permission</p>
+      <p>What the Agent may do when a server moderator asks or a smart rule says so. The bot also needs the matching Discord permission. In the chat: /permission</p>
       <div className="setting-choices">
         {moderationLevels.map((option) => <label key={option.level} className="setting-choice">
           <input type="radio" name="moderation-level" checked={settings.moderationLevel === option.level} disabled={saving}

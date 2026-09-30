@@ -16,8 +16,8 @@ type ChatResetCategory = "moderation" | "triggers" | "instructions" | "all";
 const agentFieldLabels: Record<string, string> = {
   ASSISTANT_NAME: "Assistant name",
   DISCORDAGENT_BASE_PROMPT: "Base prompt",
-  DISCORDAGENT_DISCORD_ENABLED: "WhatsApp mode",
-  DISCORDAGENT_OWNER_ID: "Owner JID",
+  DISCORDAGENT_DISCORD_ENABLED: "Discord mode",
+  DISCORDAGENT_OWNER_ID: "Owner Discord user ID",
   DISCORDAGENT_CHAT_ALLOWLIST: "Chat allowlist",
   DISCORDAGENT_LLM_ENDPOINT: "LLM API base URL",
   DISCORDAGENT_LLM_API_KEY: "LLM API key",
@@ -170,10 +170,10 @@ export function SettingsPage() {
         <div className="settings-panel-heading"><h2>Assistant identity</h2><p className="muted">{settingsCategories.find((item) => item.id === "general")?.description}</p></div>
       <div className="settings-form-grid">
         <label><span>Assistant name</span><input value={draft.assistantName} onChange={(event) => update("assistantName", event.target.value)} /></label>
-        <label><span>Owner WhatsApp ID</span><input value={draft.ownerJID} onChange={(event) => update("ownerJID", event.target.value)} /></label>
-        <label className="wide"><span>Allowed chat IDs</span><input value={(draft.chatAllowlist ?? []).join(", ")} onChange={(event) => update("chatAllowlist", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} /></label>
+        <label><span>Owner Discord user ID</span><input inputMode="numeric" placeholder="e.g. 80351110224678912" value={draft.ownerID} onChange={(event) => update("ownerID", event.target.value)} /></label>
+        <label className="wide"><span>Allowed channels, servers, or users (IDs; * for all, server:* or dm:*)</span><input value={(draft.chatAllowlist ?? []).join(", ")} onChange={(event) => update("chatAllowlist", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} /></label>
         <label className="wide"><span>Assistant instructions</span><textarea rows={4} value={draft.basePrompt} onChange={(event) => update("basePrompt", event.target.value)} /></label>
-        <label><span>WhatsApp mode</span><select value={draft.discordEnabled ? "enabled" : "disabled"} onChange={(event) => update("discordEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label><span>Discord mode</span><select value={draft.discordEnabled ? "enabled" : "disabled"} onChange={(event) => update("discordEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Agent mode</span><select value={draft.agentEnabled ? "enabled" : "disabled"} onChange={(event) => update("agentEnabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Start on launch</span><select value={draft.startOnLaunch ? "enabled" : "disabled"} onChange={(event) => update("startOnLaunch", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
       </div>
@@ -223,7 +223,7 @@ export function SettingsPage() {
         <label><span>TypeSafe API key {draft.typeSafeAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={typeSafeSecret} onChange={(event) => { setTypeSafeSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>TypeSafe endpoint</span><input value={draft.typeSafeEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" onChange={(event) => update("typeSafeEndpoint", event.target.value)} /></label>
         <label><span>TypeSafe model</span><input value={draft.typeSafeModel} placeholder="jev-latest" onChange={(event) => update("typeSafeModel", event.target.value)} /></label>
-        <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint and model (Jev on System One by default). Leave either blank for the default.</p>
+        <p className="muted small wide">The TypeSafe key powers the Smart channel trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint and model (Jev on System One by default). Leave either blank for the default.</p>
       </div>
 
       </section>
@@ -263,7 +263,6 @@ export function SettingsPage() {
         <label><span>Data directory (CLI draft)</span><input value={draft.dataDir} readOnly title="This setting is saved as a CLI draft; changing the data root from the GUI is not available yet." /></label>
         <label><span>Env file (CLI draft)</span><input value={draft.envFile} onChange={(event) => update("envFile", event.target.value)} /></label>
         <label><span>HTTP address (CLI draft)</span><input value={draft.httpAddress} onChange={(event) => update("httpAddress", event.target.value)} /></label>
-        <label><span>Pairing output</span><select value={draft.pairingOutput} onChange={(event) => update("pairingOutput", event.target.value)}><option value="terminal">Terminal</option><option value="disabled">Disabled</option></select></label>
         <label><span>NO_COLOR</span><select value={draft.noColor ? "enabled" : "disabled"} onChange={(event) => update("noColor", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>FORCE_COLOR</span><select value={draft.forceColor ? "enabled" : "disabled"} onChange={(event) => update("forceColor", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Tenant ID</span><input value={draft.tenantID || "Not created"} readOnly /></label>

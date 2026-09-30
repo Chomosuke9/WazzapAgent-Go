@@ -66,7 +66,7 @@ export function LogsPage() {
   const errorCount = entries.filter((entry) => entry.level === "ERROR").length;
 
   return <div className="page">
-    <header className="page-header"><div><p className="eyebrow">APP ACTIVITY</p><h1>Activity</h1><p className="lede">Monitor the Agent, WhatsApp connection, and settings changes while the app is running.</p></div><StatusBadge tone={errorCount ? "warn" : "good"}>{errorCount ? `${errorCount} errors` : `${entries.length} events`}</StatusBadge></header>
+    <header className="page-header"><div><p className="eyebrow">APP ACTIVITY</p><h1>Activity</h1><p className="lede">Monitor the Agent, Discord connection, and settings changes while the app is running.</p></div><StatusBadge tone={errorCount ? "warn" : "good"}>{errorCount ? `${errorCount} errors` : `${entries.length} events`}</StatusBadge></header>
     <section className="card logs-card">
       <div className="logs-toolbar">
         <div><h3>Recent activity</h3><p className="muted small">The latest 500 events, plus warnings and errors kept from earlier runs. Updates automatically.</p></div>
@@ -83,7 +83,7 @@ export function LogsPage() {
         <time dateTime={entry.time}>{formatTimestamp(entry.time)}</time>
         <span className="log-level">{entry.level}</span>
         <div className="log-copy"><strong>{entry.message}</strong>{entry.details && <p>{entry.details}</p>}{entry.hasFull && <button className="log-full-button" onClick={() => void openDetails(entry)}>Full error</button>}</div>
-      </li>)}</ol> : <div className="logs-empty"><span aria-hidden="true">≡</span><strong>{entries.length ? "No matching logs" : "No activity yet"}</strong><p>{entries.length ? "Change your search or filter to see other activity." : "Logs will appear here when the Agent or WhatsApp session does something."}</p></div>}
+      </li>)}</ol> : <div className="logs-empty"><span aria-hidden="true">≡</span><strong>{entries.length ? "No matching logs" : "No activity yet"}</strong><p>{entries.length ? "Change your search or filter to see other activity." : "Logs will appear here when the Agent or Discord bot does something."}</p></div>}
     </section>
     <dialog ref={dialog} className={`log-dialog log-${opened?.entry.level.toLowerCase() ?? "info"}`} onClose={() => setOpened(null)}>
       {opened && <>

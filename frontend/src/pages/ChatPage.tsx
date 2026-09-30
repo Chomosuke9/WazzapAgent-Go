@@ -17,7 +17,7 @@ import { ChatSettings } from "./ChatSettings";
 import { ChatTasks } from "./ChatTasks";
 
 function conversationKind(kind: string): string {
-  if (kind === "group") return "Group";
+  if (kind === "group") return "Channel";
   if (kind === "status") return "Status";
   return "Direct";
 }
@@ -294,7 +294,7 @@ export function ChatPage() {
         if (!mounted) return;
         setBotIsGroupAdmin(false);
         setGroupAdminChecked(true);
-        setMembersError(actionErrorMessage(error, "Could not load group members. Make sure the Agent is running, then refresh."));
+        setMembersError(actionErrorMessage(error, "Could not load channel members. Make sure the Agent is running and the bot has the Server Members intent, then refresh."));
       })
       .finally(() => { if (mounted) setLoadingMembers(false); });
     return () => { mounted = false; };
@@ -315,7 +315,7 @@ export function ChatPage() {
       setDraft("");
       setReplyTarget(null);
     } catch (error) {
-      setActionError(actionErrorMessage(error, "Could not send the message. Check the Agent and WhatsApp status."));
+      setActionError(actionErrorMessage(error, "Could not send the message. Check the Agent and Discord status."));
     } finally {
       setSending(false);
     }
@@ -340,7 +340,7 @@ export function ChatPage() {
     try {
       await deleteDiscordMessage(selectedChatID, message.id);
       setMessages((current) => current.map((item) => item.id === message.id
-        ? { ...item, deleted: true, content: "This message was deleted on WhatsApp." }
+        ? { ...item, deleted: true, content: "This message was deleted on Discord." }
         : item));
     } catch (error) {
       setActionError(actionErrorMessage(error, "Could not delete the message. Make sure it is still available and the Agent is running."));
@@ -350,14 +350,14 @@ export function ChatPage() {
   }
 
   async function kickMember(member: DiscordGroupMemberDTO) {
-    if (!window.confirm(`Remove ${member.name} from this WhatsApp group?`)) return;
+    if (!window.confirm(`Kick ${member.name} from this Discord server?`)) return;
     setBusyMember(member.id);
     setActionError("");
     try {
       await kickDiscordGroupMember(selectedChatID, member.id);
       setMembers((current) => current.filter((item) => item.id !== member.id));
     } catch (error) {
-      setMembersError(actionErrorMessage(error, "Could not remove the member. Check the connection and the WhatsApp account's admin permissions."));
+      setMembersError(actionErrorMessage(error, "Could not kick the member. Check the connection and the bot's Kick Members permission."));
     } finally {
       setBusyMember("");
     }
@@ -423,7 +423,7 @@ export function ChatPage() {
                               title={`Add @${message.sender} as a mention`}>{message.sender}</button>
                           : <strong className="message-sender">{message.sender}</strong>}
                         {message.isSuperAdmin
-                          ? <span className="message-role-badge">Group owner</span>
+                          ? <span className="message-role-badge">Server owner</span>
                           : message.isAdmin ? <span className="message-role-badge">Admin</span> : null}
                       </div>}
                       <div className="message-body" title="Double-click to reply" onDoubleClick={() => {
@@ -433,7 +433,7 @@ export function ChatPage() {
                           <div className="message-quote-heading">
                             <strong>{replyRoleLabel(message.quote)}</strong>
                             {message.quote.isSuperAdmin
-                              ? <span className="message-role-badge">Group owner</span>
+                              ? <span className="message-role-badge">Server owner</span>
                               : message.quote.isAdmin ? <span className="message-role-badge">Admin</span> : null}
                           </div>
                           <span>{renderMessageText(message.quote.content, message.quote.mentions ?? [])}</span>
@@ -462,21 +462,21 @@ export function ChatPage() {
                   <ChatSettings key={selectedChatID} chatID={selectedChatID} isGroup={selectedConversation?.kind === "group"} />
                   <ChatTasks key={`tasks-${selectedChatID}`} chatID={selectedChatID} />
                   {selectedConversation?.kind === "group" && <section className="chat-settings-section group-settings-section">
-                    <header><span><h2>Group members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot account is an admin" : " · bot account is not an admin"}</p></span>
+                    <header><span><h2>Channel members</h2><p>{members.length} members{botIsGroupAdmin ? " · bot may moderate" : " · bot may not moderate"}</p></span>
                       <button type="button" className="secondary-button" disabled={loadingMembers} onClick={() => setMemberRefresh((value) => value + 1)}>
                         {loadingMembers ? "Loading…" : "Refresh"}
                       </button>
                     </header>
                     {membersError && <p className="error-text">{membersError}</p>}
-                    {loadingMembers && members.length === 0 ? <p className="member-hint">Loading WhatsApp group members…</p>
+                    {loadingMembers && members.length === 0 ? <p className="member-hint">Loading channel members…</p>
                       : members.length === 0 ? <p className="member-hint">No members to display.</p>
                         : <ul>{members.map((member) => <li key={member.id}>
                           <span className="member-avatar" aria-hidden="true">{member.name.trim().slice(0, 1).toUpperCase() || "?"}</span>
-                          <span className="member-name">{member.name}<small>{member.isSuperAdmin ? "Group owner" : member.isAdmin ? "Admin" : "Member"}</small></span>
+                          <span className="member-name">{member.name}<small>{member.isSuperAdmin ? "Owner or administrator" : member.isAdmin ? "Moderator" : "Member"}</small></span>
                           {member.canKick && <button type="button" className="member-kick" disabled={busyMember === member.id}
                             onClick={() => void kickMember(member)}>{busyMember === member.id ? "Removing…" : "Remove"}</button>}
                         </li>)}</ul>}
-                    {!botIsGroupAdmin && <p className="member-hint">The bot account must be a group admin to delete members' messages or remove members.</p>}
+                    {!botIsGroupAdmin && <p className="member-hint">The bot needs the Manage Messages permission to delete members' messages, and Kick Members to kick them.</p>}
                   </section>}
                 </div>
               </aside>
@@ -488,11 +488,11 @@ export function ChatPage() {
                   <small>{renderMessageText(replyTarget.content, replyTarget.mentions ?? [])}</small></span>
                 <button type="button" className="reply-clear" aria-label="Cancel reply" onClick={() => setReplyTarget(null)}>×</button>
               </div>}
-              <textarea ref={messageInputRef} aria-label="Write a WhatsApp message" value={draft} onChange={(event) => setDraft(event.target.value)}
+              <textarea ref={messageInputRef} aria-label="Write a Discord message" value={draft} onChange={(event) => setDraft(event.target.value)}
                 placeholder="Write a message…" rows={2} maxLength={12000} disabled={sending} />
               <button type="submit" disabled={sending || !draft.trim()}>{sending ? "Sending…" : "Send"}</button>
             </form>}
-            <p className="transcript-note">Double-click a message to reply. Select a name to mention someone.{selectedConversation?.kind === "group" && !groupAdminChecked ? " Checking the bot account's admin permissions…" : selectedConversation?.kind === "group" && membersError ? " Could not check admin permissions. Open Chat settings for details." : ""}</p>
+            <p className="transcript-note">Double-click a message to reply. Select a name to mention someone.{selectedConversation?.kind === "group" && !groupAdminChecked ? " Checking the bot's permissions…" : selectedConversation?.kind === "group" && membersError ? " Could not check the bot's permissions. Open Chat settings for details." : ""}</p>
           </section>
         </>}
     </div>

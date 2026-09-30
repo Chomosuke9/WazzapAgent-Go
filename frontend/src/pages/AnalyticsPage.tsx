@@ -125,22 +125,22 @@ export function AnalyticsPage() {
             <div className="usage-stats">
               <article className="card usage-stat"><span>Messages · {periodLabel}</span><strong>{numberFormat.format(usage.messagesInPeriod)}</strong><small>{numberFormat.format(usage.totalMessages)} across saved history</small></article>
               <article className="card usage-stat"><span>Agent invokes · {periodLabel}</span><strong>{numberFormat.format(usage.invocationsInPeriod)}</strong><small>{numberFormat.format(usage.totalInvocations)} across saved history</small></article>
-              <article className="card usage-stat"><span>Groups with history</span><strong>{numberFormat.format(usage.totalGroups)}</strong><small>{numberFormat.format(usage.activeGroupsInPeriod)} active in this period</small></article>
+              <article className="card usage-stat"><span>Channels with history</span><strong>{numberFormat.format(usage.totalGroups)}</strong><small>{numberFormat.format(usage.activeGroupsInPeriod)} active in this period</small></article>
               <article className="card usage-stat"><span>Active conversations</span><strong>{numberFormat.format(usage.activeChatsInPeriod)}</strong><small>Conversations with saved activity</small></article>
             </div>
             <div className="usage-panels">
               <section className="card usage-panel" aria-labelledby="activity-chart-heading"><header><div><h3 id="activity-chart-heading">{metric === "messages" ? "Message activity" : "Agent invokes"}</h3><p className="muted">{metricName} per day over the last {periodLabel}.</p></div><span className="usage-period">From {periodStart}</span></header>
                 {usage.dailyActivity?.length ? <UsageChart days={usage.dailyActivity} metric={metric} /> : <p className="usage-empty">Daily activity will appear here once the Agent has saved history.</p>}
               </section>
-              <section className="card usage-panel" aria-labelledby="top-groups-heading"><header><div><h3 id="top-groups-heading">Top groups by {metric === "messages" ? "messages" : "Agent invokes"}</h3><p className="muted">Ranked within the selected period.</p></div><span className="usage-period">{periodLabel}</span></header>
+              <section className="card usage-panel" aria-labelledby="top-groups-heading"><header><div><h3 id="top-groups-heading">Top channels by {metric === "messages" ? "messages" : "Agent invokes"}</h3><p className="muted">Ranked within the selected period.</p></div><span className="usage-period">{periodLabel}</span></header>
                 {topGroups.length && groupPeriodTotal(topGroups[0]) > 0 ? <ol className="usage-groups">{topGroups.map((group, index) => {
                   const value = groupPeriodTotal(group);
                   const maximum = Math.max(1, groupPeriodTotal(topGroups[0]));
                   return <li key={`${group.name}-${index}`}><div className="usage-group-heading"><span className="usage-rank">{index + 1}</span><strong title={group.name}>{group.name}</strong><span>{numberFormat.format(value)}</span></div><div className="usage-group-track" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={maximum} aria-label={`${group.name}: ${numberFormat.format(value)} ${metricName} in ${periodLabel}`}><span style={{ width: `${Math.max(3, value / maximum * 100)}%` }} /></div><small>{numberFormat.format(groupAllTimeTotal(group))} all time</small></li>;
-                })}</ol> : <div className="usage-empty"><strong>No {metricName.toLowerCase()} yet</strong><span>Group activity will appear here as it is saved by the Agent.</span></div>}
+                })}</ol> : <div className="usage-empty"><strong>No {metricName.toLowerCase()} yet</strong><span>Channel activity will appear here as it is saved by the Agent.</span></div>}
               </section>
             </div>
-            <p className="usage-footnote">Messages include incoming messages and Agent replies. An Agent invoke is counted only when the Agent starts a model run; ordinary group messages do not count as invokes. Chat resets and history retention can remove older activity.</p>
+            <p className="usage-footnote">Messages include incoming messages and Agent replies. An Agent invoke is counted only when the Agent starts a model run; ordinary channel messages do not count as invokes. Chat resets and history retention can remove older activity.</p>
           </>}
     </section>
   </div>;

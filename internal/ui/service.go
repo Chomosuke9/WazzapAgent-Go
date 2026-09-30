@@ -453,7 +453,7 @@ func (s *AppService) SendDiscordBroadcast(request SendDiscordBroadcastRequestDTO
 	if format != "text" && format != "payload" {
 		format = "invalid"
 	}
-	s.recordChatActionDetails("INFO", "Discord broadcast send started", fmt.Sprintf("groups=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
+	s.recordChatActionDetails("INFO", "Discord broadcast send started", fmt.Sprintf("channels=%d · format=%s · batch_size=%d · pause_seconds=%d", len(request.GroupIDs), format, request.BatchSize, request.BatchDelaySeconds))
 	var results []control.AgentBroadcastGroupResult
 	err := s.withBroadcastActions(broadcastActionTimeout(len(request.GroupIDs), request.BatchSize, request.BatchDelaySeconds), func(runtime control.ManagedAgentChatActions, ctx context.Context) error {
 		var actionErr error
@@ -491,7 +491,7 @@ func broadcastResultLogDetails(results []control.AgentBroadcastGroupResult, sent
 		}
 		failedByCode[code]++
 	}
-	details := fmt.Sprintf("groups=%d · sent=%d · failed=%d", len(results), sent, len(results)-sent)
+	details := fmt.Sprintf("channels=%d · sent=%d · failed=%d", len(results), sent, len(results)-sent)
 	if len(failedByCode) == 0 {
 		return details
 	}
@@ -752,10 +752,10 @@ func (s *AppService) KickDiscordGroupMember(chatID, memberID string) error {
 		return runtime.KickGroupMember(ctx, chatID, memberID)
 	})
 	if err != nil {
-		s.recordChatAction("WARN", "Could not remove group member", err)
+		s.recordChatAction("WARN", "Could not kick the member", err)
 		return err
 	}
-	s.recordChatAction("INFO", "Group member removed from Discord", nil)
+	s.recordChatAction("INFO", "Member kicked from the Discord server", nil)
 	return nil
 }
 
