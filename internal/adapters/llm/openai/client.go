@@ -313,7 +313,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 				"type":        []string{"array", "null"},
 				"items":       map[string]any{"type": "string", "minLength": 1, "maxLength": action.MaxChoiceRunes},
 				"maxItems":    action.MaxChoices,
-				"description": "Quiz buttons under the reply: 2 to 5 short, mutually exclusive answers (max 20 characters each). Use them whenever you ask a question whose answer is one of a few known options (yes/no, A/B, a quiz, a poll); keep any explanation of the options in text. A tapped button comes back as the user's message with that choice's text. Otherwise null.",
+				"description": "Quiz buttons under the reply: 2 to 5 short, mutually exclusive answers (max 20 characters each). They make the reply a bulky special message that annoys users when repeated, so use them sparingly: only for a requested quiz or poll, or a real decision that needs a clear pick. Never for casual chat, open-ended or rhetorical questions, or consecutive replies. Keep any explanation of the options in text. A tapped button comes back as the user's message with that choice's text. Default null.",
 			},
 			"command": map[string]any{
 				"type":        []string{"array", "null"},
