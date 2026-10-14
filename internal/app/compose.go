@@ -176,7 +176,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	agentLogs := observability.NewAgentLogger(application.logger)
-	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound()}
+	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound(), memories: store.Memories(), stickers: store.Stickers()}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
@@ -188,6 +188,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	commandPlatform := command.Platform{
 		Text: waAdapter, Buttons: waAdapter, Group: waAdapter,
 		Media: waAdapter, Stickers: waAdapter, Catalog: store.Stickers(),
+		Memory: store.Memories(), MessageMedia: store.Inbound(),
 		AssistantName: application.config.AssistantName(),
 	}
 	registry, err := agent.NewRegistry(factory)

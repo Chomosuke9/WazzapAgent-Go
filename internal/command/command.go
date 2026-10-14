@@ -67,6 +67,11 @@ type Platform struct {
 	Stickers StickerSender
 	Catalog  sticker.Catalog
 	Tasks    TaskScheduler
+	// Memory is each chat's long-term memory (/memory).
+	Memory MemoryStore
+	// MessageMedia reads the media of a message a command targets, for
+	// commands the bot runs, which have no inbox record of their own.
+	MessageMedia MessageMediaReader
 	// AssistantName is the bot's configured display name, used to write
 	// its "@Name (Bot)" mention.
 	AssistantName string
@@ -119,6 +124,26 @@ type Media struct {
 // command message.
 type MediaDownloader interface {
 	DownloadMedia(ctx context.Context, payload []byte) (Media, error)
+}
+
+// MessageMediaReader returns the media payload captured with an incoming
+// message, or an agent.ErrorNotFound error when it carried none.
+type MessageMediaReader interface {
+	ReadMessageMedia(ctx context.Context, key agent.Key, message identity.MessageID) ([]byte, error)
+}
+
+// MemoryStore is each chat's long-term memory: notes the bot sees on every
+// turn.
+type MemoryStore interface {
+	// AddMemory saves text. Text the chat already has is not saved twice:
+	// the existing memory comes back with added false. A full memory
+	// returns an agent.ErrorResourceExhausted error.
+	AddMemory(ctx context.Context, key agent.Key, text string) (memory agent.Memory, added bool, err error)
+	// Memories lists the chat's memories, oldest first.
+	Memories(ctx context.Context, key agent.Key) ([]agent.Memory, error)
+	// DeleteMemories deletes the memories with these codes and returns the
+	// ones it deleted; unknown codes are skipped.
+	DeleteMemories(ctx context.Context, key agent.Key, codes []string) ([]agent.Memory, error)
 }
 
 // StickerSender sends a sticker to a chat, quoting quoted when it is set.

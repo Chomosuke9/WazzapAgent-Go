@@ -1,11 +1,15 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
 )
 
@@ -58,5 +62,54 @@ func TestAddStickerNeedsAdminInGroups(t *testing.T) {
 	}
 	if _, err := runStickerCommand(t, "/add-sticker", command.PermissionFacts{IsGroup: true, IsAdmin: true}, nil, &recordingStickers{}); err != nil {
 		t.Fatalf("admin in group err = %v", err)
+	}
+}
+
+// targetMedia reads the media of the message a bot-run command targets.
+type targetMedia struct {
+	payloads map[identity.MessageID][]byte
+}
+
+func (reader targetMedia) ReadMessageMedia(_ context.Context, _ agent.Key, message identity.MessageID) ([]byte, error) {
+	if payload, found := reader.payloads[message]; found {
+		return payload, nil
+	}
+	return nil, agent.NewError(agent.ErrorNotFound, "read message media", errors.New("none"))
+}
+
+func TestTheBotAddsTheStickerOfItsTargetMessage(t *testing.T) {
+	registry := builtinRegistry(t)
+	request, _, _ := registry.Parse("/add-sticker party")
+	key := testChatKey(t)
+	commandID, _ := identity.NewMessageID()
+	target, _ := identity.NewMessageID()
+	stickers := &recordingStickers{}
+	replies := &recordingText{}
+	run := func(quote *conversation.QuotedMessage) error {
+		// A command the bot runs has no inbox record, so no Store.
+		return registry.Dispatch(context.Background(), request, command.Invocation{
+			Message: conversation.IncomingMessage{TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID,
+				ID: commandID, Text: "/add-sticker party", FromMe: true, Quote: quote},
+			Facts: command.PermissionFacts{IsGroup: true, FromMe: true},
+			Platform: command.Platform{Text: replies, Stickers: stickers, Catalog: stickers,
+				Media:        fakeMedia{media: command.Media{Kind: command.MediaSticker, Data: []byte("webp"), Animated: true}},
+				MessageMedia: targetMedia{payloads: map[identity.MessageID][]byte{target: []byte(`{}`)}}},
+		})
+	}
+	if err := run(&conversation.QuotedMessage{ID: target, Role: conversation.QuoteUser, Text: "command target"}); err != nil {
+		t.Fatal(err)
+	}
+	if saved := stickers.catalog["party"]; string(saved.WebP) != "webp" || !saved.Animated || len(replies.sent) != 1 || !strings.Contains(replies.sent[0], "party was added") {
+		t.Fatalf("catalog=%v replies=%q", stickers.catalog, replies.sent)
+	}
+	other, _ := identity.NewMessageID()
+	if err := run(&conversation.QuotedMessage{ID: other, Role: conversation.QuoteUser, Text: "command target"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(replies.sent) != 3 || !strings.Contains(replies.sent[1], "Reply to a sticker") || !strings.Contains(replies.sent[2], "Reply to a sticker") {
+		t.Fatalf("targets without media: replies=%q", replies.sent)
 	}
 }

@@ -10,11 +10,13 @@ import (
 
 func init() {
 	register(command.Command{
-		Name:        "remove-sticker",
-		Aliases:     []string{"removesticker"},
-		Permission:  "(private or admin or owner) and !fromMe",
+		Name:    "remove-sticker",
+		Aliases: []string{"removesticker"},
+		// The bot runs it too, when asked or with an admin's approval; see
+		// <chat_settings> in the system prompt.
+		Permission:  "private or admin or owner or fromMe",
 		Description: "Removes a saved sticker from this chat by name: /remove-sticker <name>.",
-		DeniedReply: "In a group, only an admin or the owner can remove stickers.",
+		DeniedReply: "In a group, only an admin or the owner can remove stickers. You can also ask me to.",
 		Run:         runRemoveSticker,
 	})
 }

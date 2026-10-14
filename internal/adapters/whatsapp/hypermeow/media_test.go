@@ -39,8 +39,16 @@ func TestCommandMediaPrefersOwnMediaThenQuotedMedia(t *testing.T) {
 	if fromQuote.GetStickerMessage().GetDirectPath() != "/sticker" || !fromQuote.GetStickerMessage().GetIsAnimated() {
 		t.Fatalf("quoted media = %v", fromQuote)
 	}
-	if commandMedia("look at this", own, quoted) != nil {
-		t.Fatal("media was captured for a message that is not a command")
+	plain := decode(commandMedia("look at this", own, quoted))
+	if plain.GetImageMessage().GetDirectPath() != "/image" {
+		t.Fatalf("a plain message's own media = %v", plain)
+	}
+	if commandMedia("look at this", text, quoted) != nil {
+		t.Fatal("a plain message captured the media it replied to")
+	}
+	viewOnce := &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: own}}
+	if commandMedia("look at this", viewOnce, nil) != nil {
+		t.Fatal("view-once media was captured for a plain message")
 	}
 	if commandMedia("/help", &waE2E.Message{Conversation: proto.String("/help")}, nil) != nil {
 		t.Fatal("media was captured for a command without media")

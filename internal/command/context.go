@@ -190,20 +190,38 @@ func (c *Context) QuotedRaw(ctx context.Context) (RawQuotedMessage, error) {
 }
 
 // Media downloads the image, video or sticker this command was sent with,
-// or else the one it replied to. It returns an agent.ErrorNotFound error when
-// there is none.
+// or else the one it replied to. A command the bot runs gets the media of
+// the message it targets. It returns an agent.ErrorNotFound error when there
+// is none.
 func (c *Context) Media(ctx context.Context) (Media, error) {
-	if c.invocation.Store == nil {
-		return Media{}, agent.NewError(agent.ErrorNotFound, "read command media", errors.New("command has no durable inbox record"))
-	}
 	if c.invocation.Platform.Media == nil {
 		return Media{}, c.unavailable("media download")
 	}
-	payload, err := c.invocation.Store.ReadCommandMedia(ctx, c.Message)
+	var payload []byte
+	var err error
+	switch {
+	case c.invocation.Store != nil:
+		payload, err = c.invocation.Store.ReadCommandMedia(ctx, c.Message)
+	case c.Message.Quote != nil && !c.Message.Quote.ID.IsZero():
+		if c.invocation.Platform.MessageMedia == nil {
+			return Media{}, c.unavailable("media of a targeted message")
+		}
+		payload, err = c.invocation.Platform.MessageMedia.ReadMessageMedia(ctx, c.Key(), c.Message.Quote.ID)
+	default:
+		err = agent.NewError(agent.ErrorNotFound, "read command media", errors.New("command has no media and targets no message"))
+	}
 	if err != nil {
 		return Media{}, err
 	}
 	return c.invocation.Platform.Media.DownloadMedia(ctx, payload)
+}
+
+// Memory returns the chat's long-term memory store.
+func (c *Context) Memory() (MemoryStore, error) {
+	if c.invocation.Platform.Memory == nil {
+		return nil, c.unavailable("long-term memory")
+	}
+	return c.invocation.Platform.Memory, nil
 }
 
 // SendSticker sends a sticker to the chat as a reply to the command message.

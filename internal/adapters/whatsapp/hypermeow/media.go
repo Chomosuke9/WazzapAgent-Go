@@ -27,17 +27,23 @@ const (
 	mediaDownloadTimeout  = 2 * time.Minute
 )
 
-// commandMedia picks the media a slash command works on: the image or video
-// the command was the caption of, or else the image, video or sticker it
-// replied to. It returns that one media message, without its context info,
-// serialized for the command store; nil when there is none.
+// commandMedia picks the media a message carries for commands. For a slash
+// command it is the image or video the command was the caption of, or else
+// the image, video or sticker it replied to. For any other message it is the
+// image, video or sticker the message itself is, so a command the bot runs
+// later can target it (/add-sticker); view-once media is never kept then. It
+// returns that one media message, without its context info, serialized for
+// the command store; nil when there is none.
 func commandMedia(text string, message *waE2E.Message, contextInfo *waE2E.ContextInfo) []byte {
-	if !strings.HasPrefix(strings.TrimSpace(text), "/") {
-		return nil
-	}
-	media := mediaOnly(message)
-	if media == nil && contextInfo != nil {
-		media = mediaOnly(contextInfo.GetQuotedMessage())
+	var media *waE2E.Message
+	switch {
+	case strings.HasPrefix(strings.TrimSpace(text), "/"):
+		media = mediaOnly(message)
+		if media == nil && contextInfo != nil {
+			media = mediaOnly(contextInfo.GetQuotedMessage())
+		}
+	case !isViewOnce(message):
+		media = mediaOnly(message)
 	}
 	if media == nil {
 		return nil
@@ -47,6 +53,19 @@ func commandMedia(text string, message *waE2E.Message, contextInfo *waE2E.Contex
 		return nil
 	}
 	return encoded
+}
+
+// isViewOnce reports whether message is view-once, under any ephemeral wrapper.
+func isViewOnce(message *waE2E.Message) bool {
+	for range 3 {
+		if message.GetViewOnceMessage() != nil || message.GetViewOnceMessageV2() != nil || message.GetViewOnceMessageV2Extension() != nil {
+			return true
+		}
+		if message = message.GetEphemeralMessage().GetMessage(); message == nil {
+			return false
+		}
+	}
+	return false
 }
 
 // mediaOnly returns a message holding only message's image, video or sticker,

@@ -82,10 +82,11 @@ type IncomingCandidate struct {
 	// the model context.
 	ProviderQuotedMessageJSON []byte
 	ProviderQuotedFromMe      *bool
-	// ProviderMediaJSON is set only for slash commands that carry an image,
-	// video or sticker, or reply to one. It is the provider's serialized media
-	// message, kept so the command can download it; it never enters the model
-	// context.
+	// ProviderMediaJSON is set for slash commands that carry an image, video
+	// or sticker, or reply to one, and for other messages that are one (not
+	// view-once). It is the provider's serialized media message, kept so a
+	// command, or one the bot runs targeting the message, can download it; it
+	// never enters the model context.
 	ProviderMediaJSON   []byte
 	ProviderChatAddress string
 	SenderLID           identity.LID

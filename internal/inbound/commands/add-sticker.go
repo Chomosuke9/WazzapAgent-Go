@@ -11,11 +11,14 @@ import (
 
 func init() {
 	register(command.Command{
-		Name:        "add-sticker",
-		Aliases:     []string{"addsticker"},
-		Permission:  "(private or admin or owner) and !fromMe",
-		Description: "Saves a sticker under a name so the AI can send it in this chat. Reply to a sticker (or an image or video) with /add-sticker <name>.",
-		DeniedReply: "In a group, only an admin or the owner can add stickers.",
+		Name:    "add-sticker",
+		Aliases: []string{"addsticker"},
+		// The bot runs it too, when asked or with an admin's approval; see
+		// <chat_settings> in the system prompt.
+		Permission: "private or admin or owner or fromMe",
+		Description: "Saves a sticker under a name so the AI can send it in this chat. Reply to a sticker (or an image or video) with /add-sticker <name>. " +
+			"The AI runs it with the sticker's message as the command target.",
+		DeniedReply: "In a group, only an admin or the owner can add stickers. You can also ask me to.",
 		Run:         runAddSticker,
 	})
 }

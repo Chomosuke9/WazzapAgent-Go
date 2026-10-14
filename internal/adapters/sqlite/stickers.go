@@ -151,3 +151,25 @@ func (store *InboundStore) ReadCommandMedia(ctx context.Context, message convers
 	}
 	return payload, nil
 }
+
+// ReadMessageMedia returns the media payload captured with the incoming
+// message messageID, or an agent.ErrorNotFound error when it carried none.
+// Commands the model runs use it to reach the message they target.
+func (store *InboundStore) ReadMessageMedia(ctx context.Context, key agent.Key, messageID identity.MessageID) ([]byte, error) {
+	if err := key.Validate(); err != nil || messageID.IsZero() {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "read message media", errors.New("chat and message are required"))
+	}
+	var payload []byte
+	err := store.read.QueryRowContext(ctx, `SELECT m.message_json FROM inbound_events e
+	  JOIN command_media m ON m.tenant_id = e.tenant_id AND m.account_id = e.account_id
+	    AND m.chat_id = e.chat_id AND m.invocation_id = e.invocation_id
+	  WHERE e.tenant_id = ? AND e.account_id = ? AND e.chat_id = ? AND e.message_id = ?`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), messageID.String()).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, agent.NewError(agent.ErrorNotFound, "read message media", err)
+	}
+	if err != nil {
+		return nil, storageError("read message media", err)
+	}
+	return payload, nil
+}
