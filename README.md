@@ -53,4 +53,4 @@ See the [multiplatform guide](docs/multiplatform/README.md) and its [manual test
 
 ## Upstream
 
-This is a fork of [WazzapAgent-Go](https://github.com/Chomosuke9/WazzapAgent-Go). [Syncing with upstream](docs/upstream-sync.md) explains how to merge its updates, and why the Go module path is still upstream's.
+This is a fork of [WazzapAgent-Go](https://github.com/Chomosuke9/WazzapAgent-Go); see the [changelog](CHANGELOG.md) for what changed. [Syncing with upstream](docs/upstream-sync.md) explains how to merge its updates, and why the Go module path is still upstream's.
