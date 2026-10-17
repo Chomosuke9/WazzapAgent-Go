@@ -7,8 +7,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 func TestRenderInboundTextTurnsMarkupIntoTokensAndNames(t *testing.T) {

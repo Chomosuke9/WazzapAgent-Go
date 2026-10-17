@@ -8,8 +8,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // maxMessageUnits is Discord's cap on a message's content, in the UTF-16

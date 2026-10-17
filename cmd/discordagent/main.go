@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/app"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/backup"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/app"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/backup"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
 )
 
 func main() {

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
+	discordadapter "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/discord"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
 )
 
 func NormalizeDiscordBroadcastPayload(payload string) (string, error) {

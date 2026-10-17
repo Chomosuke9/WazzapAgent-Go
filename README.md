@@ -50,3 +50,7 @@ See the [build and release guide](build/README.md) for desktop packages and rele
 ## Platform documentation
 
 See the [multiplatform guide](docs/multiplatform/README.md) and its [manual testing guide](docs/multiplatform/TESTING.md) for platform-specific details.
+
+## Upstream
+
+This is a fork of [WazzapAgent-Go](https://github.com/Chomosuke9/WazzapAgent-Go). [Syncing with upstream](docs/upstream-sync.md) explains how to merge its updates, and why the Go module path is still upstream's.

@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
-	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
+	discordadapter "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/discord"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 )
 
 // Options contains process-owned dependencies which are intentionally kept out

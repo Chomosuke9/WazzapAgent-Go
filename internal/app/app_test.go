@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 )
 
 func TestHealthEndpoints(t *testing.T) {

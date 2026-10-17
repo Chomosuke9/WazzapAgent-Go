@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
 )
 
 func (controller *Controller) GetSettings(ctx context.Context) (SettingsView, error) {

@@ -14,7 +14,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/ui"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 )
 
 func TestBrowserHandlerServesUIAndTypedCalls(t *testing.T) {

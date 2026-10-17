@@ -7,7 +7,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
 // MemoryStore is each chat's long-term memory (/memory).

@@ -7,9 +7,9 @@ import (
 	"log"
 	"runtime"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/frontend"
-	apphost "github.com/Chomosuke9/DiscordAgent-Go/internal/host"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/ui"
+	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
+	apphost "github.com/Chomosuke9/WazzapAgent-Go/internal/host"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/ui"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

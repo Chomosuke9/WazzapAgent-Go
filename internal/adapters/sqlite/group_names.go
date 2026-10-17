@@ -6,9 +6,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/conversation"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // SaveGroupName updates the name of a server channel already known to this

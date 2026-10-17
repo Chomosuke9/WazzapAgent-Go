@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
 func TestMemoriesArePerChatOrderedAndDeduplicated(t *testing.T) {

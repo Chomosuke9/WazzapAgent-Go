@@ -16,75 +16,75 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 export function AddDiscordChatTask(request: $models.AddDiscordChatTaskRequestDTO): $CancellablePromise<$models.DiscordChatTaskDTO> {
-    return $Call.ByID(3239797179, request);
+    return $Call.ByID(3333835950, request);
 }
 
 export function ApplyAgentSettings(request: $models.ApplyAgentSettingsRequestDTO): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
-    return $Call.ByID(1747049417, request);
+    return $Call.ByID(509027352, request);
 }
 
 export function BeginDiscordLink(request: $models.BeginDiscordLinkRequestDTO): $CancellablePromise<$models.DiscordSessionOperationDTO> {
-    return $Call.ByID(3436414222, request);
+    return $Call.ByID(2836632187, request);
 }
 
 export function CancelDiscordBroadcastSchedule(id: string): $CancellablePromise<void> {
-    return $Call.ByID(3459075401, id);
+    return $Call.ByID(2842618024, id);
 }
 
 export function CancelDiscordLink(operationID: string): $CancellablePromise<$models.DiscordSessionStatusDTO> {
-    return $Call.ByID(902051289, operationID);
+    return $Call.ByID(1480489246, operationID);
 }
 
 export function DeleteDiscordChatTask(chatID: string, taskID: string, daily: boolean): $CancellablePromise<void> {
-    return $Call.ByID(3834561913, chatID, taskID, daily);
+    return $Call.ByID(2965884310, chatID, taskID, daily);
 }
 
 export function DeleteDiscordMessage(chatID: string, messageID: string): $CancellablePromise<void> {
-    return $Call.ByID(2817810553, chatID, messageID);
+    return $Call.ByID(1236263224, chatID, messageID);
 }
 
 export function GetAgentRuntimeStatus(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
-    return $Call.ByID(836636054);
+    return $Call.ByID(2091639445);
 }
 
 export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
-    return $Call.ByID(2963745550);
+    return $Call.ByID(3455654739);
 }
 
 export function GetDiscordBroadcastGroups(): $CancellablePromise<$models.DiscordBroadcastGroupDTO[] | null> {
-    return $Call.ByID(1447860280);
+    return $Call.ByID(2735184991);
 }
 
 export function GetDiscordBroadcastSchedules(): $CancellablePromise<$models.DiscordBroadcastScheduleDTO[] | null> {
-    return $Call.ByID(2592519714);
+    return $Call.ByID(3865464263);
 }
 
 export function GetDiscordChatSettings(chatID: string): $CancellablePromise<$models.DiscordChatSettingsDTO> {
-    return $Call.ByID(3209652538, chatID);
+    return $Call.ByID(2307083351, chatID);
 }
 
 export function GetDiscordChatTasks(chatID: string): $CancellablePromise<$models.DiscordChatTaskDTO[] | null> {
-    return $Call.ByID(3960120359, chatID);
+    return $Call.ByID(3307327556, chatID);
 }
 
 export function GetDiscordConversations(): $CancellablePromise<$models.DiscordConversationDTO[] | null> {
-    return $Call.ByID(4195453715);
+    return $Call.ByID(3324466096);
 }
 
 export function GetDiscordGroupMembers(chatID: string): $CancellablePromise<$models.DiscordGroupMembersDTO> {
-    return $Call.ByID(2269004067, chatID);
+    return $Call.ByID(1362120962, chatID);
 }
 
 export function GetDiscordMessages(chatID: string): $CancellablePromise<$models.DiscordMessageDTO[] | null> {
-    return $Call.ByID(108105977, chatID);
+    return $Call.ByID(256292992, chatID);
 }
 
 export function GetDiscordSessionStatus(): $CancellablePromise<$models.DiscordSessionStatusDTO> {
-    return $Call.ByID(3300333837);
+    return $Call.ByID(376376082);
 }
 
 export function GetDiscordUsage(periodDays: number): $CancellablePromise<$models.DiscordUsageDTO> {
-    return $Call.ByID(3113589324, periodDays);
+    return $Call.ByID(2419763355, periodDays);
 }
 
 /**
@@ -92,7 +92,7 @@ export function GetDiscordUsage(periodDays: number): $CancellablePromise<$models
  * field and the whole underlying error chain.
  */
 export function GetLogDetails(id: number): $CancellablePromise<string> {
-    return $Call.ByID(2958538139, id);
+    return $Call.ByID(1905880396, id);
 }
 
 /**
@@ -101,7 +101,7 @@ export function GetLogDetails(id: number): $CancellablePromise<string> {
  * GetLogDetails can return.
  */
 export function GetLogs(): $CancellablePromise<$models.LogEntryDTO[] | null> {
-    return $Call.ByID(2108040056);
+    return $Call.ByID(34595455);
 }
 
 /**
@@ -109,38 +109,38 @@ export function GetLogs(): $CancellablePromise<$models.LogEntryDTO[] | null> {
  * replaced by configured flags inside the DTO conversion.
  */
 export function GetSettings(): $CancellablePromise<$models.SettingsViewDTO> {
-    return $Call.ByID(3697906166);
+    return $Call.ByID(1289645321);
 }
 
 /**
  * GetSettingsSchema returns the typed field catalog used by the form.
  */
 export function GetSettingsSchema(): $CancellablePromise<$models.FieldDescriptorDTO[] | null> {
-    return $Call.ByID(2992578001);
+    return $Call.ByID(3845202794);
 }
 
 export function KickDiscordGroupMember(chatID: string, memberID: string): $CancellablePromise<void> {
-    return $Call.ByID(2362528266, chatID, memberID);
+    return $Call.ByID(2716210875, chatID, memberID);
 }
 
 export function NormalizeDiscordBroadcastPayload(payload: string): $CancellablePromise<string> {
-    return $Call.ByID(4037423499, payload);
+    return $Call.ByID(1100069022, payload);
 }
 
 export function ReconnectDiscordSession(): $CancellablePromise<$models.DiscordSessionOperationDTO> {
-    return $Call.ByID(1391683786);
+    return $Call.ByID(3989082633);
 }
 
 export function ResetDiscordChatSettings(request: $models.ResetDiscordChatSettingsRequestDTO): $CancellablePromise<$models.ResetDiscordChatSettingsResultDTO> {
-    return $Call.ByID(2533482903, request);
+    return $Call.ByID(1136707846, request);
 }
 
 export function ResumeDiscordSession(): $CancellablePromise<$models.DiscordSessionOperationDTO> {
-    return $Call.ByID(1239011318);
+    return $Call.ByID(2263115755);
 }
 
 export function SaveDiscordChatSettings(request: $models.SaveDiscordChatSettingsRequestDTO): $CancellablePromise<$models.DiscordChatSettingsDTO> {
-    return $Call.ByID(3142536655, request);
+    return $Call.ByID(2394408524, request);
 }
 
 /**
@@ -148,40 +148,40 @@ export function SaveDiscordChatSettings(request: $models.SaveDiscordChatSettings
  * semantics. The response contains the new public revision and readiness.
  */
 export function SaveSettings(request: $models.SaveSettingsRequestDTO): $CancellablePromise<$models.SaveSettingsResultDTO> {
-    return $Call.ByID(246240609, request);
+    return $Call.ByID(3129592632, request);
 }
 
 export function ScheduleDiscordBroadcast(request: $models.ScheduleDiscordBroadcastRequestDTO): $CancellablePromise<$models.DiscordBroadcastScheduleDTO> {
-    return $Call.ByID(2520459187, request);
+    return $Call.ByID(30452558, request);
 }
 
 export function SendDiscordBroadcast(request: $models.SendDiscordBroadcastRequestDTO): $CancellablePromise<$models.DiscordBroadcastGroupResultDTO[] | null> {
-    return $Call.ByID(74942488, request);
+    return $Call.ByID(3980479341, request);
 }
 
 export function SendDiscordMessage(chatID: string, text: string, replyToMessageID: string): $CancellablePromise<$models.DiscordMessageDTO> {
-    return $Call.ByID(3442362800, chatID, text, replyToMessageID);
+    return $Call.ByID(236873649, chatID, text, replyToMessageID);
 }
 
 export function StartAgent(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
-    return $Call.ByID(3471366936);
+    return $Call.ByID(3380803197);
 }
 
 export function StopAgent(): $CancellablePromise<$models.AgentRuntimeStatusDTO> {
-    return $Call.ByID(3935909906);
+    return $Call.ByID(3746750561);
 }
 
 export function StopDiscordSession(): $CancellablePromise<$models.DiscordSessionStatusDTO> {
-    return $Call.ByID(492027021);
+    return $Call.ByID(1294977580);
 }
 
 export function UnlinkDiscordBot(): $CancellablePromise<$models.DiscordSessionOperationDTO> {
-    return $Call.ByID(3151684387);
+    return $Call.ByID(2029512278);
 }
 
 /**
  * ValidateSettings validates a complete public draft without persisting it.
  */
 export function ValidateSettings(request: $models.SettingsPatchDTO): $CancellablePromise<$models.ValidationResultDTO> {
-    return $Call.ByID(4038643370, request);
+    return $Call.ByID(2304830299, request);
 }

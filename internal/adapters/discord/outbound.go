@@ -7,9 +7,9 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/action"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // SendText sends a reply. Discord caps a message at 2000 characters, so a

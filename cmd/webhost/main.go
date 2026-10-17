@@ -19,11 +19,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/frontend"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/web"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	apphost "github.com/Chomosuke9/DiscordAgent-Go/internal/host"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/platform"
+	"github.com/Chomosuke9/WazzapAgent-Go/frontend"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/web"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	apphost "github.com/Chomosuke9/WazzapAgent-Go/internal/host"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/platform"
 )
 
 var version = "dev"

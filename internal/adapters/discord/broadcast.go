@@ -14,9 +14,9 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	broadcastmodel "github.com/Chomosuke9/DiscordAgent-Go/internal/broadcast"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	broadcastmodel "github.com/Chomosuke9/WazzapAgent-Go/internal/broadcast"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 const (

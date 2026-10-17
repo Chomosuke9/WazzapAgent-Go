@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	agentapp "github.com/Chomosuke9/DiscordAgent-Go/internal/app"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	agentapp "github.com/Chomosuke9/WazzapAgent-Go/internal/app"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 )
 
 const AppName = "DiscordAgent"

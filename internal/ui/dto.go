@@ -2,16 +2,16 @@ package ui
 
 import (
 	"errors"
-	discordadapter "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/discord"
+	discordadapter "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/discord"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/control"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/control"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // SettingsValuesDTO is the public settings form value. It deliberately does

@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/gorilla/websocket"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
 // agentIntents are the gateway events the Agent needs. Message Content is a

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // SentStore records the stickers the bot sent and the extra parts of long

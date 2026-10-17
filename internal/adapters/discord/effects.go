@@ -10,9 +10,9 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/effect"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/identity"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 )
 
 // typingRefresh is how often the typing indicator is renewed; Discord shows

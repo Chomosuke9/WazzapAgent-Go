@@ -1,6 +1,6 @@
-import { AppService } from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui";
-import type { AgentRuntimeStatusDTO, AppInfo, DiscordSessionOperationDTO, DiscordSessionStatusDTO } from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui/models";
-export type * from "../../bindings/github.com/Chomosuke9/DiscordAgent-Go/internal/ui/models";
+import { AppService } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui";
+import type { AgentRuntimeStatusDTO, AppInfo, DiscordSessionOperationDTO, DiscordSessionStatusDTO } from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
+export type * from "../../bindings/github.com/Chomosuke9/WazzapAgent-Go/internal/ui/models";
 
 // Every backend operation is a method on the Go ui.AppService. The desktop app
 // calls it through the generated Wails binding; the browser build posts the

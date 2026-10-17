@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	appsqlite "github.com/Chomosuke9/DiscordAgent-Go/internal/adapters/sqlite"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/agent"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/config"
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/observability"
+	appsqlite "github.com/Chomosuke9/WazzapAgent-Go/internal/adapters/sqlite"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/config"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 )
 
 type fakeRuntime struct {

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/Chomosuke9/DiscordAgent-Go/internal/account"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/account"
 )
 
 type healthResponse struct {
