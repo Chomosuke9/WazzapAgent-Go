@@ -328,6 +328,22 @@ CREATE TABLE sent_stickers (
         REFERENCES chats(tenant_id, account_id, id) ON DELETE CASCADE
 ) STRICT;
 
+-- memories are each chat's long-term notes (/memory). code is the short ID
+-- people and the model delete a note by; seq keeps them in the order saved.
+CREATE TABLE memories (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 4000),
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, chat_id, code),
+    UNIQUE (tenant_id, account_id, chat_id, text),
+    FOREIGN KEY (tenant_id, account_id, chat_id)
+        REFERENCES chats(tenant_id, account_id, id) ON DELETE CASCADE
+) STRICT;
+
 -- receipt_aliases maps the later parts of a reply Discord got as several
 -- messages (it caps a message at 2000 characters) to the first part's
 -- receipt, so replying to any part is a reply to the bot's message.
@@ -383,3 +399,5 @@ CREATE UNIQUE INDEX typed_effects_model_call_idx
 CREATE INDEX outbound_actions_state_idx ON outbound_actions(tenant_id, state, created_at_ms);
 
 CREATE INDEX sent_stickers_age_idx ON sent_stickers(tenant_id, sent_at_ms);
+
+CREATE INDEX memories_order_idx ON memories(tenant_id, account_id, chat_id, seq);

@@ -62,9 +62,25 @@ type Platform struct {
 	Buttons ButtonSender
 	Group   GroupModerator
 	Tasks   TaskScheduler
+	// Memory is each chat's long-term memory (/memory).
+	Memory MemoryStore
 	// AssistantName is the bot's configured display name, used to write
 	// its "@Name (Bot)" mention.
 	AssistantName string
+}
+
+// MemoryStore is each chat's long-term memory: notes the bot sees on every
+// turn.
+type MemoryStore interface {
+	// AddMemory saves text. Text the chat already has is not saved twice:
+	// the existing memory comes back with added false. A full memory
+	// returns an agent.ErrorResourceExhausted error.
+	AddMemory(ctx context.Context, key agent.Key, text string) (memory agent.Memory, added bool, err error)
+	// Memories lists the chat's memories, oldest first.
+	Memories(ctx context.Context, key agent.Key) ([]agent.Memory, error)
+	// DeleteMemories deletes the memories with these codes and returns the
+	// ones it deleted; unknown codes are skipped.
+	DeleteMemories(ctx context.Context, key agent.Key, codes []string) ([]agent.Memory, error)
 }
 
 type TextSender interface {

@@ -13,11 +13,17 @@ type scheduledTaskLister interface {
 	ListScheduledTasks(context.Context, identity.TenantID) ([]inbound.ScheduledTask, error)
 }
 
-// chatStateReader adds the chat's one-off and daily tasks to the Discord
-// chat metadata, so the model's <chat_state> lists them.
+type memoryLister interface {
+	Memories(context.Context, agent.Key) ([]agent.Memory, error)
+}
+
+// chatStateReader adds the chat's one-off and daily tasks and long-term
+// memory to the Discord chat metadata, so the model's <chat_state> lists
+// them.
 type chatStateReader struct {
-	chats agent.ChatContextReader
-	tasks scheduledTaskLister
+	chats    agent.ChatContextReader
+	tasks    scheduledTaskLister
+	memories memoryLister
 }
 
 func (reader chatStateReader) ReadChatContext(ctx context.Context, key agent.Key) (agent.ChatContext, error) {
@@ -38,6 +44,9 @@ func (reader chatStateReader) ReadChatContext(ctx context.Context, key agent.Key
 				Code: task.Code(), FireAt: task.FireAt, Daily: task.Daily, Prompt: task.Prompt,
 			})
 		}
+	}
+	if chat.Memories, err = reader.memories.Memories(ctx, key); err != nil {
+		return agent.ChatContext{}, err
 	}
 	return chat, nil
 }

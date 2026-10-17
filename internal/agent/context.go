@@ -41,6 +41,8 @@ type ChatContext struct {
 	BotIsAdmin  bool
 	// Tasks are the chat's pending one-off and daily tasks, soonest first.
 	Tasks []ScheduledTaskSummary
+	// Memories are the chat's long-term memories (/memory), oldest first.
+	Memories []Memory
 	// Location is the bot's time zone. Message times, task times and daily
 	// tasks all use it; nil means UTC.
 	Location *time.Location
@@ -278,12 +280,12 @@ func formatChatInformation(chat ChatContext, level ModerationLevel) string {
 	return strings.Join(lines, "\n")
 }
 
-// formatChatState describes this chat's settings and scheduled tasks, each
-// with the command that changes it, so the model can explain them and change
+// formatChatState describes this chat's settings, scheduled tasks and
+// long-term memory, each with the command that changes it, so the model can explain them and change
 // them when asked.
 func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	lines := []string{"<chat_state>",
-		"Sensitive: change settings and daily tasks only for the people <chat_settings> allows.",
+		"Who may change each item, and when you may on your own, is in <chat_settings>.",
 		"Settings of this chat (the command in brackets changes it):"}
 	if chat.Kind == "group" {
 		triggers := config.Triggers
@@ -327,6 +329,12 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 	lines = append(lines, orNone(once)...)
 	lines = append(lines, "Daily tasks [/daily-task], [ID] then time:")
 	lines = append(lines, orNone(daily)...)
+	var memories []string
+	for _, memory := range chat.Memories {
+		memories = append(memories, "- ["+memory.Code+"] "+sanitizeContextMetadata(memory.Text))
+	}
+	lines = append(lines, fmt.Sprintf("Long-term memory [/memory], your own notes on this chat (%d/%d), [ID] then note:", len(memories), MaxMemories))
+	lines = append(lines, orNone(memories)...)
 	lines = append(lines, "</chat_state>")
 	return strings.Join(lines, "\n")
 }

@@ -182,7 +182,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	agentLogs := observability.NewAgentLogger(application.logger)
-	chatState := chatStateReader{chats: dcAdapter, tasks: store.Inbound()}
+	chatState := chatStateReader{chats: dcAdapter, tasks: store.Inbound(), memories: store.Memories()}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
@@ -192,7 +192,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		})
 	})
 	commandPlatform := command.Platform{
-		Text: dcAdapter, Buttons: dcAdapter, Group: dcAdapter,
+		Text: dcAdapter, Buttons: dcAdapter, Group: dcAdapter, Memory: store.Memories(),
 		AssistantName: application.config.AssistantName(),
 	}
 	registry, err := agent.NewRegistry(factory)

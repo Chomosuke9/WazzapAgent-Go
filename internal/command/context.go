@@ -144,6 +144,14 @@ func (c *Context) Group() (GroupModerator, error) {
 	return c.invocation.Platform.Group, nil
 }
 
+// Memory returns the chat's long-term memory store.
+func (c *Context) Memory() (MemoryStore, error) {
+	if c.invocation.Platform.Memory == nil {
+		return nil, c.unavailable("long-term memory")
+	}
+	return c.invocation.Platform.Memory, nil
+}
+
 // ScheduleTask makes the bot run prompt in this chat at fireAt, as if asked
 // then. It returns an error if the host cannot schedule tasks.
 func (c *Context) ScheduleTask(ctx context.Context, fireAt time.Time, prompt string) (Task, error) {

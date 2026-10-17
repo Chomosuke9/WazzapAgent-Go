@@ -74,7 +74,7 @@ func TestDeterministicContextBuilderGoldenCompactTranscript(t *testing.T) {
 		{Role: ModelSystem, Provenance: ProvenanceBasePrompt, AdditionalPrompt: "base"},
 		{Role: ModelUser, Provenance: ProvenancePromptOverride, Content: "<prompt_override>\noverride\n</prompt_override>"},
 		{Role: ModelUser, Provenance: ProvenanceChatInformation, Content: "Chat information:\n- Channel: Tim\n- Channel topic: Diskusi proyek\n- Chat type: server channel\n- Bot role: admin\n- Bot moderation permission: 2\n- Bot moderation capabilities: delete messages, mute members (configured maximum; command permissions apply separately)"},
-		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nTimes here and in the chat transcript are in the bot's time zone, UTC.\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time:\n- none\n</chat_state>"},
+		{Role: ModelUser, Provenance: ProvenanceChatState, Content: "<chat_state>\nWho may change each item, and when you may on your own, is in <chat_settings>.\nSettings of this chat (the command in brackets changes it):\n- Triggers [/trigger]: mention off, name off, reply to bot off, smart off\n- Moderation level [/permission]: 2 (delete messages, mute members)\n- Custom instructions [/prompt]: set, appended to the chat prompt (the text is in <prompt_override>)\nTimes here and in the chat transcript are in the bot's time zone, UTC.\nOne-off tasks [/schedule-task], open to everyone; [ID] then time:\n- none\nDaily tasks [/daily-task], [ID] then time:\n- none\nLong-term memory [/memory], your own notes on this chat (0/50), [ID] then note:\n- none\n</chat_state>"},
 		{Role: ModelUser, Provenance: ProvenanceHistoryTranscript, Content: "<untrusted_chat_history>\nolder messages:\n\n【#000004】 22:13\nAlice (admin) 【012345】: halo (one)\n\n【#000005】 22:13\nVivy 【Bot】: Hai!\n\ncurrent messages(burst):\n\n【#000006】 22:13\nREPLYING TO 【#000005】 Vivy 【Bot】: \"Hai!\"\nAlice (admin) 【012345】: lanjutkan (two)\n</untrusted_chat_history>"},
 	}
 	if len(messages) != len(want) {
@@ -338,13 +338,16 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 	chat := ChatContext{Kind: "group", Name: "Tim", Location: wib, Tasks: []ScheduledTaskSummary{
 		{Code: "a1b2c3", FireAt: time.Date(2026, 9, 28, 14, 0, 0, 0, time.UTC), Prompt: "remind 【everyone】 about the meeting"},
 		{Code: "d4e5f6", FireAt: time.Date(2026, 9, 29, 7, 0, 0, 0, wib), Daily: true, Prompt: "say good morning"},
+	}, Memories: []Memory{
+		{Code: "k7p2", Text: "@Budi (a1b2c3) likes\n【cats】"},
+		{Code: "m3q9", Text: "the server speaks Indonesian"},
 	}}
 	config := ConfigSnapshot{
 		Triggers:       TriggerConfig{Mention: true, Reply: true, SmartRules: "delete scam links\n\n  no spam "},
 		Permission:     PermissionConfig{ModerationLevel: ModerationDelete},
 		PromptOverride: &PromptOverride{Mode: PromptReplace, Text: "x"},
 	}
-	want := "<chat_state>\nSensitive: change settings and daily tasks only for the people <chat_settings> allows.\n" +
+	want := "<chat_state>\nWho may change each item, and when you may on your own, is in <chat_settings>.\n" +
 		"Settings of this chat (the command in brackets changes it):\n" +
 		"- Triggers [/trigger]: mention on, name off, reply to bot on, smart off\n" +
 		"  Moderator rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
@@ -354,6 +357,8 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 		"Times here and in the chat transcript are in the bot's time zone, UTC+07:00.\n" +
 		"One-off tasks [/schedule-task], open to everyone; [ID] then time:\n- [a1b2c3] 2026-09-28 21:00: remind (everyone) about the meeting\n" +
 		"Daily tasks [/daily-task], [ID] then time:\n- [d4e5f6] every day at 07:00: say good morning\n" +
+		"Long-term memory [/memory], your own notes on this chat (2/50), [ID] then note:\n" +
+		"- [k7p2] @Budi (a1b2c3) likes (cats)\n- [m3q9] the server speaks Indonesian\n" +
 		"</chat_state>"
 	if got := formatChatState(chat, config); got != want {
 		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
