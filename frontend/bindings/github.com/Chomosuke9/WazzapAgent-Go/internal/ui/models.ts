@@ -178,6 +178,11 @@ export interface SettingsValuesDTO {
     "inboundWorkers": number;
     "messageDebounce": string;
     "messageBurstCap": number;
+
+    /**
+     * SmartTriggerDebounce is empty when the smart trigger judges at once.
+     */
+    "smartTriggerDebounce": string;
     "connectTimeout": string;
     "sendTimeout": string;
     "shutdownTimeout": string;

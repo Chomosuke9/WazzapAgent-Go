@@ -996,6 +996,7 @@ func newFixtureAtPath(
 	accountID identity.AccountID,
 	debounce time.Duration,
 	burstCap uint32,
+	tune ...func(*inbound.Options, *agent.ConfigValues),
 ) *fixture {
 	t.Helper()
 	providerID, _ := identity.ParseProviderID("openai-compatible")
@@ -1022,6 +1023,10 @@ func newFixtureAtPath(
 		Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1},
 		Triggers:   agent.DefaultTriggerConfig(),
 	}
+	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Stickers: store.Stickers()}
+	for _, apply := range tune {
+		apply(&dispatcherOptions, &defaults)
+	}
 	contextBuilder, _ := agent.NewDeterministicContextBuilder(agent.DefaultMaxContextBytes, "Vivy")
 	factory := agent.FactoryFunc(func(ctx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(ctx, key, agent.Dependencies{
@@ -1039,7 +1044,7 @@ func newFixtureAtPath(
 		t.Fatalf("create command responder: %v", err)
 	}
 	ingress := &directIngress{}
-	dispatcherOptions := inbound.Options{Debounce: debounce, BurstCap: burstCap, Report: ingress.report, Stickers: store.Stickers()}
+	dispatcherOptions.Report = ingress.report
 	ingress.dispatcher, err = inbound.NewDispatcher(
 		store.Inbound(), registry, gate, responder, inbound.DiscardObserver{}, command.Platform{Text: sender}, dispatcherOptions,
 	)
@@ -1168,4 +1173,74 @@ func (sender *recordingSender) last() action.SendTextRequest {
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
 	return sender.requests[len(sender.requests)-1]
+}
+
+type smartJudge struct {
+	mu      sync.Mutex
+	respond bool
+	err     error
+	judged  []string
+}
+
+func (judge *smartJudge) ShouldRespond(_ context.Context, message conversation.IncomingMessage, _ agent.ConfigSnapshot) (bool, error) {
+	judge.mu.Lock()
+	defer judge.mu.Unlock()
+	judge.judged = append(judge.judged, conversation.AuthoredText(message.Text))
+	return judge.respond, judge.err
+}
+
+func (judge *smartJudge) texts() []string {
+	judge.mu.Lock()
+	defer judge.mu.Unlock()
+	return append([]string(nil), judge.judged...)
+}
+
+func TestSmartTriggerDebounceJudgesOnlyTheNewestOfABurst(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		judge   *smartJudge
+		answers int32
+	}{
+		{name: "worth a response", judge: &smartJudge{respond: true}, answers: 1},
+		{name: "judge failed", judge: &smartJudge{respond: true, err: context.DeadlineExceeded}, answers: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tenantID, _ := identity.NewTenantID()
+			accountID, _ := identity.NewAccountID()
+			fixture := newFixtureAtPath(t, filepath.Join(t.TempDir(), "app.db"), tenantID, accountID, 0, 8,
+				func(options *inbound.Options, defaults *agent.ConfigValues) {
+					options.SmartDebounce = 200 * time.Millisecond
+					defaults.Triggers.Smart = true
+				})
+			fixture.gate.SetResponseJudge(test.judge)
+			chat := "120363000000000077@g.us"
+			for index, text := range []string{"first", "second", "third"} {
+				candidate := fixture.candidate(fmt.Sprintf("smart-%d", index), chat, conversation.ChatGroup, text)
+				// Straight to the dispatcher: the test ingress would wait out the
+				// debounce after every message.
+				if err := fixture.handler.dispatcher.Handle(context.Background(), candidate); err != nil {
+					t.Fatalf("handle %q: %v", text, err)
+				}
+			}
+			if err := fixture.handler.settle(nil); err != nil {
+				t.Fatalf("settle burst: %v", err)
+			}
+			if judged := test.judge.texts(); len(judged) != 1 || judged[0] != "third" {
+				t.Fatalf("judged = %q, want only the newest message", judged)
+			}
+			if fixture.model.calls.Load() != test.answers || fixture.sender.count() != int(test.answers) {
+				t.Fatalf("model/sender calls = %d/%d, want %d", fixture.model.calls.Load(), fixture.sender.count(), test.answers)
+			}
+			unfinished, err := fixture.store.Inbound().ListUnfinished(context.Background(), fixture.tenantID, nil, 0)
+			if err != nil || len(unfinished) != 0 {
+				t.Fatalf("burst left unfinished messages: %d, err=%v", len(unfinished), err)
+			}
+			if err := fixture.handler.Recover(context.Background(), fixture.tenantID); err != nil {
+				t.Fatalf("recover: %v", err)
+			}
+			if len(test.judge.texts()) != 1 {
+				t.Fatalf("recovery judged the burst again: %q", test.judge.texts())
+			}
+		})
+	}
 }

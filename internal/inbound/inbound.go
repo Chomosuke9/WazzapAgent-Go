@@ -91,6 +91,13 @@ type Policy interface {
 	ModelCapabilities(agent.PermissionConfig) (agent.CapabilitySet, error)
 }
 
+// JudgmentPolicy is implemented by policies whose AuthorizeInvocation may
+// have to ask a slow judge (the smart trigger). It is optional: without it, or
+// with Options.SmartDebounce zero, every message is authorized as it arrives.
+type JudgmentPolicy interface {
+	NeedsJudgment(conversation.IncomingMessage, agent.ConfigSnapshot) bool
+}
+
 // CommandPermissionFactsProvider is implemented by policies that can resolve
 // the current owner/admin/chat facts used by a command's permission DSL. It is
 // optional for compatibility with small test policies; callers without it

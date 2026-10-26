@@ -91,6 +91,10 @@ type Settings struct {
 
 	MessageDebounce time.Duration
 	MessageBurstCap uint32
+	// SmartTriggerDebounce is how long a group must be quiet before the smart
+	// trigger judges its newest unmatched message. Zero (the default) judges
+	// every message as it arrives.
+	SmartTriggerDebounce time.Duration
 
 	ConnectTimeout  time.Duration
 	SendTimeout     time.Duration
@@ -327,7 +331,8 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		chatDefaults: settings.ChatDefaults,
 		inboundQueue: settings.InboundQueue, inboundWorkers: settings.InboundWorkers,
 		messageDebounce: settings.MessageDebounce, messageBurstCap: settings.MessageBurstCap,
-		historyWindow: settings.HistoryWindow, maxContextBytes: settings.MaxContextBytes,
+		smartTriggerDebounce: settings.SmartTriggerDebounce,
+		historyWindow:        settings.HistoryWindow, maxContextBytes: settings.MaxContextBytes,
 		historyKeepLatest: settings.HistoryKeepLatest, historyMaxAge: settings.HistoryMaxAge,
 		connectTimeout: settings.ConnectTimeout,
 		sendTimeout:    settings.SendTimeout, pairingOutput: nonempty(strings.ToLower(settings.PairingOutput), defaultPairingOutput),
@@ -401,6 +406,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "WAZZAP_HISTORY_WINDOW", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryWindow)}, {Key: "WAZZAP_MAX_CONTEXT_BYTES", Group: "context", Kind: FieldUint, Default: fmt.Sprint(defaultMaxContextBytes)}, {Key: "WAZZAP_HISTORY_KEEP_LATEST", Group: "retention", Kind: FieldUint, Default: fmt.Sprint(defaultHistoryKeepLatest)}, {Key: "WAZZAP_HISTORY_MAX_AGE", Group: "retention", Kind: FieldDuration, Default: defaultHistoryMaxAge.String()},
 		{Key: "WAZZAP_INBOUND_QUEUE", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundQueue)}, {Key: "WAZZAP_INBOUND_WORKERS", Group: "inbound", Kind: FieldUint, Default: fmt.Sprint(defaultInboundWorkers)},
 		{Key: "WAZZAP_MESSAGE_DEBOUNCE", Group: "batching", Kind: FieldDuration, Default: defaultMessageDebounce.String()}, {Key: "WAZZAP_MESSAGE_BURST_CAP", Group: "batching", Kind: FieldUint, Default: fmt.Sprint(defaultMessageBurstCap)},
+		{Key: "WAZZAP_SMART_TRIGGER_DEBOUNCE", Group: "batching", Kind: FieldDuration},
 		{Key: "WAZZAP_CONNECT_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultConnectTimeout.String()}, {Key: "WAZZAP_SEND_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultSendTimeout.String()}, {Key: "WAZZAP_SHUTDOWN_TIMEOUT", Group: "connection", Kind: FieldDuration, Default: defaultShutdownTimeout.String()},
 		{Key: "WAZZAP_POLICY_ID", Group: "policy", Kind: FieldString, Default: defaultPolicyID}, {Key: "WAZZAP_POLICY_REVISION", Group: "policy", Kind: FieldUint, Default: "1"},
 		{Key: "WAZZAP_LOG_LEVEL", Group: "observability", Kind: FieldString, Default: defaultLogLevel}, {Key: "WAZZAP_LOG_FORMAT", Group: "observability", Kind: FieldString, Default: defaultLogFormat}, {Key: "LANGSMITH_API_KEY", Group: "observability", Kind: FieldSecret, Sensitive: true},
@@ -566,6 +572,9 @@ func draftIssues(settings Settings) []ReadinessIssue {
 	}
 	if settings.MessageDebounce != 0 {
 		checkDuration("WAZZAP_MESSAGE_DEBOUNCE", settings.MessageDebounce, time.Minute)
+	}
+	if settings.SmartTriggerDebounce != 0 {
+		checkDuration("WAZZAP_SMART_TRIGGER_DEBOUNCE", settings.SmartTriggerDebounce, time.Minute)
 	}
 	if settings.HistoryMaxAge != 0 {
 		checkDuration("WAZZAP_HISTORY_MAX_AGE", settings.HistoryMaxAge, 10*365*24*time.Hour)

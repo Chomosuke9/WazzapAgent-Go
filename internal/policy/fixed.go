@@ -77,6 +77,21 @@ func (gate *FixedGate) AuthorizeInvocation(ctx context.Context, message conversa
 	return gate.authorizeHuman(ctx, principal, snapshot.Permission, false)
 }
 
+// NeedsJudgment reports whether AuthorizeInvocation would have to ask the
+// smart trigger's judge about message: an eligible group message that matched
+// no other trigger and has not been judged yet.
+func (gate *FixedGate) NeedsJudgment(message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) bool {
+	if !gate.enabled.Load() || message.FromMe || message.ChatKind != conversation.ChatGroup ||
+		!snapshot.Triggers.Smart || gate.judge == nil ||
+		snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, conversation.AuthoredText(message.Text), gate.assistantName) {
+		return false
+	}
+	gate.judgeMu.Lock()
+	_, seen := gate.judged[message.InvocationID]
+	gate.judgeMu.Unlock()
+	return !seen
+}
+
 func (gate *FixedGate) triggered(ctx context.Context, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) bool {
 	if snapshot.Triggers.Matches(message.MentionsBot, message.RepliedToBot, conversation.AuthoredText(message.Text), gate.assistantName) {
 		return true
@@ -90,11 +105,13 @@ func (gate *FixedGate) triggered(ctx context.Context, message conversation.Incom
 	if seen {
 		return respond
 	}
-	// A failed judgment counts as "no response": the message is left alone,
-	// as it would be without the smart trigger.
+	// A failed judgment counts as "no response" and is remembered like any
+	// other: the message is skipped, as it would be without the smart
+	// trigger, and never asked about again. Asking again would only pile more
+	// work onto a judge that is already too slow to answer.
 	respond, err := gate.judge.ShouldRespond(ctx, message, snapshot)
 	if err != nil {
-		return false
+		respond = false
 	}
 	gate.judgeMu.Lock()
 	if gate.judged == nil || len(gate.judged) >= maxJudged {

@@ -46,47 +46,48 @@ const (
 type LookupEnv func(string) (string, bool)
 
 type Snapshot struct {
-	dataDir             string
-	httpAddress         string
-	logLevel            string
-	logFormat           string
-	shutdownTimeout     time.Duration
-	whatsAppEnabled     bool
-	agentEnabled        bool
-	tenantID            identity.TenantID
-	accountID           identity.AccountID
-	ownerAddress        string
-	allowlist           []string
-	llmEndpoint         string
-	llmAPIKey           string
-	llmFallbackEndpoint string
-	llmFallbackAPIKey   string
-	langsmithAPIKey     string
-	typesafeAPIKey      string
-	typesafeEndpoint    string
-	typesafeModel       string
-	llmModel            string
-	llmProviderID       identity.ProviderID
-	llmTimeout          time.Duration
-	llmConcurrency      uint32
-	maxOutputTokens     uint32
-	maxResponseBytes    uint32
-	basePrompt          string
-	policyID            identity.PolicyID
-	policyRevision      uint64
-	inboundQueue        uint32
-	inboundWorkers      uint32
-	messageDebounce     time.Duration
-	messageBurstCap     uint32
-	historyWindow       uint32
-	maxContextBytes     uint32
-	historyKeepLatest   uint32
-	historyMaxAge       time.Duration
-	connectTimeout      time.Duration
-	sendTimeout         time.Duration
-	pairingOutput       string
-	assistantName       string
-	chatDefaults        ChatDefaults
+	dataDir              string
+	httpAddress          string
+	logLevel             string
+	logFormat            string
+	shutdownTimeout      time.Duration
+	whatsAppEnabled      bool
+	agentEnabled         bool
+	tenantID             identity.TenantID
+	accountID            identity.AccountID
+	ownerAddress         string
+	allowlist            []string
+	llmEndpoint          string
+	llmAPIKey            string
+	llmFallbackEndpoint  string
+	llmFallbackAPIKey    string
+	langsmithAPIKey      string
+	typesafeAPIKey       string
+	typesafeEndpoint     string
+	typesafeModel        string
+	llmModel             string
+	llmProviderID        identity.ProviderID
+	llmTimeout           time.Duration
+	llmConcurrency       uint32
+	maxOutputTokens      uint32
+	maxResponseBytes     uint32
+	basePrompt           string
+	policyID             identity.PolicyID
+	policyRevision       uint64
+	inboundQueue         uint32
+	inboundWorkers       uint32
+	messageDebounce      time.Duration
+	messageBurstCap      uint32
+	smartTriggerDebounce time.Duration
+	historyWindow        uint32
+	maxContextBytes      uint32
+	historyKeepLatest    uint32
+	historyMaxAge        time.Duration
+	connectTimeout       time.Duration
+	sendTimeout          time.Duration
+	pairingOutput        string
+	assistantName        string
+	chatDefaults         ChatDefaults
 }
 
 // LoadRuntime loads configuration from the process environment and an optional
@@ -210,6 +211,7 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		{"WAZZAP_SHUTDOWN_TIMEOUT", &settings.ShutdownTimeout}, {"WAZZAP_LLM_TIMEOUT", &settings.LLMTimeout},
 		{"WAZZAP_CONNECT_TIMEOUT", &settings.ConnectTimeout}, {"WAZZAP_SEND_TIMEOUT", &settings.SendTimeout},
 		{"WAZZAP_MESSAGE_DEBOUNCE", &settings.MessageDebounce}, {"WAZZAP_HISTORY_MAX_AGE", &settings.HistoryMaxAge},
+		{"WAZZAP_SMART_TRIGGER_DEBOUNCE", &settings.SmartTriggerDebounce},
 	}
 	for _, field := range durations {
 		if *field.target, err = parseDuration(lookup, field.key, 0, time.Duration(1<<63-1)); err != nil {
@@ -281,15 +283,18 @@ func (snapshot Snapshot) InboundQueue() uint32               { return snapshot.i
 func (snapshot Snapshot) InboundWorkers() uint32             { return snapshot.inboundWorkers }
 func (snapshot Snapshot) MessageDebounce() time.Duration     { return snapshot.messageDebounce }
 func (snapshot Snapshot) MessageBurstCap() uint32            { return snapshot.messageBurstCap }
-func (snapshot Snapshot) HistoryWindow() uint32              { return snapshot.historyWindow }
-func (snapshot Snapshot) MaxContextBytes() uint32            { return snapshot.maxContextBytes }
-func (snapshot Snapshot) HistoryKeepLatest() uint32          { return snapshot.historyKeepLatest }
-func (snapshot Snapshot) HistoryMaxAge() time.Duration       { return snapshot.historyMaxAge }
-func (snapshot Snapshot) ConnectTimeout() time.Duration      { return snapshot.connectTimeout }
-func (snapshot Snapshot) SendTimeout() time.Duration         { return snapshot.sendTimeout }
-func (snapshot Snapshot) PairingOutput() string              { return snapshot.pairingOutput }
-func (snapshot Snapshot) AssistantName() string              { return snapshot.assistantName }
-func (snapshot Snapshot) ChatDefaults() ChatDefaults         { return snapshot.chatDefaults }
+func (snapshot Snapshot) SmartTriggerDebounce() time.Duration {
+	return snapshot.smartTriggerDebounce
+}
+func (snapshot Snapshot) HistoryWindow() uint32         { return snapshot.historyWindow }
+func (snapshot Snapshot) MaxContextBytes() uint32       { return snapshot.maxContextBytes }
+func (snapshot Snapshot) HistoryKeepLatest() uint32     { return snapshot.historyKeepLatest }
+func (snapshot Snapshot) HistoryMaxAge() time.Duration  { return snapshot.historyMaxAge }
+func (snapshot Snapshot) ConnectTimeout() time.Duration { return snapshot.connectTimeout }
+func (snapshot Snapshot) SendTimeout() time.Duration    { return snapshot.sendTimeout }
+func (snapshot Snapshot) PairingOutput() string         { return snapshot.pairingOutput }
+func (snapshot Snapshot) AssistantName() string         { return snapshot.assistantName }
+func (snapshot Snapshot) ChatDefaults() ChatDefaults    { return snapshot.chatDefaults }
 
 func (snapshot Snapshot) Allowlist() []string {
 	return append([]string(nil), snapshot.allowlist...)
@@ -334,6 +339,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"inbound_workers":         snapshot.inboundWorkers,
 		"message_debounce":        snapshot.messageDebounce.String(),
 		"message_burst_cap":       snapshot.messageBurstCap,
+		"smart_trigger_debounce":  snapshot.smartTriggerDebounce.String(),
 		"history_window":          snapshot.historyWindow,
 		"max_context_bytes":       snapshot.maxContextBytes,
 		"history_keep_latest":     snapshot.historyKeepLatest,

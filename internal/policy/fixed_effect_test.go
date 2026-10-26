@@ -81,12 +81,41 @@ func TestFixedGateUsesPerChatInvocationTriggers(t *testing.T) {
 
 type fakeJudge struct {
 	addressed bool
+	err       error
 	calls     int
 }
 
 func (judge *fakeJudge) ShouldRespond(context.Context, conversation.IncomingMessage, agent.ConfigSnapshot) (bool, error) {
 	judge.calls++
-	return judge.addressed, nil
+	return judge.addressed, judge.err
+}
+
+func TestFixedGateSkipsAndRemembersAFailedJudgment(t *testing.T) {
+	key := fixedEffectKey(t)
+	policyID, _ := identity.ParsePolicyID("part3-effects.v1")
+	gate, err := policy.NewFixedGate(policyID, 1, &fixedConfigReader{}, fixedChatAccess{}, &fixedAuthority{}, "Vivy", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	judge := &fakeJudge{addressed: true, err: context.DeadlineExceeded}
+	gate.SetResponseJudge(judge)
+	smart := agent.ConfigSnapshot{Version: 1, Permission: agent.PermissionConfig{PolicyID: policyID, Revision: 1}, Triggers: agent.TriggerConfig{Smart: true}}
+	message := fixedInvocationMessage(t, key, conversation.ChatGroup, "anyone know the answer?")
+
+	if !gate.NeedsJudgment(message, smart) {
+		t.Fatal("an unjudged group message should need judgment")
+	}
+	for range 3 {
+		if err := gate.AuthorizeInvocation(context.Background(), message, smart); err == nil {
+			t.Fatal("a failed judgment admitted the message")
+		}
+	}
+	if judge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1: a failed judgment must not be asked again", judge.calls)
+	}
+	if gate.NeedsJudgment(message, smart) {
+		t.Fatal("a message whose judgment failed still needs judgment")
+	}
 }
 
 func TestFixedGateSmartTriggerAsksJudgeOnceForUnmatchedGroupMessages(t *testing.T) {

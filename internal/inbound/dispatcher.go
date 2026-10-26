@@ -20,11 +20,17 @@ const (
 )
 
 type Options struct {
-	Debounce    time.Duration
-	BurstCap    uint32
-	Activity    AIActivity
-	Events      AgentLifecycleObserver
-	ChatContext agent.ChatContextReader
+	Debounce time.Duration
+	BurstCap uint32
+	// SmartDebounce, when set, holds group messages that only the smart
+	// trigger could answer until the chat has been quiet this long, then asks
+	// the judge about the newest of them alone (it reads the rest from the
+	// chat's history); the earlier ones are skipped. A burst then costs one
+	// judgment instead of one per message.
+	SmartDebounce time.Duration
+	Activity      AIActivity
+	Events        AgentLifecycleObserver
+	ChatContext   agent.ChatContextReader
 	// Muter, when set, deletes group messages from muted senders.
 	Muter MuteDeleter
 	// Stickers, when set, lists the chat's sticker catalog for send_sticker.
@@ -84,10 +90,31 @@ type chatQueue struct {
 	timerSeq uint64
 	running  bool
 	retries  int
+
+	// awaiting holds the messages waiting for the smart trigger's judge,
+	// oldest first, until judgeTimer fires; judging is the burst being judged
+	// right now. Messages that arrive meanwhile wait for the next judgment.
+	awaiting   []conversation.IncomingMessage
+	judging    []conversation.IncomingMessage
+	judgeTimer *time.Timer
+	judgeSeq   uint64
 }
 
 func (queue *chatQueue) idle() bool {
-	return queue.users == 0 && !queue.running && queue.timer == nil && len(queue.pending) == 0
+	return queue.users == 0 && !queue.running && queue.timer == nil && len(queue.pending) == 0 &&
+		queue.judgeTimer == nil && len(queue.awaiting) == 0 && len(queue.judging) == 0
+}
+
+// judgedHere reports whether message is waiting for or under judgment.
+func (queue *chatQueue) judgedHere(message conversation.IncomingMessage) bool {
+	for _, held := range [][]conversation.IncomingMessage{queue.awaiting, queue.judging} {
+		for _, other := range held {
+			if other.InvocationID == message.InvocationID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // maxPending bounds how many messages one chat keeps in memory. Beyond it,
@@ -107,7 +134,8 @@ func NewDispatcher(
 	if store == nil || agents == nil || policy == nil || responses == nil || observer == nil {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound dispatcher", errors.New("store, registry, policy, response writer, and observer are required"))
 	}
-	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 {
+	if options.Debounce < 0 || options.Debounce > time.Minute || options.BurstCap == 0 || options.BurstCap > 256 ||
+		options.SmartDebounce < 0 || options.SmartDebounce > time.Minute {
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "create inbound dispatcher", errors.New("valid batching bounds are required"))
 	}
 	if options.Activity == nil {
@@ -150,6 +178,10 @@ func (dispatcher *Dispatcher) Run(ctx context.Context) error {
 		if queue.timer != nil {
 			queue.timer.Stop()
 			queue.timer = nil
+		}
+		if queue.judgeTimer != nil {
+			queue.judgeTimer.Stop()
+			queue.judgeTimer = nil
 		}
 	}
 	for id, timer := range dispatcher.tasks {
@@ -286,6 +318,16 @@ func (dispatcher *Dispatcher) queueAI(ctx context.Context, key agent.Key, messag
 	if err != nil {
 		return err
 	}
+	if judging, ok := dispatcher.policy.(JudgmentPolicy); ok && dispatcher.options.SmartDebounce > 0 &&
+		judging.NeedsJudgment(message, snapshot) {
+		dispatcher.awaitJudgment(key, message)
+		return nil
+	}
+	return dispatcher.admitAI(ctx, key, message, snapshot)
+}
+
+// admitAI authorizes message and queues it for the chat's next turn.
+func (dispatcher *Dispatcher) admitAI(ctx context.Context, key agent.Key, message conversation.IncomingMessage, snapshot agent.ConfigSnapshot) error {
 	if err := dispatcher.policy.AuthorizeInvocation(ctx, message, snapshot); err != nil {
 		return dispatcher.ignore(ctx, message, IgnorePolicyDenied)
 	}
@@ -330,6 +372,89 @@ func (dispatcher *Dispatcher) schedule(key agent.Key, queue *chatQueue, delay ti
 	}
 	seq := queue.timerSeq
 	queue.timer = time.AfterFunc(delay, func() { dispatcher.startTurn(key, queue, seq) })
+}
+
+// awaitJudgment holds message for the chat's next smart-trigger judgment.
+func (dispatcher *Dispatcher) awaitJudgment(key agent.Key, message conversation.IncomingMessage) {
+	dispatcher.mu.Lock()
+	defer dispatcher.mu.Unlock()
+	queue := dispatcher.chat(key)
+	if queue.judgedHere(message) {
+		return
+	}
+	queue.awaiting = append(queue.awaiting, message)
+	if len(queue.judging) == 0 {
+		dispatcher.scheduleJudgment(key, queue)
+	}
+}
+
+// scheduleJudgment judges the chat's held messages once it has been quiet
+// for SmartDebounce, or at once when a full burst is held, so a busy chat
+// is still judged. Callers hold mu.
+func (dispatcher *Dispatcher) scheduleJudgment(key agent.Key, queue *chatQueue) {
+	if queue.judgeTimer != nil {
+		queue.judgeTimer.Stop()
+	}
+	queue.judgeSeq++
+	if dispatcher.ctx.Err() != nil {
+		queue.judgeTimer = nil
+		return
+	}
+	delay := dispatcher.options.SmartDebounce
+	if uint32(len(queue.awaiting)) >= dispatcher.options.BurstCap {
+		delay = 0
+	}
+	seq := queue.judgeSeq
+	queue.judgeTimer = time.AfterFunc(delay, func() { dispatcher.startJudgment(key, queue, seq) })
+}
+
+func (dispatcher *Dispatcher) startJudgment(key agent.Key, queue *chatQueue, seq uint64) {
+	dispatcher.mu.Lock()
+	if seq != queue.judgeSeq {
+		dispatcher.mu.Unlock()
+		return // a newer arrival restarted the wait
+	}
+	queue.judgeTimer = nil
+	if len(queue.judging) > 0 || len(queue.awaiting) == 0 || dispatcher.ctx.Err() != nil {
+		dispatcher.forgetIfIdle(key, queue)
+		dispatcher.mu.Unlock()
+		return
+	}
+	queue.judging, queue.awaiting = queue.awaiting, nil
+	burst := queue.judging
+	dispatcher.turns.Add(1)
+	dispatcher.mu.Unlock()
+
+	go func() {
+		defer dispatcher.turns.Done()
+		if err := dispatcher.judgeBurst(dispatcher.ctx, key, burst); err != nil && dispatcher.ctx.Err() == nil {
+			dispatcher.options.Report(err)
+		}
+		dispatcher.mu.Lock()
+		defer dispatcher.mu.Unlock()
+		queue.judging = nil
+		if len(queue.awaiting) > 0 {
+			dispatcher.scheduleJudgment(key, queue)
+			return
+		}
+		dispatcher.forgetIfIdle(key, queue)
+	}()
+}
+
+// judgeBurst skips all but the newest message of burst and admits that one
+// if the judge says it is worth a response. A judge that fails skips it too.
+func (dispatcher *Dispatcher) judgeBurst(ctx context.Context, key agent.Key, burst []conversation.IncomingMessage) error {
+	newest := burst[len(burst)-1]
+	for _, message := range burst[:len(burst)-1] {
+		if err := dispatcher.ignore(ctx, message, IgnoreGroupNotMentioned); err != nil {
+			return err
+		}
+	}
+	_, snapshot, err := dispatcher.loadAgent(ctx, newest)
+	if err != nil {
+		return err
+	}
+	return dispatcher.admitAI(ctx, key, newest, snapshot)
 }
 
 func (dispatcher *Dispatcher) startTurn(key agent.Key, queue *chatQueue, seq uint64) {
@@ -441,8 +566,9 @@ func (dispatcher *Dispatcher) refill(key agent.Key, queue *chatQueue) {
 		// A full page means more may still wait in the inbox.
 		queue.overflow = len(messages) == maxPending
 		for _, message := range messages {
-			// A command still in the inbox is running right now on its own path.
-			if IsCommand(message.Text) {
+			// A command still in the inbox is running right now on its own path,
+			// and a held message waits for the smart trigger's judge.
+			if IsCommand(message.Text) || queue.judgedHere(message) {
 				continue
 			}
 			queue.pending = append(queue.pending, message)

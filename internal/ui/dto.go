@@ -48,6 +48,8 @@ type SettingsValuesDTO struct {
 
 	MessageDebounce string `json:"messageDebounce"`
 	MessageBurstCap uint32 `json:"messageBurstCap"`
+	// SmartTriggerDebounce is empty when the smart trigger judges at once.
+	SmartTriggerDebounce string `json:"smartTriggerDebounce"`
 
 	ConnectTimeout  string `json:"connectTimeout"`
 	SendTimeout     string `json:"sendTimeout"`
@@ -265,8 +267,9 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		HistoryKeepLatest: settings.HistoryKeepLatest, HistoryMaxAge: settings.HistoryMaxAge.String(),
 		InboundQueue: settings.InboundQueue, InboundWorkers: settings.InboundWorkers,
 		MessageDebounce: settings.MessageDebounce.String(), MessageBurstCap: settings.MessageBurstCap,
-		ConnectTimeout: settings.ConnectTimeout.String(),
-		SendTimeout:    settings.SendTimeout.String(), ShutdownTimeout: settings.ShutdownTimeout.String(),
+		SmartTriggerDebounce: optionalDuration(settings.SmartTriggerDebounce),
+		ConnectTimeout:       settings.ConnectTimeout.String(),
+		SendTimeout:          settings.SendTimeout.String(), ShutdownTimeout: settings.ShutdownTimeout.String(),
 		PolicyID: settings.PolicyID, PolicyRevision: strconv.FormatUint(settings.PolicyRevision, 10),
 		LogLevel: settings.LogLevel, LogFormat: settings.LogFormat,
 		DataDir: settings.DataDir, EnvFile: settings.EnvFile, HTTPAddress: settings.HTTPAddress,
@@ -286,6 +289,14 @@ func readinessDTO(issues []config.ReadinessIssue) []ReadinessIssueDTO {
 		result[i] = ReadinessIssueDTO{Field: issue.Field, Code: issue.Code, Message: issue.Message}
 	}
 	return result
+}
+
+// optionalDuration shows an unset duration as an empty field, not "0s".
+func optionalDuration(value time.Duration) string {
+	if value == 0 {
+		return ""
+	}
+	return value.String()
 }
 
 func fieldDuration(value, field string) (time.Duration, error) {
@@ -311,6 +322,10 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 		return config.Settings{}, err
 	}
 	settings.MessageDebounce, err = fieldDuration(values.MessageDebounce, "messageDebounce")
+	if err != nil {
+		return config.Settings{}, err
+	}
+	settings.SmartTriggerDebounce, err = fieldDuration(values.SmartTriggerDebounce, "smartTriggerDebounce")
 	if err != nil {
 		return config.Settings{}, err
 	}

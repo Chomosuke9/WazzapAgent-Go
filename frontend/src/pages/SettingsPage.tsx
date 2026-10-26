@@ -242,6 +242,7 @@ export function SettingsPage() {
         <label><span>Inbound workers</span><input type="number" min="0" value={draft.inboundWorkers} onChange={(event) => update("inboundWorkers", Number(event.target.value))} /></label>
         <label><span>Message debounce</span><input value={draft.messageDebounce} onChange={(event) => update("messageDebounce", event.target.value)} /></label>
         <label><span>Message burst cap</span><input type="number" min="0" value={draft.messageBurstCap} onChange={(event) => update("messageBurstCap", Number(event.target.value))} /></label>
+        <label><span>Smart trigger debounce</span><input value={draft.smartTriggerDebounce} placeholder="off" onChange={(event) => update("smartTriggerDebounce", event.target.value)} /></label>
       </div>
 
       </section>

@@ -201,7 +201,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
+		SmartDebounce: application.config.SmartTriggerDebounce(),
+		Activity:      waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
 		Report: func(err error) {
 			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 		},
