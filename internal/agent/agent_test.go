@@ -245,7 +245,7 @@ func TestAgentInvokeSerializesOneChat(t *testing.T) {
 
 func TestDifferentChatAgentsInvokeConcurrently(t *testing.T) {
 	store := openStore(t)
-	model := &trackingModel{delay: 50 * time.Millisecond}
+	model := &trackingModel{waitFor: 2}
 	first := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
 	second := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
 	var wait sync.WaitGroup
@@ -503,7 +503,10 @@ func (model *blockingModel) Generate(ctx context.Context, request agent.ModelReq
 }
 
 type trackingModel struct {
-	delay   time.Duration
+	delay time.Duration
+	// waitFor, when set, holds each call until that many calls are active at
+	// once (or a deadline passes), so overlap does not depend on scheduling.
+	waitFor int32
 	active  atomic.Int32
 	maximum atomic.Int32
 }
@@ -514,6 +517,12 @@ func (model *trackingModel) Generate(context.Context, agent.ModelRequest) (agent
 		maximum := model.maximum.Load()
 		if active <= maximum || model.maximum.CompareAndSwap(maximum, active) {
 			break
+		}
+	}
+	if model.waitFor > 0 {
+		deadline := time.Now().Add(5 * time.Second)
+		for model.maximum.Load() < model.waitFor && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
 		}
 	}
 	time.Sleep(model.delay)
