@@ -175,6 +175,13 @@ type CommandExecutor interface {
 	ExecuteCommandEffect(context.Context, Stored, RunCommand) (string, error)
 }
 
+// CommandBatcher is a CommandExecutor that can report the commands of one
+// model reply together. Commands run with the returned context are
+// reported by the returned function.
+type CommandBatcher interface {
+	BeginCommandBatch(context.Context) (context.Context, func(context.Context) error)
+}
+
 // Dispatcher runs effects from the outbox.
 type Dispatcher struct {
 	store      Store
@@ -300,6 +307,23 @@ func (dispatcher *Dispatcher) DispatchEffect(ctx context.Context, ref agent.Effe
 		return err
 	}
 	return dispatcher.Dispatch(ctx, Ref{Key: ref.Key, EffectID: ref.EffectID})
+}
+
+// DispatchEffects dispatches one model reply's effects in order, stopping at
+// the first error, like DispatchEffect on each. The commands among them are
+// reported in one message after the last that ran.
+func (dispatcher *Dispatcher) DispatchEffects(ctx context.Context, refs []agent.EffectDispatchRef) (resultErr error) {
+	if batcher, ok := dispatcher.commands.(CommandBatcher); ok {
+		var report func(context.Context) error
+		ctx, report = batcher.BeginCommandBatch(ctx)
+		defer func() { resultErr = errors.Join(resultErr, report(ctx)) }()
+	}
+	for _, ref := range refs {
+		if err := dispatcher.DispatchEffect(ctx, ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // record saves an outcome even when the caller's context is already done.

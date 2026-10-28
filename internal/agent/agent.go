@@ -455,6 +455,9 @@ func (agent *Agent) dispatchPlan(ctx context.Context, plan StoredPlan) (InvokeRe
 			return result, err
 		}
 	}
+	if batch, ok := agent.effects.(EffectBatchDispatcher); ok {
+		return result, batch.DispatchEffects(ctx, plan.Effects)
+	}
 	for _, ref := range plan.Effects {
 		if err := agent.effects.DispatchEffect(ctx, ref); err != nil {
 			return result, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/command"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/conversation"
@@ -76,14 +77,53 @@ func (executor *ModelCommandExecutor) ExecuteCommandEffect(ctx context.Context, 
 	if !value.TargetMessageID.IsZero() {
 		message.Quote = &conversation.QuotedMessage{ID: value.TargetMessageID, Role: conversation.QuoteUser, Text: "command target"}
 	}
+	// Outside a batch, the command is reported in a message of its own.
+	batch, batched := ctx.Value(commandBatchKey{}).(*commandBatch)
+	if !batched {
+		batch = &commandBatch{}
+	}
+	batch.key = stored.Request.Ref.Key
 	// A model-issued command has no inbox record, so it runs without a Store:
 	// there is no inbox record to mark handled.
 	err = builtinCommandRegistry.Dispatch(ctx, request, command.Invocation{
 		Agent: current, Config: snapshot, Message: message, Facts: facts,
-		Platform: executor.platform, Observer: executor.observer,
+		Platform: executor.platform, Observer: executor.observer, Notices: &batch.notices,
 	})
+	if !batched {
+		err = errors.Join(err, executor.sendNotices(ctx, batch))
+	}
 	if err != nil {
 		return "", err
 	}
 	return "command:" + request.Name, nil
+}
+
+// commandBatch collects the notices of the commands in one model reply.
+type commandBatch struct {
+	key     agent.Key
+	notices command.NoticeBatch
+}
+
+type commandBatchKey struct{}
+
+// BeginCommandBatch makes the commands run with the returned context report
+// what they did in one message, sent by the returned function.
+func (executor *ModelCommandExecutor) BeginCommandBatch(ctx context.Context) (context.Context, func(context.Context) error) {
+	batch := &commandBatch{}
+	return context.WithValue(ctx, commandBatchKey{}, batch), func(ctx context.Context) error {
+		return executor.sendNotices(ctx, batch)
+	}
+}
+
+func (executor *ModelCommandExecutor) sendNotices(ctx context.Context, batch *commandBatch) error {
+	text := batch.notices.Text()
+	if text == "" {
+		return nil
+	}
+	actionID, err := identity.NewActionID()
+	if err != nil {
+		return agent.NewError(agent.ErrorInternal, "create command notice ID", err)
+	}
+	_, err = executor.platform.Text.SendText(ctx, action.SendTextRequest{Key: batch.key, ActionID: actionID, Text: text})
+	return err
 }

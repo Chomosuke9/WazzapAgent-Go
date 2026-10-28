@@ -202,4 +202,8 @@ type Invocation struct {
 	// such as commands issued by the model inside a reply.
 	Store    Store
 	Observer Observer
+	// Notices, when set, collects the command's notices and text replies
+	// instead of sending them, so the commands the bot runs in one reply
+	// are reported in one message.
+	Notices *NoticeBatch
 }

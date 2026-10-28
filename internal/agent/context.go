@@ -297,9 +297,9 @@ func formatChatState(chat ChatContext, config ConfigSnapshot) string {
 			lines = append(lines, "  Name regex: "+sanitizeContextMetadata(triggers.NamePattern))
 		}
 		if rules := triggers.SmartRuleList(); len(rules) > 0 {
-			header := "  Group admin rules (a message matching one wakes you, and you follow it):"
+			header := "  Group admin rules (a message matching one wakes you; your memory note for it says what to do):"
 			if !triggers.Smart {
-				header = "  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):"
+				header = "  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and your memory note for it says what to do):"
 			}
 			lines = append(lines, header)
 			for index, rule := range rules {

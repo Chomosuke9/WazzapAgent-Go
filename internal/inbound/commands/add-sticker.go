@@ -55,9 +55,11 @@ func runAddSticker(ctx context.Context, c *command.Context) error {
 		return err
 	}
 	if replaced {
-		return c.Reply(ctx, "Sticker "+name+" was replaced.")
+		return c.Notice(ctx, command.Notice{Icon: "🖼️", Kind: "Sticker", Change: command.NoticeChanged,
+			Item: "Sticker " + name + " replaced", Text: "Sticker " + name + " was replaced."})
 	}
-	return c.Reply(ctx, "Sticker "+name+" was added. The AI can now send it in this chat.")
+	return c.Notice(ctx, command.Notice{Icon: "🖼️", Kind: "Sticker", Change: command.NoticeAdded, Item: name,
+		Text: "Sticker " + name + " was added. The AI can now send it in this chat."})
 }
 
 // replyAddStickerCatalog sends text followed by the chat's sticker names.

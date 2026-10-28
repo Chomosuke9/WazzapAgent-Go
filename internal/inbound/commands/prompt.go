@@ -30,14 +30,16 @@ func runPrompt(ctx context.Context, c *command.Context) error {
 		if _, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) { values.PromptOverride = override }); err != nil {
 			return err
 		}
-		return c.Reply(ctx, "✅ Custom instructions saved. I follow them on top of the main prompt.")
+		return c.Notice(ctx, command.Notice{Icon: "⚙️", Kind: "Custom instructions", Change: command.NoticeChanged,
+			Item: "Custom instructions saved", Text: "✅ Custom instructions saved. I follow them on top of the main prompt."})
 	case "clear":
 		if _, err := c.UpdateConfig(ctx, func(values *agent.ConfigValues) {
 			values.PromptOverride = nil
 		}); err != nil {
 			return err
 		}
-		return c.Reply(ctx, "✅ Custom instructions deleted. I follow the main prompt only.")
+		return c.Notice(ctx, command.Notice{Icon: "⚙️", Kind: "Custom instructions", Change: command.NoticeChanged,
+			Item: "Custom instructions deleted", Text: "✅ Custom instructions deleted. I follow the main prompt only."})
 	default:
 		return c.Reply(ctx, fmt.Sprintf("Send /prompt to see this chat's custom instructions, /prompt set <text> to set them, "+
 			"or /prompt clear to delete them. Up to %d bytes.", agent.MaxPromptBytes))

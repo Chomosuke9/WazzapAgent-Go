@@ -57,7 +57,16 @@ func runTrigger(ctx context.Context, c *command.Context) error {
 		}
 		return err
 	}
-	return c.Reply(ctx, "✅ "+done+"\n\n"+formatTriggers(updated.Triggers, c.AssistantName()))
+	notice := command.Notice{Icon: "⚙️", Kind: "Trigger", Change: command.NoticeChanged, Item: done,
+		Text: "✅ " + done + "\n\n" + formatTriggers(updated.Triggers, c.AssistantName())}
+	// A rule added and a rule removed in one reply read as a rule updated.
+	before, after := c.Config.Triggers.SmartRuleList(), updated.Triggers.SmartRuleList()
+	if index, ok := smartRuleNumber(strings.TrimPrefix(args, "smart ")); strings.HasPrefix(args, "smart ") && ok {
+		notice.Kind, notice.Change, notice.Item = "Smart rule", command.NoticeRemoved, before[index-1]
+	} else if strings.HasPrefix(args, "smart add ") && len(after) > 0 {
+		notice.Kind, notice.Change, notice.Item = "Smart rule", command.NoticeAdded, after[len(after)-1]
+	}
+	return c.Notice(ctx, notice)
 }
 
 // replyTriggerToggles shows the triggers with a toggle button per trigger and
@@ -202,7 +211,7 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 	case len(rules) == 0:
 		lines = append(lines, "*Smart rules*: none yet.")
 	case triggers.Smart:
-		lines = append(lines, fmt.Sprintf("*Smart rules* (%d of %d). A message that matches one always wakes me, and I follow the rule:", len(rules), agent.MaxSmartRules))
+		lines = append(lines, fmt.Sprintf("*Smart rules* (%d of %d). A message that matches one always wakes me, and I do what I was told for it:", len(rules), agent.MaxSmartRules))
 	default:
 		lines = append(lines, fmt.Sprintf("*Smart rules* (%d of %d), paused while Smart is off:", len(rules), agent.MaxSmartRules))
 	}
@@ -216,7 +225,7 @@ func formatTriggers(triggers agent.TriggerConfig, assistantName string) string {
 const triggerUsage = "*How to change it*\n" +
 	"/trigger toggle: buttons to turn each one on or off\n" +
 	"/trigger mention|reply|name|smart on|off\n" +
-	"/trigger smart add <rule>: add a rule, e.g. /trigger smart add someone sends a scam link: delete it and warn them\n" +
+	"/trigger smart add <rule>: add a rule that describes a message, e.g. /trigger smart add Someone sends, shares or forwards a scam or phishing link.\n" +
 	"/trigger smart remove <number>: delete a rule\n" +
 	"/trigger smart set <rules, one per line>: replace all rules\n" +
 	"/trigger smart clear: delete all rules\n" +
@@ -237,7 +246,7 @@ func triggerHelp(args string) string {
 	case "smart":
 		return "To manage smart rules, send one of:\n/trigger smart on|off\n/trigger smart add <rule>\n/trigger smart remove <number>\n" +
 			"/trigger smart set <rules, one per line>\n/trigger smart clear\n\n" +
-			"A rule says when it applies and what to do, e.g. someone sends a scam link: delete it and warn them."
+			"A rule describes the message to catch, e.g. Someone insults, mocks, curses at or belittles another member. Then tell me what to do when it matches, and I'll remember it."
 	case "pattern", "regex":
 		return fmt.Sprintf("Send /trigger pattern <regex> (Go syntax, up to %d bytes; add (?i) to ignore case), or /trigger regex off to use my name again.", agent.MaxTriggerPatternBytes)
 	case "mention", "reply", "name":

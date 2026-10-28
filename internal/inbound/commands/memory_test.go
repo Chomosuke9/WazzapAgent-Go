@@ -149,3 +149,29 @@ func TestParseMemoryArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestBotMemoryChangesInOneReplyAreOneUpdateNotice(t *testing.T) {
+	store := &memoryFake{memories: []agent.Memory{{Code: "k7p2", Text: "@Budi (a1b2c3) lives in Bandung"}}}
+	registry := builtinRegistry(t)
+	key := testChatKey(t)
+	replies := &recordingText{}
+	batch := &command.NoticeBatch{}
+	for _, text := range []string{"/memory delete k7p2", "/memory add @Budi (a1b2c3) lives in Jakarta"} {
+		request, _, _ := registry.Parse(text)
+		err := registry.Dispatch(context.Background(), request, command.Invocation{
+			Message:  conversation.IncomingMessage{TenantID: key.TenantID, AccountID: key.AccountID, ChatID: key.ChatID, Text: text, FromMe: true},
+			Facts:    command.PermissionFacts{IsGroup: true, FromMe: true},
+			Platform: command.Platform{Text: replies, Memory: store, AssistantName: "Wazzap"},
+			Notices:  batch,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+	}
+	if len(replies.sent) != 0 {
+		t.Fatalf("batched commands sent %q", replies.sent)
+	}
+	if got, want := batch.Text(), "🧠 Memory updated: @Budi (a1b2c3) lives in Jakarta"; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}

@@ -60,10 +60,12 @@ func runScheduleTask(ctx context.Context, c *command.Context) error {
 		return err
 	}
 	reply := "Task scheduled in " + formatScheduleTaskDelay(delay) + "."
+	item := "in " + formatScheduleTaskDelay(delay)
 	if task.Code != "" {
 		reply += " ID: " + task.Code + " (/schedule-task delete " + task.Code + " cancels it)."
+		item += " (" + task.FireAt.Format("15:04") + ")"
 	}
-	return c.Reply(ctx, reply)
+	return c.Notice(ctx, command.Notice{Icon: "⏰", Kind: "Reminder", Change: command.NoticeAdded, Item: item, Text: reply})
 }
 
 func replyScheduledTasks(ctx context.Context, c *command.Context) error {
@@ -87,6 +89,7 @@ func deleteScheduledTask(ctx context.Context, c *command.Context, code string) e
 	if code == "" {
 		return c.Reply(ctx, "Usage: /schedule-task delete <ID>. /schedule-task list shows the IDs.")
 	}
+	item := scheduleTaskTime(ctx, c, code)
 	deleted, err := c.CancelTask(ctx, code, false)
 	if err != nil {
 		return err
@@ -94,7 +97,23 @@ func deleteScheduledTask(ctx context.Context, c *command.Context, code string) e
 	if !deleted {
 		return c.Reply(ctx, "No scheduled task has the ID "+code+". /schedule-task list shows the IDs.")
 	}
-	return c.Reply(ctx, "Scheduled task "+code+" deleted.")
+	return c.Notice(ctx, command.Notice{Icon: "⏰", Kind: "Reminder", Change: command.NoticeRemoved, Item: item,
+		Text: "Scheduled task " + code + " deleted."})
+}
+
+// scheduleTaskTime says when the one-off task with code runs, "at 14:30",
+// for a notice about it. It is the code when the task cannot be read.
+func scheduleTaskTime(ctx context.Context, c *command.Context, code string) string {
+	tasks, err := c.Tasks(ctx)
+	if err != nil {
+		return code
+	}
+	for _, task := range tasks {
+		if !task.Daily && strings.EqualFold(task.Code, code) {
+			return "at " + task.FireAt.Format("15:04")
+		}
+	}
+	return code
 }
 
 // scheduleTaskPreview shortens a task's prompt for a list.

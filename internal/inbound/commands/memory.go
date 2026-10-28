@@ -103,7 +103,10 @@ func addMemory(ctx context.Context, c *command.Context, store command.MemoryStor
 	case !added:
 		return c.Reply(ctx, "🧠 Already saved as "+memory.Code+".")
 	}
-	return c.Reply(ctx, "🧠 Saved as "+memory.Code+": "+memory.Text)
+	return c.Notice(ctx, command.Notice{
+		Icon: "🧠", Kind: "Memory", Change: command.NoticeAdded, Item: memory.Text,
+		Text: "🧠 Saved as " + memory.Code + ": " + memory.Text,
+	})
 }
 
 func deleteMemories(ctx context.Context, c *command.Context, store command.MemoryStore, text string) error {
@@ -119,7 +122,16 @@ func deleteMemories(ctx context.Context, c *command.Context, store command.Memor
 	for _, memory := range deleted {
 		lines = append(lines, "• "+memory.Code+": "+memory.Text)
 	}
-	return c.Reply(ctx, strings.Join(lines, "\n"))
+	reply := strings.Join(lines, "\n")
+	for _, memory := range deleted {
+		if err := c.Notice(ctx, command.Notice{
+			Icon: "🧠", Kind: "Memory", Change: command.NoticeRemoved, Item: memory.Text, Text: reply,
+		}); err != nil {
+			return err
+		}
+		reply = ""
+	}
+	return nil
 }
 
 // memoryMentions rewrites the raw WhatsApp mentions a person typed into the

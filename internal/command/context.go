@@ -44,8 +44,30 @@ func (c *Context) AssistantName() string { return c.invocation.Platform.Assistan
 // Commands lists every registered command, sorted by name.
 func (c *Context) Commands() []Command { return c.registry.Commands() }
 
-// Reply sends text to the chat.
+// Reply sends text to the chat. In a batch of commands the bot runs, the
+// text joins the batch's one message instead.
 func (c *Context) Reply(ctx context.Context, text string) error {
+	if c.invocation.Notices != nil {
+		c.invocation.Notices.add(noticeEntry{text: text})
+		return nil
+	}
+	return c.send(ctx, text)
+}
+
+// Notice reports a change the command made: a person who typed the command
+// gets notice.Text, and the bot's batch gets a short line (see Notice).
+func (c *Context) Notice(ctx context.Context, notice Notice) error {
+	if c.invocation.Notices != nil {
+		c.invocation.Notices.add(noticeEntry{notice: &notice})
+		return nil
+	}
+	if notice.Text == "" {
+		return nil
+	}
+	return c.send(ctx, notice.Text)
+}
+
+func (c *Context) send(ctx context.Context, text string) error {
 	sender := c.invocation.Platform.Text
 	if sender == nil {
 		return c.unavailable("text replies")
@@ -122,7 +144,7 @@ func (c *Context) replyButtonsAsText(ctx context.Context, text string, buttons [
 			lines = append(lines, "• "+option.Label+": "+c.buttonID(option))
 		}
 	}
-	return c.Reply(ctx, strings.Join(lines, "\n"))
+	return c.send(ctx, strings.Join(lines, "\n"))
 }
 
 // buttonID is what a tap sends back: the button's command with its args.

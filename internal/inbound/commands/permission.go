@@ -41,7 +41,8 @@ func runPermission(ctx context.Context, c *command.Context) error {
 	}); err != nil {
 		return err
 	}
-	return c.Reply(ctx, fmt.Sprintf("✅ Moderation is now level %d. %s", level, moderationLevels[level].can))
+	text := fmt.Sprintf("Moderation is now level %d. %s", level, moderationLevels[level].can)
+	return c.Notice(ctx, command.Notice{Icon: "⚙️", Kind: "Moderation", Change: command.NoticeChanged, Item: text, Text: "✅ " + text})
 }
 
 // replyPermission shows the level with one button per level. A tap arrives

@@ -73,7 +73,26 @@ func runGroup(ctx context.Context, c *command.Context) error {
 		// The result is visible in the group; a confirmation would be noise.
 		return nil
 	}
-	return c.Reply(ctx, fmt.Sprintf("The /group %s command completed successfully.", parsed.kind))
+	return c.Notice(ctx, command.Notice{Icon: "👥", Kind: "Group", Change: command.NoticeChanged, Item: parsed.done(),
+		Text: fmt.Sprintf("The /group %s command completed successfully.", parsed.kind)})
+}
+
+// done says what the finished action did, for the bot's notice.
+func (action groupAction) done() string {
+	switch action.kind {
+	case "close":
+		return "Group closed: only admins can send messages"
+	case "open":
+		return "Group opened: everyone can send messages"
+	case "description":
+		return "Group description updated"
+	case "mute":
+		if action.minutes == 0 {
+			return "Member unmuted"
+		}
+		return fmt.Sprintf("Member muted for %d minutes", action.minutes)
+	}
+	return "Group " + action.kind + " done"
 }
 
 // botLevel is the moderation level the bot needs for the action. People are

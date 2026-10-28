@@ -94,6 +94,7 @@ package, so a generic helper name will collide with another command.
 | `c.Agent` | The chat's Agent. Use `c.Agent.History()` or `c.Agent.BuildInput(...)` for read-only access. |
 | `c.Key()` | The chat key (tenant, account, chat). |
 | `c.Reply(ctx, text)` | Sends text to the chat. |
+| `c.Notice(ctx, notice)` | Reports a change the command made (a note added, a setting changed). A person who typed the command gets `notice.Text`. The commands the bot runs in one reply are reported in one message instead, one short line per change, and a removal plus an addition of the same `Kind` read as an update. Use it for every successful change. |
 | `c.ReplyButtons(ctx, text, buttons...)` | Sends text with buttons (see "Buttons"). |
 | `c.ReplyMenus(ctx, text, footer, menus...)` | Sends text and a footer with list menus (see "Buttons"). |
 | `c.UpdateConfig(ctx, func(*agent.ConfigValues))` | Changes the chat config. Crash-safe (see "Changing config"). |

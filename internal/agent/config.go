@@ -61,9 +61,10 @@ type TriggerConfig struct {
 	// trigger is worth a response. Matches ignores it; the policy gate runs
 	// the judgment.
 	Smart bool
-	// SmartRules are group-admin rules, one per line, such as "someone
-	// sends a scam link". A message matching one wakes the Agent, and the
-	// Agent sees the rules in its chat information.
+	// SmartRules are group-admin rules, one per line, such as "Someone
+	// sends, shares or forwards a scam or phishing link.". A rule only
+	// describes the message: a match wakes the Agent, whose memory note for
+	// the rule says what to do.
 	SmartRules string
 }
 

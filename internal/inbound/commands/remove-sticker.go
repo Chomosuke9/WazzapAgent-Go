@@ -37,7 +37,8 @@ func runRemoveSticker(ctx context.Context, c *command.Context) error {
 	if !deleted {
 		return replyRemoveStickerCatalog(ctx, c, catalog, "This chat has no sticker named "+name+".")
 	}
-	return c.Reply(ctx, "Sticker "+name+" was removed.")
+	return c.Notice(ctx, command.Notice{Icon: "🖼️", Kind: "Sticker", Change: command.NoticeRemoved, Item: name,
+		Text: "Sticker " + name + " was removed."})
 }
 
 // replyRemoveStickerCatalog sends text followed by the chat's sticker names.

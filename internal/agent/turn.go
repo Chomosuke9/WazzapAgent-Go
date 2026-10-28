@@ -120,6 +120,13 @@ type EffectDispatcher interface {
 	DispatchEffect(context.Context, EffectDispatchRef) error
 }
 
+// EffectBatchDispatcher is an EffectDispatcher that dispatches one plan's
+// effects together, in order, stopping at the first error, so it can report
+// them together.
+type EffectBatchDispatcher interface {
+	DispatchEffects(context.Context, []EffectDispatchRef) error
+}
+
 type InvokeResult struct {
 	InvocationID  identity.InvocationID
 	ConfigVersion ConfigVersion

@@ -350,7 +350,7 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 	want := "<chat_state>\nWho may change each item, and when you may on your own, is in <chat_settings>.\n" +
 		"Settings of this chat (the command in brackets changes it):\n" +
 		"- Triggers [/trigger]: mention on, name off, reply to bot on, smart off\n" +
-		"  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and you follow it):\n" +
+		"  Group admin rules (inactive while smart is off; when active, a message matching one wakes you, and your memory note for it says what to do):\n" +
 		"  1. delete scam links\n  2. no spam\n" +
 		"- Moderation level [/permission]: 1 (delete messages)\n" +
 		"- Custom instructions [/prompt]: set, replacing the chat prompt (the text is in <prompt_override>)\n" +
@@ -365,7 +365,7 @@ func TestChatStateDescribesSettingsAndTasks(t *testing.T) {
 		t.Fatalf("chat state:\n%s\nwant:\n%s", got, want)
 	}
 	config.Triggers.Smart = true
-	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Group admin rules (a message matching one wakes you, and you follow it):\n  1.") {
+	if got := formatChatState(chat, config); !strings.Contains(got, "smart on\n  Group admin rules (a message matching one wakes you; your memory note for it says what to do):\n  1.") {
 		t.Fatalf("chat state with smart on:\n%s", got)
 	}
 	private := formatChatState(ChatContext{Kind: "private"}, ConfigSnapshot{})

@@ -141,3 +141,48 @@ func testKey(t *testing.T) agent.Key {
 	chatID, _ := identity.NewChatID()
 	return agent.Key{TenantID: tenantID, AccountID: accountID, ChatID: chatID}
 }
+
+func TestDispatchEffectsReportsCommandsOnceAfterTheLast(t *testing.T) {
+	store := &memoryStore{}
+	dispatcher, err := effect.NewDispatcher(store, &recordingAuthorizer{}, &recordingEffectSender{ready: true}, agent.SystemClock{})
+	if err != nil {
+		t.Fatalf("create dispatcher: %v", err)
+	}
+	commands := &batchingCommands{}
+	if err := dispatcher.BindCommandExecutor(commands); err != nil {
+		t.Fatalf("bind commands: %v", err)
+	}
+	request := durablePlan(t)
+	request.Effect = effect.RunCommand{Command: "/memory add likes cats"}
+	if _, err := dispatcher.Plan(context.Background(), request); err != nil {
+		t.Fatalf("plan command: %v", err)
+	}
+	ref := agent.EffectDispatchRef{Key: request.Ref.Key, EffectID: request.Ref.EffectID}
+	if err := dispatcher.DispatchEffects(context.Background(), []agent.EffectDispatchRef{ref}); err != nil {
+		t.Fatalf("dispatch effects: %v", err)
+	}
+	if want := []string{"begin", "run in batch", "report"}; fmt.Sprint(commands.events) != fmt.Sprint(want) {
+		t.Fatalf("events = %v, want %v", commands.events, want)
+	}
+}
+
+type batchKey struct{}
+
+type batchingCommands struct{ events []string }
+
+func (commands *batchingCommands) ExecuteCommandEffect(ctx context.Context, _ effect.Stored, _ effect.RunCommand) (string, error) {
+	if ctx.Value(batchKey{}) != nil {
+		commands.events = append(commands.events, "run in batch")
+	} else {
+		commands.events = append(commands.events, "run alone")
+	}
+	return "command", nil
+}
+
+func (commands *batchingCommands) BeginCommandBatch(ctx context.Context) (context.Context, func(context.Context) error) {
+	commands.events = append(commands.events, "begin")
+	return context.WithValue(ctx, batchKey{}, true), func(context.Context) error {
+		commands.events = append(commands.events, "report")
+		return nil
+	}
+}

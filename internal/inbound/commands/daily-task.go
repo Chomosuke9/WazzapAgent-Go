@@ -49,12 +49,13 @@ func runDailyTask(ctx context.Context, c *command.Context) error {
 	case err != nil:
 		return err
 	}
-	reply := fmt.Sprintf("Daily task added: every day at %02d:%02d.", minute/60, minute%60)
+	item := fmt.Sprintf("every day at %02d:%02d", minute/60, minute%60)
+	reply := "Daily task added: " + item + "."
 	if task.Code != "" {
 		reply = fmt.Sprintf("Daily task added: every day at %s (%s). ID: %s (/daily-task delete %s stops it).",
 			task.FireAt.Format("15:04"), dailyTaskZone(task.FireAt), task.Code, task.Code)
 	}
-	return c.Reply(ctx, reply)
+	return c.Notice(ctx, command.Notice{Icon: "📅", Kind: "Daily task", Change: command.NoticeAdded, Item: item, Text: reply})
 }
 
 var dailyTaskTimePattern = regexp.MustCompile(`^(\d{1,2})[:.](\d{2})$`)
@@ -100,6 +101,7 @@ func deleteDailyTask(ctx context.Context, c *command.Context, code string) error
 	if code == "" {
 		return c.Reply(ctx, "Usage: /daily-task delete <ID>. /daily-task list shows the IDs.")
 	}
+	item := dailyTaskTime(ctx, c, code)
 	deleted, err := c.CancelTask(ctx, code, true)
 	if err != nil {
 		return err
@@ -107,7 +109,23 @@ func deleteDailyTask(ctx context.Context, c *command.Context, code string) error
 	if !deleted {
 		return c.Reply(ctx, "No daily task has the ID "+code+". /daily-task list shows the IDs.")
 	}
-	return c.Reply(ctx, "Daily task "+code+" deleted.")
+	return c.Notice(ctx, command.Notice{Icon: "📅", Kind: "Daily task", Change: command.NoticeRemoved, Item: item,
+		Text: "Daily task " + code + " deleted."})
+}
+
+// dailyTaskTime says when the daily task with code runs, "every day at
+// 07:00", for a notice about it. It is the code when the task cannot be read.
+func dailyTaskTime(ctx context.Context, c *command.Context, code string) string {
+	tasks, err := c.Tasks(ctx)
+	if err != nil {
+		return code
+	}
+	for _, task := range tasks {
+		if task.Daily && strings.EqualFold(task.Code, code) {
+			return "every day at " + task.FireAt.Format("15:04")
+		}
+	}
+	return code
 }
 
 // dailyTaskMentions rewrites the raw WhatsApp mentions a person typed into
