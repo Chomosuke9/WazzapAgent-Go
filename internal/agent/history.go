@@ -43,7 +43,11 @@ type HistoryEntry struct {
 type HistoryCursor string
 
 type HistoryQuery struct {
-	Before              HistoryCursor
+	Before HistoryCursor
+	// ThroughInvocationID ends the page at this invocation's message. The
+	// bot's replies to earlier invocations that were stored after it (it
+	// arrived while they were being answered) are kept too, each right after
+	// the message it answers, so a page may hold more than Limit entries.
 	ThroughInvocationID identity.InvocationID
 	Limit               uint32
 }

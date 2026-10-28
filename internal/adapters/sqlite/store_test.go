@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -1179,5 +1180,71 @@ func assertSQLitePragma(t *testing.T, db *sql.DB, name, want string) {
 	}
 	if got != want {
 		t.Fatalf("PRAGMA %s = %q, want %q", name, got, want)
+	}
+}
+
+// A message that arrives while the bot is still answering an earlier one is
+// stored before that answer; its turn must still see the answer, placed
+// after the message it answers.
+func TestHistoryBoundedAtInvocationIncludesRepliesSentAfterIt(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	first := testCandidate(t, "late-reply-first", "15550000077@s.whatsapp.net")
+	claimedFirst, err := store.Inbound().ClaimAndResolveSender(ctx, first)
+	if err != nil {
+		t.Fatalf("claim first: %v", err)
+	}
+	key := agent.Key{TenantID: claimedFirst.Message.TenantID, AccountID: claimedFirst.Message.AccountID, ChatID: claimedFirst.Message.ChatID}
+	snapshot, err := store.Configs().LoadOrCreate(ctx, key, testDefaults(t))
+	if err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+	second := first
+	second.ProviderMessageID, second.Text = "late-reply-second", "are you there?"
+	claimedSecond, err := store.Inbound().ClaimAndResolveSender(ctx, second)
+	if err != nil {
+		t.Fatalf("claim second: %v", err)
+	}
+	userEntry := func(message conversation.IncomingMessage) agent.HistoryEntry {
+		return agent.HistoryEntry{
+			MessageID: message.ID, InvocationID: message.InvocationID,
+			Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: message.CausationID}, Role: agent.HistoryUser,
+			Sender:  &agent.SenderContext{ParticipantID: message.SenderID, Ref: message.SenderRef, DisplayName: message.SenderName},
+			Content: []agent.ContentPart{agent.TextPart{Text: message.Text}}, Delivery: agent.DeliveryNotStarted, CreatedAt: message.OccurredAt,
+		}
+	}
+	replyID, _ := identity.NewMessageID()
+	for _, entry := range []agent.HistoryEntry{
+		userEntry(claimedFirst.Message), userEntry(claimedSecond.Message),
+		{
+			MessageID: replyID, InvocationID: claimedFirst.Message.InvocationID,
+			Causation: agent.CausationRef{Kind: agent.CausationMessage, ID: claimedFirst.Message.CausationID}, Role: agent.HistoryAssistant,
+			Content: []agent.ContentPart{agent.TextPart{Text: "hi!"}}, Delivery: agent.DeliverySucceeded, CreatedAt: time.Now().UTC(),
+		},
+	} {
+		if err := store.History().Append(ctx, key, entry); err != nil {
+			t.Fatalf("append history: %v", err)
+		}
+	}
+	page, err := store.History().ListIfConfigVersion(ctx, key, snapshot.Version, agent.HistoryQuery{
+		Limit: 10, ThroughInvocationID: claimedSecond.Message.InvocationID,
+	})
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	var got []identity.MessageID
+	for _, entry := range page.Entries {
+		got = append(got, entry.MessageID)
+	}
+	want := []identity.MessageID{claimedFirst.Message.ID, replyID, claimedSecond.Message.ID}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("history = %v, want first, its reply, then second: %v", got, want)
+	}
+	// The first turn's own context still ends at its message.
+	page, err = store.History().ListIfConfigVersion(ctx, key, snapshot.Version, agent.HistoryQuery{
+		Limit: 10, ThroughInvocationID: claimedFirst.Message.InvocationID,
+	})
+	if err != nil || len(page.Entries) != 1 || page.Entries[0].MessageID != claimedFirst.Message.ID {
+		t.Fatalf("first turn history = %#v, err=%v", page.Entries, err)
 	}
 }

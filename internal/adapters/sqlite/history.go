@@ -96,50 +96,70 @@ func (store *HistoryStore) list(
 		args = append(args, through)
 	}
 	args = append(args, int64(query.Limit)+1)
-	rows, err := tx.QueryContext(ctx, `SELECT sequence, message_id, invocation_id, causation_kind,
-	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin, quoted_message_id,
-	    quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
-	    delivery_status, created_at_ms
+	loaded, err := queryHistoryEntries(ctx, tx, `SELECT `+historyEntryColumns+`
       FROM history_entries
       WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND sequence > ?`+bound+`
       ORDER BY sequence DESC LIMIT ?`, args...)
 	if err != nil {
-		return agent.HistoryPage{}, storageError("query history", err)
+		return agent.HistoryPage{}, err
 	}
-	defer rows.Close()
-	type sequencedEntry struct {
-		sequence int64
-		entry    agent.HistoryEntry
-	}
-	loaded := make([]sequencedEntry, 0, int(query.Limit)+1)
-	for rows.Next() {
-		entry, sequence, decodeErr := scanHistoryEntry(rows)
-		if decodeErr != nil {
-			return agent.HistoryPage{}, decodeErr
+	// A message that arrived while the bot was still answering an earlier one
+	// is stored before that answer, so bounding at it alone would hide the
+	// answer from its own turn, and the bot would answer the earlier message
+	// again. Turns run one at a time per chat, so every reply to an earlier
+	// invocation was sent before this one started.
+	var late []agent.HistoryEntry
+	if through > 0 {
+		lateRows, err := queryHistoryEntries(ctx, tx, `SELECT `+historyEntryColumns+`
+          FROM history_entries h
+          WHERE h.tenant_id = ? AND h.account_id = ? AND h.chat_id = ? AND h.sequence > ?
+            AND h.role = ? AND h.invocation_id <> ?
+            AND EXISTS (SELECT 1 FROM history_entries u
+              WHERE u.tenant_id = h.tenant_id AND u.account_id = h.account_id AND u.chat_id = h.chat_id
+                AND u.invocation_id = h.invocation_id AND u.role IN (?, ?) AND u.sequence > ? AND u.sequence <= ?)
+          ORDER BY h.sequence LIMIT ?`,
+			key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), through,
+			uint8(agent.HistoryAssistant), query.ThroughInvocationID.String(),
+			uint8(agent.HistoryUser), uint8(agent.HistorySystem), resetCutoff, through, int64(query.Limit))
+		if err != nil {
+			return agent.HistoryPage{}, err
 		}
-		loaded = append(loaded, sequencedEntry{sequence: sequence, entry: entry})
+		for _, row := range lateRows {
+			late = append(late, row.entry)
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return agent.HistoryPage{}, storageError("iterate history", err)
-	}
-	if err := rows.Close(); err != nil {
-		return agent.HistoryPage{}, storageError("close history rows", err)
-	}
-	messageIDs := make([]identity.MessageID, 0, len(loaded)*2)
-	for index := range loaded {
-		messageIDs = append(messageIDs, loaded[index].entry.MessageID)
-		if quote := loaded[index].entry.Quote; quote != nil && quote.Role == agent.HistoryUser {
+	messageIDs := make([]identity.MessageID, 0, (len(loaded)+len(late))*2)
+	addMessageIDs := func(entry agent.HistoryEntry) {
+		messageIDs = append(messageIDs, entry.MessageID)
+		if quote := entry.Quote; quote != nil && quote.Role == agent.HistoryUser {
 			messageIDs = append(messageIDs, quote.MessageID)
 		}
+	}
+	for index := range loaded {
+		addMessageIDs(loaded[index].entry)
+	}
+	for _, entry := range late {
+		addMessageIDs(entry)
 	}
 	bindings, err := loadMessageMentionContexts(ctx, tx, key, messageIDs)
 	if err != nil {
 		return agent.HistoryPage{}, err
 	}
+	hydrate := func(entry *agent.HistoryEntry) error {
+		hydrateHistoryMentions(entry, bindings)
+		if err := agent.ValidateHistoryEntry(*entry); err != nil {
+			return agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		}
+		return nil
+	}
 	for index := range loaded {
-		hydrateHistoryMentions(&loaded[index].entry, bindings)
-		if err := agent.ValidateHistoryEntry(loaded[index].entry); err != nil {
-			return agent.HistoryPage{}, agent.NewError(agent.ErrorIntegrityFailure, "decode history entry", err)
+		if err := hydrate(&loaded[index].entry); err != nil {
+			return agent.HistoryPage{}, err
+		}
+	}
+	for index := range late {
+		if err := hydrate(&late[index]); err != nil {
+			return agent.HistoryPage{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -153,11 +173,64 @@ func (store *HistoryStore) list(
 	for index := range loaded {
 		page.Entries[len(loaded)-1-index] = loaded[index].entry
 	}
+	page.Entries = placeLateReplies(page.Entries, late)
 	if more && len(loaded) > 0 {
 		cursor := encodeHistoryCursor(loaded[len(loaded)-1].sequence)
 		page.Next = &cursor
 	}
 	return page, nil
+}
+
+const historyEntryColumns = `sequence, message_id, invocation_id, causation_kind,
+	    causation_id, role, participant_id, sender_ref, sender_name, sender_is_admin, sender_is_super_admin, quoted_message_id,
+	    quoted_sequence, quoted_role, quoted_sender_ref, quoted_text, quoted_sender_is_admin, quoted_sender_is_super_admin, content_text,
+	    delivery_status, created_at_ms`
+
+type sequencedHistoryEntry struct {
+	sequence int64
+	entry    agent.HistoryEntry
+}
+
+func queryHistoryEntries(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]sequencedHistoryEntry, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, storageError("query history", err)
+	}
+	defer rows.Close()
+	var loaded []sequencedHistoryEntry
+	for rows.Next() {
+		entry, sequence, decodeErr := scanHistoryEntry(rows)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		loaded = append(loaded, sequencedHistoryEntry{sequence: sequence, entry: entry})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("iterate history", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, storageError("close history rows", err)
+	}
+	return loaded, nil
+}
+
+// placeLateReplies puts each reply, oldest first, right after the newest
+// entry of the invocation it answers. A reply whose invocation fell outside
+// entries is left out.
+func placeLateReplies(entries, late []agent.HistoryEntry) []agent.HistoryEntry {
+	for _, reply := range late {
+		at := -1
+		for index, entry := range entries {
+			if entry.InvocationID == reply.InvocationID {
+				at = index
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		entries = append(entries[:at+1], append([]agent.HistoryEntry{reply}, entries[at+1:]...)...)
+	}
+	return entries
 }
 
 func (store *HistoryStore) Append(ctx context.Context, key agent.Key, entry agent.HistoryEntry) error {
