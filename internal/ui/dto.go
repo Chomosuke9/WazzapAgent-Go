@@ -33,6 +33,8 @@ type SettingsValuesDTO struct {
 	TypeSafeEndpoint string `json:"typeSafeEndpoint"`
 	TypeSafeModel    string `json:"typeSafeModel"`
 
+	DirectInvokeAddress string `json:"directInvokeAddress"`
+
 	LLMTimeout       string `json:"llmTimeout"`
 	LLMConcurrency   uint32 `json:"llmConcurrency"`
 	MaxOutputTokens  uint32 `json:"maxOutputTokens"`
@@ -77,6 +79,7 @@ type SettingsValuesDTO struct {
 	FallbackAPIKeyConfigured  bool `json:"fallbackAPIKeyConfigured"`
 	LangSmithAPIKeyConfigured bool `json:"langSmithAPIKeyConfigured"`
 	TypeSafeAPIKeyConfigured  bool `json:"typeSafeAPIKeyConfigured"`
+	DirectInvokeKeyConfigured bool `json:"directInvokeKeyConfigured"`
 }
 
 // PublicSettingsDTO and SettingsDTO are descriptive aliases for generated
@@ -132,6 +135,7 @@ type SecretPatchDTO struct {
 	FallbackAPIKey  SecretUpdateDTO `json:"fallbackAPIKey"`
 	LangSmithAPIKey SecretUpdateDTO `json:"langSmithAPIKey"`
 	TypeSafeAPIKey  SecretUpdateDTO `json:"typeSafeAPIKey"`
+	DirectInvokeKey SecretUpdateDTO `json:"directInvokeKey"`
 }
 
 // SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
@@ -277,6 +281,7 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		StartOnLaunch: settings.StartOnLaunch, TenantID: settings.TenantID.String(), AccountID: settings.AccountID.String(),
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
 		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
+		DirectInvokeAddress: settings.DirectInvokeAddress, DirectInvokeKeyConfigured: values.DirectInvokeKeyConfigured,
 	}
 }
 
@@ -363,6 +368,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.OwnerJID, settings.ChatAllowlist = values.OwnerJID, append([]string(nil), values.ChatAllowlist...)
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
 	settings.FallbackEndpoint, settings.TypeSafeEndpoint, settings.TypeSafeModel = values.FallbackEndpoint, values.TypeSafeEndpoint, values.TypeSafeModel
+	settings.DirectInvokeAddress = values.DirectInvokeAddress
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
 	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers
@@ -401,6 +407,7 @@ func patchFromDTO(patch SettingsPatchDTO) (control.SettingsPatch, error) {
 		FallbackAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.FallbackAPIKey.Action), Value: patch.Secrets.FallbackAPIKey.Value},
 		LangSmithAPIKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LangSmithAPIKey.Action), Value: patch.Secrets.LangSmithAPIKey.Value},
 		TypeSafeAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.TypeSafeAPIKey.Action), Value: patch.Secrets.TypeSafeAPIKey.Value},
+		DirectInvokeKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.DirectInvokeKey.Action), Value: patch.Secrets.DirectInvokeKey.Value},
 	}}, nil
 }
 

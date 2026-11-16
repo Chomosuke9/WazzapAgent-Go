@@ -39,6 +39,7 @@ export function SettingsPage() {
   const [fallbackSecret, setFallbackSecret] = useState("");
   const [langSmithSecret, setLangSmithSecret] = useState("");
   const [typeSafeSecret, setTypeSafeSecret] = useState("");
+  const [directInvokeSecret, setDirectInvokeSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -95,6 +96,7 @@ export function SettingsPage() {
             fallbackAPIKey: fallbackSecret ? { action: "replace", value: fallbackSecret } : secretKeep(),
             langSmithAPIKey: langSmithSecret ? { action: "replace", value: langSmithSecret } : secretKeep(),
             typeSafeAPIKey: typeSafeSecret ? { action: "replace", value: typeSafeSecret } : secretKeep(),
+            directInvokeKey: directInvokeSecret ? { action: "replace", value: directInvokeSecret } : secretKeep(),
           },
         },
       });
@@ -104,6 +106,7 @@ export function SettingsPage() {
       setFallbackSecret("");
       setLangSmithSecret("");
       setTypeSafeSecret("");
+      setDirectInvokeSecret("");
       setSaved(true);
       await refreshRuntime();
     } catch (reason: unknown) {
@@ -223,6 +226,9 @@ export function SettingsPage() {
         <label><span>TypeSafe API key {draft.typeSafeAPIKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={typeSafeSecret} onChange={(event) => { setTypeSafeSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>TypeSafe endpoint</span><input value={draft.typeSafeEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" onChange={(event) => update("typeSafeEndpoint", event.target.value)} /></label>
         <label><span>TypeSafe model</span><input value={draft.typeSafeModel} placeholder="jev-latest" onChange={(event) => update("typeSafeModel", event.target.value)} /></label>
+        <label><span>Direct invoke key {draft.directInvokeKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={directInvokeSecret} onChange={(event) => { setDirectInvokeSecret(event.target.value); setSaved(false); }} /></label>
+        <label><span>Direct invoke address</span><input value={draft.directInvokeAddress} placeholder="127.0.0.1:8090" onChange={(event) => update("directInvokeAddress", event.target.value)} /></label>
+        <p className="muted small wide">Direct invoke lets another program make the bot send a message first: GET or POST /post?q=&lt;prompt&gt;&amp;jid=&lt;chat or phone number&gt; with the key in the X-Api-Key header. It is off until a key is saved, takes effect the next time the Agent starts, and stays on this computer unless you change the address. A request whose model call hits a rate limit or timeout is retried for up to 10 minutes.</p>
         <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint and model (Jev on System One by default). Leave either blank for the default.</p>
       </div>
 

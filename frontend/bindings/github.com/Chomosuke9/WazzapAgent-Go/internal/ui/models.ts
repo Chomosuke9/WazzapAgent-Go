@@ -120,6 +120,7 @@ export interface SecretPatchDTO {
     "fallbackAPIKey": SecretUpdateDTO;
     "langSmithAPIKey": SecretUpdateDTO;
     "typeSafeAPIKey": SecretUpdateDTO;
+    "directInvokeKey": SecretUpdateDTO;
 }
 
 export interface SecretUpdateDTO {
@@ -166,6 +167,7 @@ export interface SettingsValuesDTO {
     "fallbackEndpoint": string;
     "typeSafeEndpoint": string;
     "typeSafeModel": string;
+    "directInvokeAddress": string;
     "llmTimeout": string;
     "llmConcurrency": number;
     "maxOutputTokens": number;
@@ -208,6 +210,7 @@ export interface SettingsValuesDTO {
     "fallbackAPIKeyConfigured": boolean;
     "langSmithAPIKeyConfigured": boolean;
     "typeSafeAPIKeyConfigured": boolean;
+    "directInvokeKeyConfigured": boolean;
 }
 
 export interface SettingsViewDTO {

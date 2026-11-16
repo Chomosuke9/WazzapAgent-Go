@@ -38,6 +38,7 @@ type SecretPatch struct {
 	FallbackAPIKey  SecretUpdate
 	LangSmithAPIKey SecretUpdate
 	TypeSafeAPIKey  SecretUpdate
+	DirectInvokeKey SecretUpdate
 }
 
 // SettingsPatch is a complete public draft plus secret actions.
