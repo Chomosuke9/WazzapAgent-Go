@@ -304,7 +304,20 @@ func (dispatcher *Dispatcher) rescheduleDaily(task ScheduledTask) {
 // runTask answers task as a turn of its own. The task has no sender: the
 // model sees it as a system entry at the end of the chat transcript.
 func (dispatcher *Dispatcher) runTask(ctx context.Context, task ScheduledTask) error {
-	currentAgent, err := dispatcher.agents.AgentFor(ctx, task.Key)
+	return dispatcher.runSystemTurn(ctx, task.Key, agent.Invocation{
+		ID:          task.InvocationID,
+		Cause:       agent.CauseScheduledTask,
+		Causation:   agent.CausationRef{Kind: agent.CausationTask, ID: task.ID},
+		Input:       []agent.ContentPart{agent.TextPart{Text: scheduledTaskText(task)}},
+		RequestedAt: task.FireAt,
+	})
+}
+
+// runSystemTurn runs a turn that has no sender (a task or a direct request).
+// The caller supplies the invocation's identity and text; the chat's config,
+// permissions, commands, and stickers are read here.
+func (dispatcher *Dispatcher) runSystemTurn(ctx context.Context, key agent.Key, invocation agent.Invocation) error {
+	currentAgent, err := dispatcher.agents.AgentFor(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -315,14 +328,14 @@ func (dispatcher *Dispatcher) runTask(ctx context.Context, task ScheduledTask) e
 	var observedChat *agent.ChatContext
 	chatKind := conversation.ChatDirect
 	if dispatcher.options.ChatContext != nil {
-		if chat, readErr := dispatcher.options.ChatContext.ReadChatContext(ctx, task.Key); readErr == nil {
+		if chat, readErr := dispatcher.options.ChatContext.ReadChatContext(ctx, key); readErr == nil {
 			observedChat = &chat
 			if chat.Kind == "group" {
 				chatKind = conversation.ChatGroup
 			}
 		}
 	}
-	principal, err := policy.ModelPrincipal(task.Key, task.InvocationID)
+	principal, err := policy.ModelPrincipal(key, invocation.ID)
 	if err != nil {
 		return err
 	}
@@ -340,22 +353,15 @@ func (dispatcher *Dispatcher) runTask(ctx context.Context, task ScheduledTask) e
 	if err != nil {
 		return err
 	}
-	invocation := agent.Invocation{
-		ID:            task.InvocationID,
-		Cause:         agent.CauseScheduledTask,
-		Causation:     agent.CausationRef{Kind: agent.CausationTask, ID: task.ID},
-		Input:         []agent.ContentPart{agent.TextPart{Text: scheduledTaskText(task)}},
-		Capabilities:  capabilities,
-		Commands:      commandNames,
-		Stickers:      dispatcher.stickerNames(ctx, task.Key),
-		PolicyVersion: snapshot.Version,
-		RequestedAt:   task.FireAt,
-	}
-	_ = dispatcher.options.Activity.SetComposing(ctx, task.Key, true)
+	invocation.Capabilities = capabilities
+	invocation.Commands = commandNames
+	invocation.Stickers = dispatcher.stickerNames(ctx, key)
+	invocation.PolicyVersion = snapshot.Version
+	_ = dispatcher.options.Activity.SetComposing(ctx, key, true)
 	defer func() {
 		pauseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = dispatcher.options.Activity.SetComposing(pauseCtx, task.Key, false)
+		_ = dispatcher.options.Activity.SetComposing(pauseCtx, key, false)
 	}()
 	_, err = currentAgent.InvokeWith(ctx, invocation, snapshot, observedChat)
 	return err
@@ -369,4 +375,59 @@ func scheduledTaskText(task ScheduledTask) string {
 	}
 	return kind + " firing now. Carry it out in this chat now, in the chat's language, " +
 		"without asking for confirmation. To tag someone, use the @Name (senderRef) form. Task: " + task.Prompt
+}
+
+// DirectInvoke runs prompt as a turn of its own in the chat, now, and
+// returns once it is accepted: the turn runs in the background and its
+// failure is reported through Options.Report. Like a task it has no sender;
+// the model sees a system entry. A failing model call is retried, if the
+// model layer was given PersistModel, instead of the request being lost.
+func (dispatcher *Dispatcher) DirectInvoke(ctx context.Context, key agent.Key, prompt string) error {
+	if err := key.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(prompt) == "" || !utf8.ValidString(prompt) || len(prompt) > MaxTaskPromptBytes {
+		return agent.NewError(agent.ErrorInvalidArgument, "direct invoke", fmt.Errorf("prompt must be non-empty valid UTF-8 within %d bytes", MaxTaskPromptBytes))
+	}
+	invocationID, err := identity.NewInvocationID()
+	if err != nil {
+		return agent.NewError(agent.ErrorInternal, "direct invoke", err)
+	}
+	causationID, err := identity.NewCausationID()
+	if err != nil {
+		return agent.NewError(agent.ErrorInternal, "direct invoke", err)
+	}
+	dispatcher.mu.Lock()
+	if dispatcher.ctx.Err() != nil {
+		dispatcher.mu.Unlock()
+		return agent.NewError(agent.ErrorNotReady, "direct invoke", errors.New("the application is shutting down"))
+	}
+	dispatcher.turns.Add(1)
+	dispatcher.mu.Unlock()
+
+	release := func() {}
+	if dispatcher.options.PersistModel != nil {
+		release = dispatcher.options.PersistModel(invocationID)
+	}
+	invocation := agent.Invocation{
+		ID:          invocationID,
+		Cause:       agent.CauseDirectRequest,
+		Causation:   agent.CausationRef{Kind: agent.CausationRequest, ID: causationID},
+		Input:       []agent.ContentPart{agent.TextPart{Text: directInvokeText(prompt)}},
+		RequestedAt: dispatcher.options.Clock.Now(),
+	}
+	go func() {
+		defer dispatcher.turns.Done()
+		defer release()
+		if err := dispatcher.runSystemTurn(dispatcher.ctx, key, invocation); err != nil && dispatcher.ctx.Err() == nil {
+			dispatcher.options.Report(err)
+		}
+	}()
+	return nil
+}
+
+// directInvokeText is what the model reads for a direct invoke.
+func directInvokeText(prompt string) string {
+	return "Direct request firing now. Carry it out in this chat now, in the chat's language, " +
+		"without asking for confirmation. To tag someone, use the @Name (senderRef) form. Request: " + prompt
 }

@@ -448,6 +448,82 @@ func (store *InboundStore) ResolveChatAddress(ctx context.Context, key agent.Key
 	return address.String, nil
 }
 
+// ResolveChatByAddress finds the chat of this account whose provider address
+// is address. It reports ErrorNotFound for a chat the account has never seen.
+func (store *InboundStore) ResolveChatByAddress(ctx context.Context, tenantID identity.TenantID, accountID identity.AccountID, address string) (identity.ChatID, error) {
+	if tenantID.IsZero() || accountID.IsZero() || strings.TrimSpace(address) == "" || len(address) > 512 {
+		return identity.ChatID{}, agent.NewError(agent.ErrorInvalidArgument, "resolve chat by address", errors.New("identity and a bounded address are required"))
+	}
+	var id string
+	err := store.read.QueryRowContext(ctx, `SELECT id FROM chats
+      WHERE tenant_id = ? AND account_id = ? AND provider_address = ?`,
+		tenantID.String(), accountID.String(), address,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return identity.ChatID{}, agent.NewError(agent.ErrorNotFound, "resolve chat by address", errors.New("no such chat"))
+	}
+	if err != nil {
+		return identity.ChatID{}, storageError("resolve chat by address", err)
+	}
+	chatID, err := identity.ParseChatID(id)
+	if err != nil {
+		return identity.ChatID{}, agent.NewError(agent.ErrorIntegrityFailure, "resolve chat by address", err)
+	}
+	return chatID, nil
+}
+
+// EnsureChat returns the chat of this account at address, creating it when
+// no message has ever arrived from it. An existing chat is left untouched:
+// only the kind and allowlist flag of a new one are set here.
+func (store *InboundStore) EnsureChat(ctx context.Context, tenantID identity.TenantID, accountID identity.AccountID, address string, kind conversation.ChatKind, allowlisted bool, now time.Time) (identity.ChatID, error) {
+	if tenantID.IsZero() || accountID.IsZero() || strings.TrimSpace(address) == "" || len(address) > 512 ||
+		(kind != conversation.ChatDirect && kind != conversation.ChatGroup) {
+		return identity.ChatID{}, agent.NewError(agent.ErrorInvalidArgument, "ensure chat", errors.New("identity, a bounded address, and a chat kind are required"))
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return identity.ChatID{}, storageError("begin ensure chat", err)
+	}
+	defer tx.Rollback()
+	var existing string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM chats
+      WHERE tenant_id = ? AND account_id = ? AND provider_address = ?`,
+		tenantID.String(), accountID.String(), address,
+	).Scan(&existing)
+	if err == nil {
+		chatID, parseErr := identity.ParseChatID(existing)
+		if parseErr != nil {
+			return identity.ChatID{}, agent.NewError(agent.ErrorIntegrityFailure, "ensure chat", parseErr)
+		}
+		return chatID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return identity.ChatID{}, storageError("ensure chat", err)
+	}
+	chatID, err := identity.NewChatID()
+	if err != nil {
+		return identity.ChatID{}, agent.NewError(agent.ErrorInternal, "create chat ID", err)
+	}
+	nowMS := now.UnixMilli()
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT OR IGNORE INTO tenants(id, created_at_ms) VALUES (?, ?)", []any{tenantID.String(), nowMS}},
+		{"INSERT OR IGNORE INTO accounts(tenant_id, id, created_at_ms) VALUES (?, ?, ?)", []any{tenantID.String(), accountID.String(), nowMS}},
+		{`INSERT INTO chats(tenant_id, account_id, id, provider_address, kind, allowlisted, created_at_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`, []any{tenantID.String(), accountID.String(), chatID.String(), address, uint8(kind), boolInt(allowlisted), nowMS}},
+	} {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			return identity.ChatID{}, storageError("create chat", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return identity.ChatID{}, storageError("commit ensure chat", err)
+	}
+	return chatID, nil
+}
+
 // ResolveMessageTarget is an adapter-edge lookup. Its raw provider values
 // never enter the Agent, policy, effect, or model contracts.
 func (store *InboundStore) ResolveMessageTarget(

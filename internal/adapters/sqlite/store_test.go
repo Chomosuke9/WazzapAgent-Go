@@ -1248,3 +1248,37 @@ func TestHistoryBoundedAtInvocationIncludesRepliesSentAfterIt(t *testing.T) {
 		t.Fatalf("first turn history = %#v, err=%v", page.Entries, err)
 	}
 }
+
+func TestResolveChatByAddressFindsAKnownChatOnly(t *testing.T) {
+	store := openTestStore(t)
+	candidate := testCandidate(t, "provider-message-resolve", "15550000009@s.whatsapp.net")
+	claimed, err := store.Inbound().ClaimAndResolveSender(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("claim inbound: %v", err)
+	}
+	message := claimed.Message
+	chatID, err := store.Inbound().ResolveChatByAddress(context.Background(), message.TenantID, message.AccountID, candidate.ProviderChatAddress)
+	if err != nil || chatID != message.ChatID {
+		t.Fatalf("resolved chat = %v, err=%v", chatID, err)
+	}
+	if _, err := store.Inbound().ResolveChatByAddress(context.Background(), message.TenantID, message.AccountID, "0@s.whatsapp.net"); !agent.IsCode(err, agent.ErrorNotFound) {
+		t.Fatalf("unknown chat err = %v", err)
+	}
+}
+
+func TestEnsureChatCreatesOnceAndKeepsAnExistingChat(t *testing.T) {
+	store := openTestStore(t)
+	key := testKey(t)
+	first, err := store.Inbound().EnsureChat(context.Background(), key.TenantID, key.AccountID, "15550000077@s.whatsapp.net", conversation.ChatDirect, true, time.Now())
+	if err != nil || first.IsZero() {
+		t.Fatalf("create chat = %v, err=%v", first, err)
+	}
+	again, err := store.Inbound().EnsureChat(context.Background(), key.TenantID, key.AccountID, "15550000077@s.whatsapp.net", conversation.ChatDirect, false, time.Now())
+	if err != nil || again != first {
+		t.Fatalf("second ensure = %v, err=%v, want %v", again, err, first)
+	}
+	allowed, err := store.Inbound().IsChatAllowlisted(context.Background(), agent.Key{TenantID: key.TenantID, AccountID: key.AccountID, ChatID: first})
+	if err != nil || !allowed {
+		t.Fatalf("allowlisted = %v, err=%v; an existing chat must keep its flag", allowed, err)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/inbound"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/fallback"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/llm/persist"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/maintenance"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/observability"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
@@ -134,10 +135,12 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		}
 		candidates = append(candidates, fallback.Candidate{Name: "fallback-1", Model: fallbackModel})
 	}
-	model, err := fallback.New(candidates)
+	fallbackModel, err := fallback.New(candidates)
 	if err != nil {
 		return nil, err
 	}
+	// Turns that opt in (a direct invoke) keep retrying a failed model call.
+	model := persist.New(fallbackModel)
 	waAdapter, err := whatsapp.Open(ctx, whatsapp.Config{
 		TenantID: application.config.TenantID(), AccountID: application.config.AccountID(),
 		DeviceStorePath: application.config.WhatsAppDatabasePath(), OwnerAddress: application.config.OwnerAddress(),
@@ -201,8 +204,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
 		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		SmartDebounce: application.config.SmartTriggerDebounce(),
-		Activity:      waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
+		SmartDebounce: application.config.SmartTriggerDebounce(), PersistModel: model.Persist,
+		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
 		Report: func(err error) {
 			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
 		},

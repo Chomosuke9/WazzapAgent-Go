@@ -37,3 +37,6 @@ func SetMaxPending(limit int) (restore func()) {
 
 // NextDailyRun exposes nextDailyRun to tests.
 var NextDailyRun = nextDailyRun
+
+// WaitTurns blocks until every task or direct-invoke turn has finished.
+func (dispatcher *Dispatcher) WaitTurns() { dispatcher.turns.Wait() }

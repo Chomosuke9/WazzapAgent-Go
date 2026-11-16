@@ -41,6 +41,10 @@ type Options struct {
 	Location *time.Location
 	// Report receives errors from turns that run after Handle returned.
 	Report func(error)
+	// PersistModel, when set, asks the model layer to keep retrying a
+	// direct invoke's model call through rate limits and outages. The
+	// returned function releases it when the invocation is over.
+	PersistModel func(identity.InvocationID) (release func())
 }
 
 type StickerLister interface {

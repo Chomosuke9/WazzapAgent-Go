@@ -14,33 +14,35 @@ import (
 )
 
 const (
-	defaultDataDir           = "./data"
-	defaultHTTPAddress       = "127.0.0.1:8080"
-	defaultLogLevel          = "info"
-	defaultLogFormat         = "compact"
-	defaultShutdownTimeout   = 30 * time.Second
-	defaultLLMTimeout        = 60 * time.Second
-	defaultConnectTimeout    = 90 * time.Second
-	defaultSendTimeout       = 30 * time.Second
-	defaultInboundQueue      = 512
-	defaultInboundWorkers    = 4
-	defaultMessageDebounce   = 350 * time.Millisecond
-	defaultMessageBurstCap   = 8
-	defaultHistoryWindow     = 64
-	defaultMaxContextBytes   = 64 * 1024
-	defaultHistoryKeepLatest = 256
-	defaultHistoryMaxAge     = 30 * 24 * time.Hour
-	defaultLLMConcurrency    = 4
-	defaultMaxOutputTokens   = 1024
-	defaultMaxResponseBytes  = 16 * 1024
-	defaultProviderID        = "openai-compatible"
-	defaultPolicyID          = "part1-chat-gate.v1"
-	defaultTypeSafeEndpoint  = "https://api.typesafe.ai/v1/systemone"
-	defaultTypeSafeModel     = "jev-latest"
-	defaultWhatsAppEnabled   = true
-	defaultPairingOutput     = "terminal"
-	maxShutdownTimeout       = 5 * time.Minute
-	maxResponseBytes         = 16 * 1024
+	defaultDataDir     = "./data"
+	defaultHTTPAddress = "127.0.0.1:8080"
+	// Loopback by default: the endpoint can make the bot say anything.
+	defaultDirectInvokeAddress = "127.0.0.1:8090"
+	defaultLogLevel            = "info"
+	defaultLogFormat           = "compact"
+	defaultShutdownTimeout     = 30 * time.Second
+	defaultLLMTimeout          = 60 * time.Second
+	defaultConnectTimeout      = 90 * time.Second
+	defaultSendTimeout         = 30 * time.Second
+	defaultInboundQueue        = 512
+	defaultInboundWorkers      = 4
+	defaultMessageDebounce     = 350 * time.Millisecond
+	defaultMessageBurstCap     = 8
+	defaultHistoryWindow       = 64
+	defaultMaxContextBytes     = 64 * 1024
+	defaultHistoryKeepLatest   = 256
+	defaultHistoryMaxAge       = 30 * 24 * time.Hour
+	defaultLLMConcurrency      = 4
+	defaultMaxOutputTokens     = 1024
+	defaultMaxResponseBytes    = 16 * 1024
+	defaultProviderID          = "openai-compatible"
+	defaultPolicyID            = "part1-chat-gate.v1"
+	defaultTypeSafeEndpoint    = "https://api.typesafe.ai/v1/systemone"
+	defaultTypeSafeModel       = "jev-latest"
+	defaultWhatsAppEnabled     = true
+	defaultPairingOutput       = "terminal"
+	maxShutdownTimeout         = 5 * time.Minute
+	maxResponseBytes           = 16 * 1024
 )
 
 type LookupEnv func(string) (string, bool)
@@ -48,6 +50,8 @@ type LookupEnv func(string) (string, bool)
 type Snapshot struct {
 	dataDir              string
 	httpAddress          string
+	directInvokeAPIKey   string
+	directInvokeAddress  string
 	logLevel             string
 	logFormat            string
 	shutdownTimeout      time.Duration
@@ -188,8 +192,9 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		PolicyID: value(lookup, "WAZZAP_POLICY_ID"), LogLevel: value(lookup, "WAZZAP_LOG_LEVEL"),
 		LogFormat: value(lookup, "WAZZAP_LOG_FORMAT"), LangSmithAPIKey: value(lookup, "LANGSMITH_API_KEY"),
 		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"), TypeSafeEndpoint: value(lookup, "TYPESAFE_ENDPOINT"),
-		TypeSafeModel: value(lookup, "TYPESAFE_MODEL"),
-		DataDir:       value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
+		TypeSafeModel:      value(lookup, "TYPESAFE_MODEL"),
+		DirectInvokeAPIKey: value(lookup, "DIRECT_INVOKE_API_KEY"), DirectInvokeAddress: value(lookup, "DIRECT_INVOKE_ADDRESS"),
+		DataDir: value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
 		PairingOutput: value(lookup, "WAZZAP_PAIRING_OUTPUT"),
 	}
 	var err error
@@ -252,8 +257,15 @@ func (snapshot *Snapshot) loadRequiredIdentity(lookup LookupEnv) error {
 	return nil
 }
 
-func (snapshot Snapshot) DataDir() string                    { return snapshot.dataDir }
-func (snapshot Snapshot) HTTPAddress() string                { return snapshot.httpAddress }
+func (snapshot Snapshot) DataDir() string     { return snapshot.dataDir }
+func (snapshot Snapshot) HTTPAddress() string { return snapshot.httpAddress }
+
+// DirectInvokeAPIKey is the secret of the direct-invoke endpoint; empty
+// means the endpoint is off.
+func (snapshot Snapshot) DirectInvokeAPIKey() string { return snapshot.directInvokeAPIKey }
+
+// DirectInvokeAddress is the listen address of the direct-invoke endpoint.
+func (snapshot Snapshot) DirectInvokeAddress() string        { return snapshot.directInvokeAddress }
 func (snapshot Snapshot) LogLevel() string                   { return snapshot.logLevel }
 func (snapshot Snapshot) LogFormat() string                  { return snapshot.logFormat }
 func (snapshot Snapshot) ShutdownTimeout() time.Duration     { return snapshot.shutdownTimeout }
@@ -318,6 +330,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 	return map[string]any{
 		"data_dir":                snapshot.dataDir,
 		"http_address":            snapshot.httpAddress,
+		"direct_invoke_enabled":   snapshot.directInvokeAPIKey != "",
 		"log_level":               snapshot.logLevel,
 		"log_format":              snapshot.logFormat,
 		"shutdown_timeout":        snapshot.shutdownTimeout.String(),

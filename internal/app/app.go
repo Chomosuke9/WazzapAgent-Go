@@ -178,6 +178,9 @@ func (application *Application) run(parent context.Context, diagnostics bool, st
 	}
 
 	application.ready.Store(true)
+	if runtime != nil {
+		defer application.startDirectInvoke()()
+	}
 	close(application.started)
 	if listener != nil {
 		application.logger.Info("application started", "address", listener.Addr().String(), "config", application.config.Redacted())

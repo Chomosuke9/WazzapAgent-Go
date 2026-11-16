@@ -254,3 +254,32 @@ func TestNextDailyRun(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectInvokeRunsAsASystemTurnAndReplies(t *testing.T) {
+	fixture := newFixture(t)
+	key, _ := startTaskChat(t, fixture, "15550000041@s.whatsapp.net")
+	if err := fixture.handler.dispatcher.DirectInvoke(context.Background(), key, "tell them lunch is ready"); err != nil {
+		t.Fatalf("direct invoke: %v", err)
+	}
+	fixture.handler.dispatcher.WaitTurns()
+	if err := fixture.handler.settle(nil); err != nil {
+		t.Fatalf("direct invoke turn: %v", err)
+	}
+	if fixture.model.calls.Load() != 2 || fixture.sender.count() != 2 {
+		t.Fatalf("model/sender calls = %d/%d, want 2/2", fixture.model.calls.Load(), fixture.sender.count())
+	}
+	transcript := fixture.model.lastRequest().Messages[4].Content
+	if !strings.Contains(transcript, "SYSTEM: Direct request firing now.") || !strings.Contains(transcript, "Request: tell them lunch is ready") {
+		t.Fatalf("transcript = %s", transcript)
+	}
+}
+
+func TestDirectInvokeRejectsAnEmptyOrOversizedPrompt(t *testing.T) {
+	fixture := newFixture(t)
+	key, _ := startTaskChat(t, fixture, "15550000042@s.whatsapp.net")
+	for _, prompt := range []string{"", "  \n", strings.Repeat("a", inbound.MaxTaskPromptBytes+1)} {
+		if err := fixture.handler.dispatcher.DirectInvoke(context.Background(), key, prompt); !agent.IsCode(err, agent.ErrorInvalidArgument) {
+			t.Fatalf("prompt of %d bytes: err = %v", len(prompt), err)
+		}
+	}
+}
