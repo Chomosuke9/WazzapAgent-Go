@@ -62,17 +62,19 @@ func (effect DeleteMessage) Validate() error {
 }
 
 // Sticker sends the chat's catalog sticker Name, quoting QuotedMessageID
-// when it is set.
+// when it is set. With Reaction the sticker is not a message of its own
+// kind: it is attached to QuotedMessageID as a sticker reaction.
 type Sticker struct {
 	Name            string
 	QuotedMessageID identity.MessageID
+	Reaction        bool
 }
 
 func (Sticker) isEffect()                    {}
 func (Sticker) Kind() Kind                   { return KindSticker }
 func (Sticker) Capability() agent.Capability { return agent.CapabilityMessageSticker }
 func (effect Sticker) Validate() error {
-	intent := agent.EffectIntent{Kind: agent.EffectSticker, Sticker: effect.Name}
+	intent := agent.EffectIntent{Kind: agent.EffectSticker, Sticker: effect.Name, TargetMessageID: effect.QuotedMessageID, StickerReaction: effect.Reaction}
 	if err := intent.Validate(); err != nil {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate sticker effect", err)
 	}

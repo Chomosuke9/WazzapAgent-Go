@@ -225,18 +225,40 @@ var _ whatsmeow.File = (*boundedFile)(nil)
 
 // SendSticker sends a catalog or freshly made sticker, quoting quoted when set.
 func (adapter *Adapter) SendSticker(ctx context.Context, key agent.Key, value sticker.Sticker, quoted identity.MessageID) error {
-	_, err := adapter.sendSticker(ctx, key, value, quoted)
+	_, err := adapter.sendSticker(ctx, key, value, quoted, false)
 	return err
 }
 
-func (adapter *Adapter) sendSticker(ctx context.Context, key agent.Key, value sticker.Sticker, quoted identity.MessageID) (string, error) {
+// sendSticker sends value quoting quoted, or, with reaction set, attached to
+// quoted as a sticker reaction: a sticker message associated with its parent
+// message instead of quoting it.
+func (adapter *Adapter) sendSticker(ctx context.Context, key agent.Key, value sticker.Sticker, quoted identity.MessageID, reaction bool) (string, error) {
 	if len(value.WebP) == 0 && len(value.Lottie) == 0 {
 		return "", agent.NewError(agent.ErrorInvalidArgument, "send WhatsApp sticker", errors.New("sticker has no content"))
 	}
+	if reaction && quoted.IsZero() {
+		return "", agent.NewError(agent.ErrorInvalidArgument, "send WhatsApp sticker", errors.New("a sticker reaction needs a target message"))
+	}
 	result, err := adapter.send(ctx, key, "send WhatsApp sticker", func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
-		contextInfo, err := adapter.quoteContext(sendCtx, key, address, target, quoted)
-		if err != nil {
-			return nil, err
+		var contextInfo *waE2E.ContextInfo
+		var association *waE2E.MessageContextInfo
+		if reaction {
+			chat, messageID, sender, _, err := adapter.resolveEffectTarget(sendCtx, key, quoted)
+			if err != nil {
+				return nil, err
+			}
+			if chat != target.ToNonAD() {
+				return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve WhatsApp sticker reaction target", errors.New("target does not belong to destination chat"))
+			}
+			association = &waE2E.MessageContextInfo{MessageAssociation: &waE2E.MessageAssociation{
+				AssociationType:  waE2E.MessageAssociation_STICKER_ANNOTATION.Enum(),
+				ParentMessageKey: adapter.client.BuildMessageKey(chat, sender, messageID),
+			}}
+		} else {
+			var err error
+			if contextInfo, err = adapter.quoteContext(sendCtx, key, address, target, quoted); err != nil {
+				return nil, err
+			}
 		}
 		if len(value.Lottie) > 0 {
 			stored := &waE2E.StickerMessage{}
@@ -244,6 +266,11 @@ func (adapter *Adapter) sendSticker(ctx context.Context, key agent.Key, value st
 				return nil, agent.NewError(agent.ErrorIntegrityFailure, "decode Lottie sticker", err)
 			}
 			stored.ContextInfo = contextInfo
+			if reaction {
+				// A sticker reaction carries the Lottie sticker unwrapped.
+				stored.IsLottie = proto.Bool(true)
+				return &waE2E.Message{StickerMessage: stored, MessageContextInfo: association}, nil
+			}
 			return &waE2E.Message{LottieStickerMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{StickerMessage: stored}}}, nil
 		}
 		uploaded, err := adapter.client.Upload(sendCtx, value.WebP, whatsmeow.MediaImage)
@@ -262,7 +289,7 @@ func (adapter *Adapter) sendSticker(ctx context.Context, key agent.Key, value st
 			Height:        proto.Uint32(sticker.Size),
 			IsAnimated:    proto.Bool(value.Animated),
 			ContextInfo:   contextInfo,
-		}}, nil
+		}, MessageContextInfo: association}, nil
 	})
 	if err == nil && adapter.stickers != nil {
 		// The sticker is already sent: failing now would send it again, so a

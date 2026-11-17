@@ -17,6 +17,9 @@ type SubagentContext struct {
 	// Result is set only on the turn that delivers a finished task: its
 	// report and what the model may do with it.
 	Result string
+	// ResultImages are the finished task's image files, shown to the model
+	// on that same turn only.
+	ResultImages []ModelImage
 }
 
 // subagentRules tells the model when to delegate with execute_subtask and

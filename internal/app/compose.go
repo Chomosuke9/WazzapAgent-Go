@@ -195,7 +195,8 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
 			Context: contextBuilder, ChatContext: chatState, HistoryWindow: application.config.HistoryWindow(),
-			Model: model, Responses: dispatcher, Effects: effectDispatcher,
+			Images: messageImages{adapter: waAdapter, inbound: store.Inbound(), logger: application.logger},
+			Model:  model, Responses: dispatcher, Effects: effectDispatcher,
 			InvokeEvents: agentLogs, Clock: agent.SystemClock{},
 		})
 	})

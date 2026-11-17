@@ -463,7 +463,7 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 	case agent.EffectRunCommand:
 		return effect.RunCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
 	case agent.EffectSticker:
-		return effect.Sticker{Name: intent.Sticker, QuotedMessageID: intent.TargetMessageID}, nil
+		return effect.Sticker{Name: intent.Sticker, QuotedMessageID: intent.TargetMessageID, Reaction: intent.StickerReaction}, nil
 	case agent.EffectSubtask:
 		return effect.Subtask{Instruction: intent.Instruction, FileMessageIDs: append([]identity.MessageID(nil), intent.FileMessageIDs...), HighQuality: intent.HighQuality}, nil
 	default:

@@ -389,10 +389,11 @@ func (dispatcher *Dispatcher) runSystemTurnWith(ctx context.Context, key agent.K
 // SubagentTurn tells the model a sub-agent task finished: text is the
 // 【SUBTASK FINISHED】 system entry at the end of the transcript, and
 // resultBlock says, for this turn only, what the model may do with it. The
+// images are the task's image files, which the model sees on this turn. The
 // turn may call execute_subtask again to correct the result. Running it again
 // with the same invocation resumes the same turn. It implements
 // subagent.Turns.
-func (dispatcher *Dispatcher) SubagentTurn(ctx context.Context, key agent.Key, invocationID identity.InvocationID, causationID identity.CausationID, text, resultBlock string, requestedAt time.Time) (agent.InvokeResult, error) {
+func (dispatcher *Dispatcher) SubagentTurn(ctx context.Context, key agent.Key, invocationID identity.InvocationID, causationID identity.CausationID, text, resultBlock string, images []agent.ModelImage, requestedAt time.Time) (agent.InvokeResult, error) {
 	if err := key.Validate(); err != nil {
 		return agent.InvokeResult{}, err
 	}
@@ -432,7 +433,7 @@ func (dispatcher *Dispatcher) SubagentTurn(ctx context.Context, key agent.Key, i
 	}, func(chat *agent.ChatContext, invocation *agent.Invocation) {
 		// The task was started while the chat's sub-agent was on, so its
 		// result may be corrected even if the switch was turned off since.
-		chat.Subagent = &agent.SubagentContext{Result: resultBlock}
+		chat.Subagent = &agent.SubagentContext{Result: resultBlock, ResultImages: images}
 		invocation.Capabilities = invocation.Capabilities.With(agent.CapabilitySubagent)
 	})
 }

@@ -187,7 +187,7 @@ func (rec *recorder) MessageInput(_ context.Context, _ agent.Key, _ identity.Mes
 	return MessageInput{Paths: []string{path}, Text: "the caption"}, nil
 }
 
-func (rec *recorder) SubagentTurn(_ context.Context, key agent.Key, invocation identity.InvocationID, _ identity.CausationID, text, _ string, _ time.Time) (agent.InvokeResult, error) {
+func (rec *recorder) SubagentTurn(_ context.Context, key agent.Key, invocation identity.InvocationID, _ identity.CausationID, text, _ string, _ []agent.ModelImage, _ time.Time) (agent.InvokeResult, error) {
 	rec.mu.Lock()
 	rec.turns = append(rec.turns, text)
 	turn := rec.turn
