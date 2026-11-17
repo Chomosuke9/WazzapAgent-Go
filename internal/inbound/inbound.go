@@ -289,6 +289,9 @@ func (handler *Dispatcher) processBatch(
 	}
 	anchorMessage := messages[len(messages)-1]
 	key := agent.Key{TenantID: anchorMessage.TenantID, AccountID: anchorMessage.AccountID, ChatID: anchorMessage.ChatID}
+	if handler.options.Subagent != nil && handler.options.Subagent.Enabled(ctx, key) {
+		capabilities = capabilities.With(agent.CapabilitySubagent)
+	}
 	modelPrincipal, err := policy.ModelPrincipal(key, anchorMessage.InvocationID)
 	if err != nil {
 		return err

@@ -1298,6 +1298,30 @@ func resolveQuotedMessage(
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, storageError("resolve quoted sticker", err)
 	}
+	// A file the bot sent for a sub-agent task.
+	var fileSequence sql.NullInt64
+	err = query.QueryRowContext(ctx, `SELECT f.message_id, h.sequence, h.content_text
+      FROM subagent_files f
+      JOIN history_entries h ON h.tenant_id = f.tenant_id AND h.account_id = f.account_id
+        AND h.chat_id = f.chat_id AND h.message_id = f.message_id
+      WHERE f.tenant_id = ? AND f.account_id = ? AND f.chat_id = ? AND f.provider_receipt = ?
+      ORDER BY f.created_at_ms DESC LIMIT 1`,
+		tenantID.String(), accountID.String(), chatID.String(), providerMessageID,
+	).Scan(&responseValue, &fileSequence, &text)
+	if err == nil {
+		messageID, parseErr := identity.ParseMessageID(responseValue)
+		if parseErr != nil {
+			return nil, agent.NewError(agent.ErrorIntegrityFailure, "resolve quoted file", parseErr)
+		}
+		quote := &conversation.QuotedMessage{ID: messageID, Role: conversation.QuoteAssistant, Text: text}
+		if fileSequence.Valid && fileSequence.Int64 > 0 {
+			quote.Sequence = uint64(fileSequence.Int64)
+		}
+		return quote, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, storageError("resolve quoted file", err)
+	}
 	var messageValue, senderRefValue string
 	var messageSequence sql.NullInt64
 	var senderIsAdmin, senderIsSuperAdmin int64

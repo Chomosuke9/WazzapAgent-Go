@@ -17,6 +17,10 @@ type memoryLister interface {
 	Memories(context.Context, agent.Key) ([]agent.Memory, error)
 }
 
+type subagentContexts interface {
+	ChatContext(context.Context, agent.Key) *agent.SubagentContext
+}
+
 type stickerLister interface {
 	StickerNames(context.Context, agent.Key) ([]string, error)
 }
@@ -29,6 +33,8 @@ type chatStateReader struct {
 	tasks    scheduledTaskLister
 	memories memoryLister
 	stickers stickerLister
+	// subagent, when set, adds the chat's <subagent> block.
+	subagent subagentContexts
 }
 
 func (reader chatStateReader) ReadChatContext(ctx context.Context, key agent.Key) (agent.ChatContext, error) {
@@ -55,6 +61,9 @@ func (reader chatStateReader) ReadChatContext(ctx context.Context, key agent.Key
 	}
 	if chat.Stickers, err = reader.stickers.StickerNames(ctx, key); err != nil {
 		return agent.ChatContext{}, err
+	}
+	if reader.subagent != nil {
+		chat.Subagent = reader.subagent.ChatContext(ctx, key)
 	}
 	return chat, nil
 }

@@ -42,6 +42,7 @@ type conversationRuntime struct {
 	dispatcher       *action.Dispatcher
 	effectDispatcher *effect.Dispatcher
 	inboundDispatch  *inbound.Dispatcher
+	subagent         *subagentRuntime
 	maintenance      *maintenance.Worker
 	shutdownTimeout  time.Duration
 	tenantID         identity.TenantID
@@ -179,7 +180,17 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		return nil, err
 	}
 	agentLogs := observability.NewAgentLogger(application.logger)
+	subagentRuntime := application.openSubagent(store, waAdapter, gate.AuthorizeSend)
+	defer func() {
+		if resultErr != nil && subagentRuntime != nil {
+			_ = subagentRuntime.listener.Close()
+			subagentRuntime.coordinator.Close()
+		}
+	}()
 	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound(), memories: store.Memories(), stickers: store.Stickers()}
+	if subagentRuntime != nil {
+		chatState.subagent = subagentRuntime.coordinator
+	}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{
 			Defaults: defaults, ConfigStore: store.Configs(), HistoryStore: store.History(), Turns: store.Turns(),
@@ -194,6 +205,21 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 		Memory: store.Memories(), MessageMedia: store.Inbound(),
 		AssistantName: application.config.AssistantName(),
 	}
+	inboundOptions := inbound.Options{
+		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
+		SmartDebounce: application.config.SmartTriggerDebounce(), PersistModel: model.Persist,
+		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
+		Report: func(err error) {
+			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
+		},
+	}
+	if subagentRuntime != nil {
+		commandPlatform.Subagent = subagentRuntime.coordinator
+		inboundOptions.Subagent = subagentRuntime.coordinator
+		if err := effectDispatcher.BindSubtaskExecutor(subagentRuntime.coordinator); err != nil {
+			return nil, err
+		}
+	}
 	registry, err := agent.NewRegistry(factory)
 	if err != nil {
 		return nil, err
@@ -202,16 +228,13 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	if err != nil {
 		return nil, err
 	}
-	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inbound.Options{
-		Debounce: application.config.MessageDebounce(), BurstCap: application.config.MessageBurstCap(),
-		SmartDebounce: application.config.SmartTriggerDebounce(), PersistModel: model.Persist,
-		Activity: waAdapter, Events: agentLogs, ChatContext: chatState, Muter: waAdapter, Stickers: store.Stickers(),
-		Report: func(err error) {
-			application.logger.Error("inbound processing failed", "code", agent.CodeOf(err), "error", err)
-		},
-	})
+	inboundDispatch, err := inbound.NewDispatcher(store.Inbound(), registry, gate, commandResponses, application.metrics, commandPlatform, inboundOptions)
 	if err != nil {
 		return nil, err
+	}
+	if subagentRuntime != nil {
+		// A finished task is told to its chat as a turn of its own.
+		subagentRuntime.coordinator.BindTurns(inboundDispatch)
 	}
 	// Commands the model issues schedule tasks on the same dispatcher.
 	commandPlatform.Tasks = inboundDispatch
@@ -236,7 +259,7 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	}
 	adapterOwned = false
 	return &conversationRuntime{store: store, configDefaults: defaults, langSmith: langSmith, account: accountRuntime, adapter: waAdapter,
-		gate: gate, dispatcher: dispatcher, effectDispatcher: effectDispatcher, inboundDispatch: inboundDispatch, maintenance: maintenanceWorker,
+		gate: gate, dispatcher: dispatcher, effectDispatcher: effectDispatcher, inboundDispatch: inboundDispatch, subagent: subagentRuntime, maintenance: maintenanceWorker,
 		tenantID: application.config.TenantID(), logger: application.logger,
 		shutdownTimeout: application.config.ShutdownTimeout()}, nil
 }

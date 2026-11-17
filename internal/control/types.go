@@ -39,6 +39,8 @@ type SecretPatch struct {
 	LangSmithAPIKey SecretUpdate
 	TypeSafeAPIKey  SecretUpdate
 	DirectInvokeKey SecretUpdate
+	SubagentToken   SecretUpdate
+	SubagentWebhook SecretUpdate
 }
 
 // SettingsPatch is a complete public draft plus secret actions.

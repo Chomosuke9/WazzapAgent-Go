@@ -184,6 +184,10 @@ func messageContent(message *waE2E.Message) (string, *waE2E.ContextInfo) {
 		}
 		return media(conversation.PlaceholderVideo, video.GetCaption(), video.GetContextInfo())
 	}
+	// A document sent with a caption arrives inside a wrapper.
+	if document := message.GetDocumentWithCaptionMessage().GetMessage().GetDocumentMessage(); document != nil {
+		return media(conversation.PlaceholderDocument, document.GetCaption(), document.GetContextInfo())
+	}
 	if document := message.GetDocumentMessage(); document != nil {
 		return media(conversation.PlaceholderDocument, document.GetCaption(), document.GetContextInfo())
 	}

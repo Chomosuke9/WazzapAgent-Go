@@ -117,6 +117,9 @@ type Settings struct {
 	// DirectInvokeAddress is where that endpoint listens.
 	DirectInvokeAddress string
 
+	// Subagent connects the Agent to a WazzapSubAgents service.
+	Subagent SubagentSettings
+
 	DataDir       string
 	EnvFile       string
 	HTTPAddress   string
@@ -129,6 +132,30 @@ type Settings struct {
 	AccountID identity.AccountID
 }
 
+// SubagentSettings is the WazzapSubAgents connection. With no URL there is
+// no sub-agent: the model never gets execute_subtask.
+type SubagentSettings struct {
+	// URL is the service, such as http://localhost:5000.
+	URL string
+	// APIToken authenticates this app to the service.
+	APIToken string
+	// WebhookAddress is where the callback server listens.
+	WebhookAddress string
+	// WebhookURL is the callback URL the service is given; empty means
+	// http://<WebhookAddress>/subagent/callback.
+	WebhookURL string
+	// WebhookToken, when set, must come with every callback. It is required
+	// when the callback server listens beyond loopback.
+	WebhookToken string
+	// EnabledDefault is the sub-agent switch of chats nobody set with
+	// /subagent.
+	EnabledDefault bool
+	// WaitTimeout gives up a task that sent nothing for this long; MaxWait
+	// bounds a task's whole run.
+	WaitTimeout time.Duration
+	MaxWait     time.Duration
+}
+
 // PublicSettings is safe to send to a settings form. Secrets are represented
 // by configured flags and are never copied into this value.
 type PublicSettings struct {
@@ -138,6 +165,8 @@ type PublicSettings struct {
 	LangSmithAPIKeyConfigured bool
 	TypeSafeAPIKeyConfigured  bool
 	DirectInvokeKeyConfigured bool
+	SubagentTokenConfigured   bool
+	SubagentWebhookConfigured bool
 }
 
 // Public returns settings with all secret values removed.
@@ -149,12 +178,16 @@ func (settings Settings) Public() PublicSettings {
 		LangSmithAPIKeyConfigured: strings.TrimSpace(settings.LangSmithAPIKey) != "",
 		TypeSafeAPIKeyConfigured:  strings.TrimSpace(settings.TypeSafeAPIKey) != "",
 		DirectInvokeKeyConfigured: strings.TrimSpace(settings.DirectInvokeAPIKey) != "",
+		SubagentTokenConfigured:   strings.TrimSpace(settings.Subagent.APIToken) != "",
+		SubagentWebhookConfigured: strings.TrimSpace(settings.Subagent.WebhookToken) != "",
 	}
 	public.LLMAPIKey = ""
 	public.FallbackAPIKey = ""
 	public.LangSmithAPIKey = ""
 	public.TypeSafeAPIKey = ""
 	public.DirectInvokeAPIKey = ""
+	public.Subagent.APIToken = ""
+	public.Subagent.WebhookToken = ""
 	return public
 }
 
@@ -326,6 +359,7 @@ func SnapshotFromSettings(settings Settings) (Snapshot, error) {
 		dataDir: dataDir, httpAddress: nonempty(settings.HTTPAddress, defaultHTTPAddress),
 		directInvokeAPIKey:  strings.TrimSpace(settings.DirectInvokeAPIKey),
 		directInvokeAddress: nonempty(strings.TrimSpace(settings.DirectInvokeAddress), defaultDirectInvokeAddress),
+		subagent:            settings.Subagent.normalized(),
 		logLevel:            nonempty(strings.ToLower(settings.LogLevel), defaultLogLevel),
 		logFormat:           nonempty(strings.ToLower(settings.LogFormat), defaultLogFormat),
 		shutdownTimeout:     settings.ShutdownTimeout, whatsAppEnabled: settings.WhatsAppEnabled,
@@ -424,6 +458,10 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true}, {Key: "TYPESAFE_ENDPOINT", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeEndpoint},
 		{Key: "TYPESAFE_MODEL", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeModel},
 		{Key: "WAZZAP_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "WAZZAP_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "WAZZAP_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "WAZZAP_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
+		{Key: "SUBAGENT_URL", Group: "subagent", Kind: FieldString}, {Key: "SUBAGENT_API_TOKEN", Group: "subagent", Kind: FieldSecret, Sensitive: true},
+		{Key: "SUBAGENT_WEBHOOK_ADDRESS", Group: "subagent", Kind: FieldString, Default: defaultSubagentWebhookAddress}, {Key: "SUBAGENT_WEBHOOK_URL", Group: "subagent", Kind: FieldString},
+		{Key: "SUBAGENT_WEBHOOK_TOKEN", Group: "subagent", Kind: FieldSecret, Sensitive: true}, {Key: "SUBAGENT_ENABLED_DEFAULT", Group: "subagent", Kind: FieldBool, Default: "false"},
+		{Key: "SUBAGENT_WAIT_TIMEOUT", Group: "subagent", Kind: FieldDuration, Default: defaultSubagentWaitTimeout.String()}, {Key: "SUBAGENT_MAX_WAIT", Group: "subagent", Kind: FieldDuration, Default: defaultSubagentMaxWait.String()},
 		{Key: "DIRECT_INVOKE_API_KEY", Group: "direct-invoke", Kind: FieldSecret, Sensitive: true, CLIOnly: true}, {Key: "DIRECT_INVOKE_ADDRESS", Group: "direct-invoke", Kind: FieldString, CLIOnly: true, Default: defaultDirectInvokeAddress},
 		{Key: "WAZZAP_TENANT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "WAZZAP_ACCOUNT_ID", Group: "identity", Kind: FieldString, ReadOnly: true}, {Key: "NO_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true}, {Key: "FORCE_COLOR", Group: "terminal", Kind: FieldBool, CLIOnly: true},
 		{Key: "startOnLaunch", Group: "application", Kind: FieldBool, Default: "false"},
@@ -534,6 +572,9 @@ func draftIssues(settings Settings) []ReadinessIssue {
 		if _, err := resolveDataDir(settings.DataDir); err != nil {
 			add("WAZZAP_DATA_DIR", "invalid", "data directory is invalid")
 		}
+	}
+	if issue := settings.Subagent.issue(); issue != nil {
+		add(issue.Field, issue.Code, issue.Message)
 	}
 	if settings.DirectInvokeAddress != "" {
 		if err := validateHTTPAddress(settings.DirectInvokeAddress); err != nil {

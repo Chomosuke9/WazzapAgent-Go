@@ -82,12 +82,15 @@ const (
 	CapabilityMessageReact   Capability = "message.react"
 	CapabilityMessageDelete  Capability = "message.delete"
 	CapabilityMessageSticker Capability = "message.sticker"
+	// CapabilitySubagent offers the execute_subtask tool. It is granted per
+	// turn, to chats whose sub-agent is switched on.
+	CapabilitySubagent Capability = "subagent.execute"
 )
 
 // Valid reports whether capability is one the application knows.
 func (capability Capability) Valid() bool {
 	switch capability {
-	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageSticker:
+	case CapabilityCommandExecute, CapabilityMessageReact, CapabilityMessageDelete, CapabilityMessageSticker, CapabilitySubagent:
 		return true
 	default:
 		return false
@@ -118,6 +121,16 @@ func (set CapabilitySet) Has(wanted Capability) bool {
 }
 
 func (set CapabilitySet) Values() []Capability { return append([]Capability(nil), set.values...) }
+
+// With returns set plus capability.
+func (set CapabilitySet) With(capability Capability) CapabilitySet {
+	if !capability.Valid() || set.Has(capability) {
+		return CapabilitySet{values: set.Values()}
+	}
+	values := append(set.Values(), capability)
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	return CapabilitySet{values: values}
+}
 
 type ContentPart interface{ isContentPart() }
 
@@ -179,6 +192,10 @@ const (
 	// ProvenanceChatState is the <chat_state> block: this chat's settings
 	// and scheduled tasks, each with the command that changes it.
 	ProvenanceChatState
+	// ProvenanceSubagent is the <subagent> block: the execute_subtask rules,
+	// the chat's running or finished sub-agent task, and the messages that
+	// carry a file. It is sent only to chats whose sub-agent is on.
+	ProvenanceSubagent
 )
 
 type ModelMessage struct {
@@ -205,9 +222,12 @@ type ModelRequest struct {
 
 const MaxModelEffects = 8
 
+// MaxSubtaskFiles bounds the messages one execute_subtask call may attach.
+const MaxSubtaskFiles = 16
+
 // EffectIntent is a closed, provider-neutral model output: a reaction from
-// react_to_message, a sticker from send_sticker, or a command from
-// reply_message. Each is chat-bound by the
+// react_to_message, a sticker from send_sticker, a command from
+// reply_message, or a sub-agent task from execute_subtask. Each is chat-bound by the
 // invocation and validated before a durable effect row can be planned.
 type EffectKind uint8
 
@@ -215,6 +235,7 @@ const (
 	EffectReact      EffectKind = 1
 	EffectRunCommand EffectKind = 5
 	EffectSticker    EffectKind = 6
+	EffectSubtask    EffectKind = 7
 )
 
 type EffectIntent struct {
@@ -224,6 +245,12 @@ type EffectIntent struct {
 	Command         string
 	// Sticker is a catalog name. TargetMessageID is the optional quote.
 	Sticker string
+	// Instruction is the sub-agent's brief. FileMessageIDs are the chat
+	// messages whose file or text it gets; HighQuality asks for the stronger
+	// sub-agent model.
+	Instruction    string
+	FileMessageIDs []identity.MessageID
+	HighQuality    bool
 }
 
 // Capability is the tool capability the intent needs. RunCommand has none:
@@ -235,12 +262,28 @@ func (intent EffectIntent) Capability() Capability {
 		return CapabilityMessageReact
 	case EffectSticker:
 		return CapabilityMessageSticker
+	case EffectSubtask:
+		return CapabilitySubagent
 	}
 	return ""
 }
 
 func (intent EffectIntent) Validate() error {
+	if intent.Kind != EffectSubtask && (intent.Instruction != "" || len(intent.FileMessageIDs) != 0 || intent.HighQuality) {
+		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("only a sub-agent task carries an instruction or files"))
+	}
 	switch intent.Kind {
+	case EffectSubtask:
+		if strings.TrimSpace(intent.Instruction) == "" || !utf8.ValidString(intent.Instruction) || len(intent.Instruction) > MaxInputBytes ||
+			len(intent.FileMessageIDs) > MaxSubtaskFiles || !intent.TargetMessageID.IsZero() ||
+			intent.Emoji != "" || intent.Command != "" || intent.Sticker != "" {
+			return NewError(ErrorInvalidArgument, "validate sub-agent intent", fmt.Errorf("a bounded instruction and at most %d files are required", MaxSubtaskFiles))
+		}
+		for _, id := range intent.FileMessageIDs {
+			if id.IsZero() {
+				return NewError(ErrorInvalidArgument, "validate sub-agent intent", fmt.Errorf("file message ID is empty"))
+			}
+		}
 	case EffectReact:
 		if intent.TargetMessageID.IsZero() || strings.TrimSpace(intent.Emoji) == "" || !utf8.ValidString(intent.Emoji) || len(intent.Emoji) > 64 || intent.Command != "" || intent.Sticker != "" {
 			return NewError(ErrorInvalidArgument, "validate reaction intent", fmt.Errorf("target and bounded emoji are required"))

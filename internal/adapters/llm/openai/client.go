@@ -384,6 +384,51 @@ func toolSchema(capability agent.Capability, contextIDs, stickers []string) (str
 			return "", "", nil, false
 		}
 		return "send_sticker", "Send one sticker from this chat's sticker catalog, by exact name. It can stand in for a text reply or go with one.", parameters, true
+	case agent.CapabilitySubagent:
+		fileIDs := map[string]any{"type": "string"}
+		if len(contextIDs) > 0 {
+			fileIDs["enum"] = contextIDs
+		}
+		parameters, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"instruction": map[string]any{
+					"type":        "string",
+					"minLength":   1,
+					"description": "Clear, detailed instruction for the sub-agent to execute.",
+				},
+				"confirmation_text": map[string]any{
+					"type":      "string",
+					"minLength": 1,
+					"description": "A brief confirmation message to the user that SPECIFICALLY states what you are about to do, in their language and WhatsApp formatting. " +
+						"Say the concrete action, e.g. \"Converting your PDF to Word now\" or \"Fixing the chart colors and re-rendering it\". " +
+						"Do NOT send vague filler like \"let me try again\", \"ok\", or \"working on it\" — the user should understand what is happening from this message alone. " +
+						"On a correction re-dispatch, name what you are correcting (e.g. \"That came back in the wrong format — redoing it as a spreadsheet\"). " +
+						"If input files are provided via context_msg_ids, this message is sent as a reply to the last file ID to acknowledge receipt.",
+				},
+				"context_msg_ids": map[string]any{
+					"type":        []string{"array", "null"},
+					"items":       fileIDs,
+					"maxItems":    agent.MaxSubtaskFiles,
+					"description": "Six-digit IDs of the messages whose file (or text) the sub-agent needs: the message that HOLDS the file, never the request that refers to it. Use null when the task needs no input.",
+				},
+				"high_quality": map[string]any{
+					"type":        "boolean",
+					"description": "true for tasks requiring deeper reasoning, complex code generation, or analysis; false for routine tasks like format conversion or simple scripting.",
+				},
+			},
+			"required":             []string{"instruction", "confirmation_text", "context_msg_ids", "high_quality"},
+			"additionalProperties": false,
+		})
+		if err != nil {
+			return "", "", nil, false
+		}
+		return "execute_subtask", "Delegate a complex task to a sub-agent for execution. " +
+			"The sub-agent will process the instruction and return a report. " +
+			"Use this for tasks that require multi-step reasoning, file processing, or operations that are too complex for a single LLM call. " +
+			"Any output files the sub-agent produces are automatically attached and sent to the chat after your text reply, one file per WhatsApp message — you do not need to mention file paths or upload them yourself. " +
+			"Make the instruction precise so the sub-agent only emits files the user actually wants delivered. " +
+			"While a sub-agent task is running in this chat, calling this again steers that task instead of starting a new one.", parameters, true
 	case "message.react":
 		contextProperty := map[string]any{"type": "string", "minLength": 6, "maxLength": 6}
 		if len(contextIDs) > 0 {
@@ -426,6 +471,11 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 	replyText := content
 	var replyTo identity.MessageID
 	replySeen := false
+	// execute_subtask carries its own acknowledgement, which becomes the
+	// visible reply when reply_message was not called.
+	var confirmation string
+	var confirmationTo identity.MessageID
+	subtaskSeen := false
 	for _, call := range calls {
 		if call.Type != "function" || strings.TrimSpace(call.ID) != call.ID || call.ID == "" || len(call.ID) > 128 {
 			return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool call identity is invalid"))
@@ -453,6 +503,24 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 			effects = append(effects, commands...)
 			continue
 		}
+		if call.Function.Name == "execute_subtask" {
+			if !request.Capabilities.Has(agent.CapabilitySubagent) {
+				return "", identity.MessageID{}, nil, agent.NewError(agent.ErrorPermissionDenied, "decode model response", fmt.Errorf("tool capability was not granted"))
+			}
+			intent, text, target, ok, err := decodeSubtask(call.Function, request)
+			if err != nil {
+				return "", identity.MessageID{}, nil, err
+			}
+			// A task naming a file that is not in the chat is dropped together
+			// with its acknowledgement, and so is a second task: the first one
+			// would only be steered by it.
+			if !ok || subtaskSeen {
+				continue
+			}
+			subtaskSeen, confirmation, confirmationTo = true, text, target
+			effects = append(effects, agent.ModelEffect{CallID: call.ID, Intent: intent})
+			continue
+		}
 		intent, capability, err := decodeToolIntent(call.Function, request)
 		if err != nil {
 			return "", identity.MessageID{}, nil, err
@@ -462,7 +530,89 @@ func decodeModelOutput(content string, raw json.RawMessage, request agent.ModelR
 		}
 		effects = append(effects, agent.ModelEffect{CallID: call.ID, Intent: intent})
 	}
+	if confirmation != "" {
+		switch {
+		case strings.TrimSpace(replyText) == "":
+			replyText, replyTo = confirmation, confirmationTo
+		case !strings.Contains(replyText, confirmation) && len(replyText)+len(confirmation)+2 <= agent.MaxResponseBytes:
+			if plain, choices := action.SplitChoices(replyText); len(choices) > 0 {
+				replyText = action.WithChoices(plain+"\n\n"+confirmation, choices)
+			} else {
+				replyText += "\n\n" + confirmation
+			}
+		}
+	}
 	return replyText, replyTo, effects, nil
+}
+
+// maxSubtaskArgumentBytes bounds execute_subtask's arguments. An instruction
+// is a self-contained brief, so it may be much longer than a reply.
+const maxSubtaskArgumentBytes = agent.MaxInputBytes + 8*1024
+
+// decodeSubtask decodes one execute_subtask call into its intent, its
+// confirmation text and the message that text replies to (the last file, when
+// there is one). ok is false when the call must be ignored.
+func decodeSubtask(function completionFunction, request agent.ModelRequest) (agent.EffectIntent, string, identity.MessageID, bool, error) {
+	var args struct {
+		Instruction      string          `json:"instruction"`
+		ConfirmationText string          `json:"confirmation_text"`
+		ContextMessageID json.RawMessage `json:"context_msg_ids"`
+		HighQuality      json.RawMessage `json:"high_quality"`
+	}
+	if err := decodeArgumentsLimit(function.Arguments, &args, maxSubtaskArgumentBytes); err != nil {
+		return agent.EffectIntent{}, "", identity.MessageID{}, false, err
+	}
+	instruction := strings.TrimSpace(args.Instruction)
+	if instruction == "" || len(instruction) > agent.MaxInputBytes {
+		return agent.EffectIntent{}, "", identity.MessageID{}, false, nil
+	}
+	// Models send context_msg_ids as an array, a single string, or null, and
+	// some write "none" or "null" for no files.
+	var rawIDs []any
+	if json.Unmarshal(args.ContextMessageID, &rawIDs) != nil {
+		var single string
+		if json.Unmarshal(args.ContextMessageID, &single) == nil {
+			rawIDs = []any{single}
+		}
+	}
+	intent := agent.EffectIntent{Kind: agent.EffectSubtask, Instruction: instruction}
+	_ = json.Unmarshal(args.HighQuality, &intent.HighQuality)
+	seen := make(map[identity.MessageID]struct{}, len(rawIDs))
+	for _, raw := range rawIDs {
+		id, isText := raw.(string)
+		if raw == nil {
+			continue
+		}
+		if !isText {
+			return agent.EffectIntent{}, "", identity.MessageID{}, false, nil
+		}
+		id = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(id), "#"))
+		switch strings.ToLower(id) {
+		case "", "none", "null":
+			continue
+		}
+		target, ok := request.ContextMessages[id]
+		if !ok {
+			return agent.EffectIntent{}, "", identity.MessageID{}, false, nil
+		}
+		if _, duplicate := seen[target]; duplicate {
+			continue
+		}
+		seen[target] = struct{}{}
+		intent.FileMessageIDs = append(intent.FileMessageIDs, target)
+	}
+	if len(intent.FileMessageIDs) > agent.MaxSubtaskFiles {
+		return agent.EffectIntent{}, "", identity.MessageID{}, false, nil
+	}
+	var replyTo identity.MessageID
+	if len(intent.FileMessageIDs) > 0 {
+		replyTo = intent.FileMessageIDs[len(intent.FileMessageIDs)-1]
+	}
+	confirmation := strings.TrimSpace(args.ConfirmationText)
+	if len(confirmation) > agent.MaxResponseBytes {
+		confirmation = ""
+	}
+	return intent, confirmation, replyTo, true, nil
 }
 
 func decodeToolIntent(function completionFunction, request agent.ModelRequest) (agent.EffectIntent, agent.Capability, error) {
@@ -557,14 +707,20 @@ func decodeReplyMessage(call completionToolCall, request agent.ModelRequest, reg
 }
 
 func decodeArguments(raw json.RawMessage, value any) error {
-	if len(raw) > 4*1024 {
+	return decodeArgumentsLimit(raw, value, 4*1024)
+}
+
+func decodeArgumentsLimit(raw json.RawMessage, value any, limit int) error {
+	// The raw value is the arguments as a JSON string, so escaping may make
+	// it up to twice as long as the arguments themselves.
+	if len(raw) > 2*limit+2 {
 		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the allowed limit"))
 	}
 	var arguments string
 	if err := json.Unmarshal(raw, &arguments); err != nil {
 		return agent.NewError(agent.ErrorProviderFailure, "decode model response", err)
 	}
-	if len(arguments) > 4*1024 {
+	if len(arguments) > limit {
 		return agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool arguments exceed the allowed limit"))
 	}
 	decoder := json.NewDecoder(strings.NewReader(arguments))

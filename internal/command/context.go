@@ -246,6 +246,10 @@ func (c *Context) Memory() (MemoryStore, error) {
 	return c.invocation.Platform.Memory, nil
 }
 
+// Subagent returns the sub-agent switch, or nil when no sub-agent service is
+// configured.
+func (c *Context) Subagent() SubagentControl { return c.invocation.Platform.Subagent }
+
 // SendSticker sends a sticker to the chat as a reply to the command message.
 func (c *Context) SendSticker(ctx context.Context, value sticker.Sticker) error {
 	if c.invocation.Platform.Stickers == nil {

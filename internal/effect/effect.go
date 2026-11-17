@@ -24,6 +24,7 @@ const (
 	// Kinds 3 and 4 were mark-read and presence hints that nothing planned.
 	KindRunCommand Kind = 5
 	KindSticker    Kind = 6
+	KindSubtask    Kind = 7
 )
 
 type Effect interface {
@@ -90,6 +91,26 @@ func (command RunCommand) Validate() error {
 	if strings.TrimSpace(command.Command) != command.Command || !strings.HasPrefix(command.Command, "/") ||
 		len(command.Command) == 0 || len(command.Command) > agent.MaxInputBytes || !utf8.ValidString(command.Command) {
 		return agent.NewError(agent.ErrorInvalidArgument, "validate command", errors.New("registered command is malformed"))
+	}
+	return nil
+}
+
+// Subtask hands Instruction to the sub-agent, or steers the chat's running
+// sub-agent task with it. FileMessageIDs are the chat messages whose file or
+// text the sub-agent gets.
+type Subtask struct {
+	Instruction    string
+	FileMessageIDs []identity.MessageID
+	HighQuality    bool
+}
+
+func (Subtask) isEffect()                    {}
+func (Subtask) Kind() Kind                   { return KindSubtask }
+func (Subtask) Capability() agent.Capability { return agent.CapabilitySubagent }
+func (subtask Subtask) Validate() error {
+	intent := agent.EffectIntent{Kind: agent.EffectSubtask, Instruction: subtask.Instruction, FileMessageIDs: subtask.FileMessageIDs, HighQuality: subtask.HighQuality}
+	if err := intent.Validate(); err != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "validate sub-agent task", err)
 	}
 	return nil
 }
@@ -182,6 +203,13 @@ type CommandBatcher interface {
 	BeginCommandBatch(context.Context) (context.Context, func(context.Context) error)
 }
 
+// SubtaskExecutor starts or steers a sub-agent task. It returns once the
+// task is accepted; the task itself runs in the background. Like a command,
+// it does its own authorization: the chat's sub-agent switch.
+type SubtaskExecutor interface {
+	ExecuteSubtaskEffect(context.Context, Stored, Subtask) (string, error)
+}
+
 // Dispatcher runs effects from the outbox.
 type Dispatcher struct {
 	store      Store
@@ -189,6 +217,17 @@ type Dispatcher struct {
 	sender     Sender
 	clock      agent.Clock
 	commands   CommandExecutor
+	subtasks   SubtaskExecutor
+}
+
+// BindSubtaskExecutor sets the sub-agent. Without one, execute_subtask
+// effects fail.
+func (dispatcher *Dispatcher) BindSubtaskExecutor(executor SubtaskExecutor) error {
+	if executor == nil || dispatcher.subtasks != nil {
+		return agent.NewError(agent.ErrorInvalidArgument, "bind sub-agent executor", errors.New("one sub-agent executor is required"))
+	}
+	dispatcher.subtasks = executor
+	return nil
 }
 
 func (dispatcher *Dispatcher) BindCommandExecutor(executor CommandExecutor) error {
@@ -240,10 +279,15 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	// A command is checked only by its registry permission expression when it
 	// runs; every other effect is checked against the model's capabilities.
 	_, isCommand := stored.Request.Effect.(RunCommand)
+	subtask, isSubtask := stored.Request.Effect.(Subtask)
 	var authorizeErr error
 	if isCommand {
 		if dispatcher.commands == nil {
 			authorizeErr = agent.NewError(agent.ErrorNotReady, "dispatch command effect", errors.New("command executor is not bound"))
+		}
+	} else if isSubtask {
+		if dispatcher.subtasks == nil {
+			authorizeErr = agent.NewError(agent.ErrorPermissionDenied, "dispatch sub-agent effect", errors.New("no sub-agent is configured"))
 		}
 	} else {
 		authorizeErr = dispatcher.authorizer.AuthorizeEffect(ctx, policy.EffectAuthorization{
@@ -270,12 +314,14 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref Ref) error {
 	var executeErr error
 	if isCommand {
 		receipt, executeErr = dispatcher.commands.ExecuteCommandEffect(ctx, stored, stored.Request.Effect.(RunCommand))
+	} else if isSubtask {
+		receipt, executeErr = dispatcher.subtasks.ExecuteSubtaskEffect(ctx, stored, subtask)
 	} else {
 		receipt, executeErr = dispatcher.sender.ExecuteEffect(ctx, stored)
 	}
 	if executeErr != nil {
 		state := StateUnknownOutcome
-		if isCommand && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
+		if (isCommand || isSubtask) && agent.CodeOf(executeErr) == agent.ErrorPermissionDenied {
 			// The registry refused the command before it ran, so nothing happened.
 			state = StateFailedTerminal
 		}
