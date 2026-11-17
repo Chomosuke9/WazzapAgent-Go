@@ -247,6 +247,7 @@ type Inputs interface {
 type Turns interface {
 	// SubagentTurn runs one turn whose input is text, a system entry at the
 	// end of the chat's transcript; resultBlock is shown to the model for
-	// this turn only. The turn may call execute_subtask.
-	SubagentTurn(ctx context.Context, key agent.Key, invocationID identity.InvocationID, causationID identity.CausationID, text, resultBlock string, requestedAt time.Time) (agent.InvokeResult, error)
+	// this turn only, together with images, the task's image files. The
+	// turn may call execute_subtask.
+	SubagentTurn(ctx context.Context, key agent.Key, invocationID identity.InvocationID, causationID identity.CausationID, text, resultBlock string, images []agent.ModelImage, requestedAt time.Time) (agent.InvokeResult, error)
 }

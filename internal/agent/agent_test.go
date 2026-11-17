@@ -362,6 +362,86 @@ func TestRegistryReturnsOneAgentPerChat(t *testing.T) {
 	}
 }
 
+func TestOnlyCurrentMessagesSendTheirImagesToTheModel(t *testing.T) {
+	store := openStore(t)
+	model := &imageModel{}
+	key := newKey(t)
+	deps := dependencies(store, model, sentDispatcher{store: store})
+	reader := &fakeImages{}
+	deps.Images = reader
+	current, err := agent.New(context.Background(), key, deps)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	if _, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "【image】 what is this?")); err != nil {
+		t.Fatalf("image invoke: %v", err)
+	}
+	if len(model.images) != 1 || len(model.images[0]) != 1 {
+		t.Fatalf("images on the image turn = %#v", model.images)
+	}
+	image := model.images[0][0]
+	if image.Mime != "image/jpeg" || string(image.Data) != "jpeg" || !strings.HasPrefix(image.Label, "Image of message 【#") {
+		t.Fatalf("image = %#v", image)
+	}
+
+	// The image is now in an older message: the bot replied after it.
+	if _, err := current.Invoke(context.Background(), newInvocation(t, agent.InitialConfigVersion, "and now?")); err != nil {
+		t.Fatalf("follow-up invoke: %v", err)
+	}
+	if len(model.images) != 2 || len(model.images[1]) != 0 || reader.calls != 1 {
+		t.Fatalf("images on the follow-up turn = %#v, reads = %d", model.images, reader.calls)
+	}
+}
+
+func TestSubagentResultImagesReachTheModel(t *testing.T) {
+	store := openStore(t)
+	model := &imageModel{}
+	current := newAgent(t, newKey(t), store, model, &fakeDispatcher{})
+	invocation := newInvocation(t, agent.InitialConfigVersion, "【SUBTASK FINISHED】")
+	invocation.Sender = nil
+	invocation.Cause = agent.CauseSubagentResult
+	invocation.Causation.Kind = agent.CausationSubagent
+	chat := agent.ChatContext{Kind: "private", Subagent: &agent.SubagentContext{
+		Result:       "result",
+		ResultImages: []agent.ModelImage{{Label: "Sub-agent output file chart.png:", Mime: "image/png", Data: []byte("png")}},
+	}}
+	if _, err := current.InvokeWith(context.Background(), invocation, snapshotOf(t, current), &chat); err != nil {
+		t.Fatalf("result invoke: %v", err)
+	}
+	if len(model.images) != 1 || len(model.images[0]) != 1 || model.images[0][0].Label != "Sub-agent output file chart.png:" {
+		t.Fatalf("images = %#v", model.images)
+	}
+}
+
+type imageModel struct{ images [][]agent.ModelImage }
+
+func (model *imageModel) Generate(_ context.Context, request agent.ModelRequest) (agent.ModelResult, error) {
+	model.images = append(model.images, request.Images)
+	return agent.ModelResult{Text: "reply"}, nil
+}
+
+// sentDispatcher records every reply as sent, so it ends the burst it answers.
+type sentDispatcher struct{ store *appsqlite.Store }
+
+func (dispatcher sentDispatcher) Dispatch(ctx context.Context, ref agent.DispatchRef) (agent.DeliveryResult, error) {
+	now := time.Now().UTC()
+	if err := dispatcher.store.Actions().Start(ctx, ref, now); err != nil {
+		return agent.DeliveryResult{}, err
+	}
+	if err := dispatcher.store.Actions().Complete(ctx, ref, ref.ActionID.String(), now); err != nil {
+		return agent.DeliveryResult{}, err
+	}
+	return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliverySucceeded}, nil
+}
+
+type fakeImages struct{ calls int }
+
+func (reader *fakeImages) MessageImage(context.Context, agent.Key, identity.MessageID) (string, []byte, error) {
+	reader.calls++
+	return "image/jpeg", []byte("jpeg"), nil
+}
+
 func openStore(t *testing.T) *appsqlite.Store {
 	t.Helper()
 	store, err := appsqlite.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))

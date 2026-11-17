@@ -120,7 +120,8 @@ func (adapter *Adapter) ExecuteEffect(ctx context.Context, stored effect.Stored)
 	return string(response.ID), nil
 }
 
-// executeSticker sends a catalog sticker the model chose. A name that was
+// executeSticker sends a catalog sticker the model chose, as a message or as
+// a sticker reaction. A name that was
 // removed from the catalog since the model saw it fails without sending.
 func (adapter *Adapter) executeSticker(ctx context.Context, key agent.Key, value effect.Sticker) (string, error) {
 	if adapter.stickers == nil {
@@ -130,7 +131,7 @@ func (adapter *Adapter) executeSticker(ctx context.Context, key agent.Key, value
 	if err != nil {
 		return "", err
 	}
-	return adapter.sendSticker(ctx, key, stored, value.QuotedMessageID)
+	return adapter.sendSticker(ctx, key, stored, value.QuotedMessageID, value.Reaction)
 }
 
 func (adapter *Adapter) resolveChatTarget(ctx context.Context, key agent.Key) (types.JID, error) {

@@ -11,12 +11,15 @@ import (
 )
 
 type Dependencies struct {
-	Defaults      ConfigValues
-	ConfigStore   ConfigStore
-	HistoryStore  HistoryStore
-	Turns         TurnStore
-	Context       ContextBuilder
-	ChatContext   ChatContextReader
+	Defaults     ConfigValues
+	ConfigStore  ConfigStore
+	HistoryStore HistoryStore
+	Turns        TurnStore
+	Context      ContextBuilder
+	ChatContext  ChatContextReader
+	// Images, when set, lets the model see the images of the current
+	// messages. Without it every image stays a text placeholder.
+	Images        ImageReader
 	HistoryWindow uint32
 	Model         ModelInvoker
 	Responses     ResponseDispatcher
@@ -48,6 +51,7 @@ type Agent struct {
 	model         ModelInvoker
 	context       ContextBuilder
 	chatContext   ChatContextReader
+	images        ImageReader
 	historyWindow uint32
 	responses     ResponseDispatcher
 	effects       EffectDispatcher
@@ -91,6 +95,7 @@ func New(ctx context.Context, key Key, dependencies Dependencies) (*Agent, error
 		model:         dependencies.Model,
 		context:       dependencies.Context,
 		chatContext:   dependencies.ChatContext,
+		images:        dependencies.Images,
 		historyWindow: dependencies.HistoryWindow,
 		responses:     dependencies.Responses,
 		effects:       dependencies.Effects,
@@ -273,6 +278,7 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, config *C
 		Commands:         append([]string(nil), invocation.Commands...),
 		Stickers:         append([]string(nil), invocation.Stickers...),
 		ContextMessages:  contextMessageMap(page.Entries),
+		Images:           agent.currentImages(ctx, page.Entries, chat),
 	}
 	invokeStarted := time.Now()
 	chatName := chat.Name

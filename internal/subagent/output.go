@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
 // StagedFile is an output file ready to send to the chat.
@@ -221,6 +223,24 @@ func stageOutputs(files []OutputFile) (staged []StagedFile, skipped []SkippedFil
 		staged = append(staged, StagedFile{Path: file.Path, Name: final, Size: info.Size(), Mime: mimeType, Kind: kind})
 	}
 	return staged, skipped
+}
+
+// resultImages reads the staged image files for the model to look at on the
+// result turn. An image that is too large or unreadable is left out: the
+// model still reads its name in the file list.
+func resultImages(staged []StagedFile) []agent.ModelImage {
+	var images []agent.ModelImage
+	for _, file := range staged {
+		if file.Kind != "image" || file.Size > agent.MaxModelImageBytes || len(images) == agent.MaxModelImages {
+			continue
+		}
+		data, err := os.ReadFile(file.Path)
+		if err != nil || len(data) == 0 || len(data) > agent.MaxModelImageBytes {
+			continue
+		}
+		images = append(images, agent.ModelImage{Label: "Sub-agent output file " + file.Name + ":", Mime: file.Mime, Data: data})
+	}
+	return images
 }
 
 // safeFileName keeps only the base name of a name that came from outside, so

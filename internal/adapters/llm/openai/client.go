@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,29 +123,17 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
-	payload, err := json.Marshal(completionRequest{
-		Model:     request.Model.Model,
-		Messages:  messages,
-		MaxTokens: request.Model.MaxOutputTokens,
-		Stream:    false,
-		Tools:     tools,
-	})
-	if err != nil {
-		return agent.ModelResult{}, agent.NewError(agent.ErrorInternal, "encode model request", err)
+	httpResponse, err := client.post(requestCtx, request, messages, tools)
+	if err == nil && len(request.Images) > 0 && imagesRejected(httpResponse.StatusCode) {
+		// A model that cannot read images rejects the request. The turn then
+		// runs on the transcript alone, where each image is a placeholder.
+		_, _ = io.Copy(io.Discard, io.LimitReader(httpResponse.Body, maxProviderBodyBytes))
+		httpResponse.Body.Close()
+		messages[len(messages)-1].Images = nil
+		httpResponse, err = client.post(requestCtx, request, messages, tools)
 	}
-	httpRequest, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return agent.ModelResult{}, agent.NewError(agent.ErrorInternal, "create model request", err)
-	}
-	httpRequest.Header.Set("Authorization", "Bearer "+client.apiKey)
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "application/json")
-	httpResponse, err := client.httpClient.Do(httpRequest)
-	if err != nil {
-		if requestCtx.Err() != nil {
-			return agent.ModelResult{}, llmContextError("invoke model", requestCtx.Err())
-		}
-		return agent.ModelResult{}, agent.NewError(agent.ErrorUnavailable, "invoke model", providerRequestError(err))
+		return agent.ModelResult{}, err
 	}
 	defer httpResponse.Body.Close()
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
@@ -184,6 +173,46 @@ func (client *Client) Generate(ctx context.Context, request agent.ModelRequest) 
 		}
 	}
 	return agent.ModelResult{Text: text, ReplyToMessageID: replyTo, Effects: effects}, nil
+}
+
+// post sends one completion request. The caller closes the response body.
+func (client *Client) post(ctx context.Context, request agent.ModelRequest, messages []completionMessage, tools []completionTool) (*http.Response, error) {
+	payload, err := json.Marshal(completionRequest{
+		Model:     request.Model.Model,
+		Messages:  messages,
+		MaxTokens: request.Model.MaxOutputTokens,
+		Stream:    false,
+		Tools:     tools,
+	})
+	if err != nil {
+		return nil, agent.NewError(agent.ErrorInternal, "encode model request", err)
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, agent.NewError(agent.ErrorInternal, "create model request", err)
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+client.apiKey)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json")
+	httpResponse, err := client.httpClient.Do(httpRequest)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, llmContextError("invoke model", ctx.Err())
+		}
+		return nil, agent.NewError(agent.ErrorUnavailable, "invoke model", providerRequestError(err))
+	}
+	return httpResponse, nil
+}
+
+// imagesRejected reports whether status may mean the provider refused the
+// request for its images, rather than for the caller's credentials or rate.
+func imagesRejected(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge,
+		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
 }
 
 func (client *Client) messages(request agent.ModelRequest) ([]completionMessage, []completionTool, error) {
@@ -234,6 +263,8 @@ func (client *Client) messages(request agent.ModelRequest) ([]completionMessage,
 		}
 		messages = append(messages, completionMessage{Role: role, Content: message.Content})
 	}
+	// The images belong to the current messages, which end the transcript.
+	messages[len(messages)-1].Images = request.Images
 	return messages, tools, nil
 }
 
@@ -249,6 +280,30 @@ type completionMessage struct {
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
+	// Images follow Content in a request, each after its label.
+	Images []agent.ModelImage `json:"-"`
+}
+
+// MarshalJSON writes Content as plain text, or as text and image parts when
+// the message carries images.
+func (message completionMessage) MarshalJSON() ([]byte, error) {
+	type plain completionMessage
+	if len(message.Images) == 0 {
+		return json.Marshal(plain(message))
+	}
+	parts := []map[string]any{{"type": "text", "text": message.Content}}
+	for _, image := range message.Images {
+		if image.Label != "" {
+			parts = append(parts, map[string]any{"type": "text", "text": image.Label})
+		}
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{
+			"url": "data:" + image.Mime + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
+		}})
+	}
+	return json.Marshal(struct {
+		Role    string           `json:"role"`
+		Content []map[string]any `json:"content"`
+	}{message.Role, parts})
 }
 
 type completionResponse struct {
@@ -374,16 +429,20 @@ func toolSchema(capability agent.Capability, contextIDs, stickers []string) (str
 				"context_msg_id": map[string]any{
 					"type":        "string",
 					"enum":        append([]string{"none"}, contextIDs...),
-					"description": "Use none to send the sticker on its own; otherwise one exact six-digit ID from the supplied compact history to reply to.",
+					"description": "Use none to send the sticker on its own; otherwise one exact six-digit ID from the supplied compact history to reply to, or to react to when as_reaction is true.",
+				},
+				"as_reaction": map[string]any{
+					"type":        "boolean",
+					"description": "true attaches the sticker to the message context_msg_id as a sticker reaction, like an emoji reaction but with a sticker; it needs a context_msg_id. false sends the sticker as a message.",
 				},
 			},
-			"required":             []string{"sticker_name", "context_msg_id"},
+			"required":             []string{"sticker_name", "context_msg_id", "as_reaction"},
 			"additionalProperties": false,
 		})
 		if err != nil {
 			return "", "", nil, false
 		}
-		return "send_sticker", "Send one sticker from this chat's sticker catalog, by exact name. It can stand in for a text reply or go with one.", parameters, true
+		return "send_sticker", "Send one sticker from this chat's sticker catalog, by exact name, as a message or as a sticker reaction on a message. It can stand in for a text reply or go with one.", parameters, true
 	case agent.CapabilitySubagent:
 		fileIDs := map[string]any{"type": "string"}
 		if len(contextIDs) > 0 {
@@ -634,6 +693,7 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 		var args struct {
 			StickerName      string `json:"sticker_name"`
 			ContextMessageID string `json:"context_msg_id"`
+			AsReaction       bool   `json:"as_reaction"`
 		}
 		if err := decodeArguments(function.Arguments, &args); err != nil {
 			return agent.EffectIntent{}, "", err
@@ -641,8 +701,10 @@ func decodeToolIntent(function completionFunction, request agent.ModelRequest) (
 		if !slices.Contains(request.Stickers, args.StickerName) {
 			return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("sticker is not in the chat's catalog"))
 		}
-		// Like reply_message, an unknown anchor only drops the quote.
-		return agent.EffectIntent{Kind: agent.EffectSticker, Sticker: args.StickerName, TargetMessageID: request.ContextMessages[args.ContextMessageID]}, agent.CapabilityMessageSticker, nil
+		// Like reply_message, an unknown anchor only drops the quote. A
+		// reaction with no message to attach to goes out as a plain sticker.
+		target := request.ContextMessages[args.ContextMessageID]
+		return agent.EffectIntent{Kind: agent.EffectSticker, Sticker: args.StickerName, TargetMessageID: target, StickerReaction: args.AsReaction && !target.IsZero()}, agent.CapabilityMessageSticker, nil
 	default:
 		return agent.EffectIntent{}, "", agent.NewError(agent.ErrorProviderFailure, "decode model response", fmt.Errorf("tool name is not declared"))
 	}

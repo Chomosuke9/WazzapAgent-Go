@@ -336,6 +336,7 @@ type effectPayload struct {
 	Emoji       string               `json:"emoji,omitempty"`
 	Command     string               `json:"command,omitempty"`
 	Sticker     string               `json:"sticker,omitempty"`
+	Reaction    bool                 `json:"reaction,omitempty"`
 	Instruction string               `json:"instruction,omitempty"`
 	Files       []string             `json:"files,omitempty"`
 	HighQuality bool                 `json:"high_quality,omitempty"`
@@ -360,7 +361,7 @@ func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
 	case effect.RunCommand:
 		target, payload.Command = typed.TargetMessageID, typed.Command
 	case effect.Sticker:
-		target, payload.Sticker = typed.QuotedMessageID, typed.Name
+		target, payload.Sticker, payload.Reaction = typed.QuotedMessageID, typed.Name, typed.Reaction
 	case effect.Subtask:
 		payload.Instruction, payload.HighQuality = typed.Instruction, typed.HighQuality
 		for _, id := range typed.FileMessageIDs {
@@ -410,7 +411,7 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 	case effect.KindRunCommand:
 		value = effect.RunCommand{Command: payload.Command, TargetMessageID: targetID}
 	case effect.KindSticker:
-		value = effect.Sticker{Name: payload.Sticker, QuotedMessageID: targetID}
+		value = effect.Sticker{Name: payload.Sticker, QuotedMessageID: targetID, Reaction: payload.Reaction}
 	case effect.KindSubtask:
 		subtask := effect.Subtask{Instruction: payload.Instruction, HighQuality: payload.HighQuality}
 		for _, raw := range payload.Files {

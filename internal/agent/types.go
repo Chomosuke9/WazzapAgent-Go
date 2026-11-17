@@ -218,6 +218,9 @@ type ModelRequest struct {
 	Commands         []string
 	Stickers         []string
 	ContextMessages  map[string]identity.MessageID
+	// Images are the images of the current messages, oldest first. They go
+	// with the transcript; older messages' images are never sent.
+	Images []ModelImage
 }
 
 const MaxModelEffects = 8
@@ -243,8 +246,11 @@ type EffectIntent struct {
 	TargetMessageID identity.MessageID
 	Emoji           string
 	Command         string
-	// Sticker is a catalog name. TargetMessageID is the optional quote.
-	Sticker string
+	// Sticker is a catalog name. TargetMessageID is the optional quote, or
+	// with StickerReaction the message the sticker is attached to as a
+	// sticker reaction.
+	Sticker         string
+	StickerReaction bool
 	// Instruction is the sub-agent's brief. FileMessageIDs are the chat
 	// messages whose file or text it gets; HighQuality asks for the stronger
 	// sub-agent model.
@@ -271,6 +277,9 @@ func (intent EffectIntent) Capability() Capability {
 func (intent EffectIntent) Validate() error {
 	if intent.Kind != EffectSubtask && (intent.Instruction != "" || len(intent.FileMessageIDs) != 0 || intent.HighQuality) {
 		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("only a sub-agent task carries an instruction or files"))
+	}
+	if intent.StickerReaction && (intent.Kind != EffectSticker || intent.TargetMessageID.IsZero()) {
+		return NewError(ErrorInvalidArgument, "validate effect intent", fmt.Errorf("a sticker reaction needs a sticker and a target message"))
 	}
 	switch intent.Kind {
 	case EffectSubtask:

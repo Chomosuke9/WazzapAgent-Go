@@ -530,7 +530,7 @@ func (coordinator *Coordinator) deliverOnce(ctx context.Context, sessionID strin
 	}
 	finished := finishedLines(task.Report, completed, formatFileList(staged, skipped), task.Result.ContentDropped, len(staged) > 0)
 
-	replied, turnErr := coordinator.resultTurn(ctx, task, finished)
+	replied, turnErr := coordinator.resultTurn(ctx, task, finished, staged)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -585,10 +585,11 @@ func (coordinator *Coordinator) sendPart(ctx context.Context, sessionID, part st
 	})
 }
 
-// resultTurn runs the model on the finished task. It reports whether the
+// resultTurn runs the model on the finished task, showing it the task's
+// image files. It reports whether the
 // model replied with text. The turn is the task's own invocation, so running
 // it again after a failure resumes it instead of answering twice.
-func (coordinator *Coordinator) resultTurn(ctx context.Context, task Task, finished string) (bool, error) {
+func (coordinator *Coordinator) resultTurn(ctx context.Context, task Task, finished string, staged []StagedFile) (bool, error) {
 	done, err := coordinator.store.DeliveryPartDone(ctx, coordinator.tenantID, task.SessionID, "turn")
 	if err != nil {
 		return false, err
@@ -604,6 +605,7 @@ func (coordinator *Coordinator) resultTurn(ctx context.Context, task Task, finis
 	if turns == nil {
 		return false, agent.NewError(agent.ErrorNotReady, "deliver sub-agent result", errors.New("no turn runner is bound"))
 	}
+	images := resultImages(staged)
 	var result agent.InvokeResult
 	for attempt := range turnAttempts {
 		if attempt > 0 {
@@ -611,7 +613,7 @@ func (coordinator *Coordinator) resultTurn(ctx context.Context, task Task, finis
 				return false, err
 			}
 		}
-		result, err = turns.SubagentTurn(ctx, task.Key, task.InvocationID, task.CausationID, finished, resultBlock(finished), task.EndedAt)
+		result, err = turns.SubagentTurn(ctx, task.Key, task.InvocationID, task.CausationID, finished, resultBlock(finished), images, task.EndedAt)
 		if err == nil || !agent.RetryableGeneration(err) || ctx.Err() != nil {
 			break
 		}

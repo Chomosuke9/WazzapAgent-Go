@@ -62,6 +62,36 @@ func TestSendStickerDecodesToStickerEffect(t *testing.T) {
 	}
 }
 
+func TestSendStickerDecodesStickerReaction(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet(agent.CapabilityMessageSticker)
+	request.Stickers = []string{"wave"}
+
+	raw := json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"sticker_name\":\"wave\",\"context_msg_id\":\"000001\",\"as_reaction\":true}"}},` +
+		`{"id":"call_2","type":"function","function":{"name":"send_sticker","arguments":"{\"sticker_name\":\"wave\",\"context_msg_id\":\"none\",\"as_reaction\":true}"}}]`)
+	_, _, effects, err := decodeModelOutput("", raw, request, inbound.CommandRegistry())
+	if err != nil || len(effects) != 2 {
+		t.Fatalf("decode = %#v, err=%v", effects, err)
+	}
+	if !effects[0].Intent.StickerReaction || effects[0].Intent.TargetMessageID != request.CurrentMessageID {
+		t.Fatalf("sticker reaction = %#v", effects[0].Intent)
+	}
+	// With no message to attach to, the sticker is sent as a message.
+	if effects[1].Intent.StickerReaction || !effects[1].Intent.TargetMessageID.IsZero() {
+		t.Fatalf("reaction without a target = %#v", effects[1].Intent)
+	}
+	for _, effect := range effects {
+		if err := effect.Validate(request.Capabilities); err != nil {
+			t.Fatalf("validate %#v: %v", effect, err)
+		}
+	}
+	orphan := agent.EffectIntent{Kind: agent.EffectSticker, Sticker: "wave", StickerReaction: true}
+	if err := orphan.Validate(); err == nil {
+		t.Fatal("a sticker reaction without a target was accepted")
+	}
+}
+
 func TestSendStickerRejectsNamesOutsideTheCatalogAndUngrantedCapability(t *testing.T) {
 	providerID, _ := identity.ParseProviderID("openai-compatible")
 	request := modelRequest(t, providerID)
