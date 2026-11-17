@@ -18,31 +18,35 @@ const (
 	defaultHTTPAddress = "127.0.0.1:8080"
 	// Loopback by default: the endpoint can make the bot say anything.
 	defaultDirectInvokeAddress = "127.0.0.1:8090"
-	defaultLogLevel            = "info"
-	defaultLogFormat           = "compact"
-	defaultShutdownTimeout     = 30 * time.Second
-	defaultLLMTimeout          = 60 * time.Second
-	defaultConnectTimeout      = 90 * time.Second
-	defaultSendTimeout         = 30 * time.Second
-	defaultInboundQueue        = 512
-	defaultInboundWorkers      = 4
-	defaultMessageDebounce     = 350 * time.Millisecond
-	defaultMessageBurstCap     = 8
-	defaultHistoryWindow       = 64
-	defaultMaxContextBytes     = 64 * 1024
-	defaultHistoryKeepLatest   = 256
-	defaultHistoryMaxAge       = 30 * 24 * time.Hour
-	defaultLLMConcurrency      = 4
-	defaultMaxOutputTokens     = 1024
-	defaultMaxResponseBytes    = 16 * 1024
-	defaultProviderID          = "openai-compatible"
-	defaultPolicyID            = "part1-chat-gate.v1"
-	defaultTypeSafeEndpoint    = "https://api.typesafe.ai/v1/systemone"
-	defaultTypeSafeModel       = "jev-latest"
-	defaultWhatsAppEnabled     = true
-	defaultPairingOutput       = "terminal"
-	maxShutdownTimeout         = 5 * time.Minute
-	maxResponseBytes           = 16 * 1024
+	// The sub-agent webhook also listens on loopback unless told otherwise.
+	defaultSubagentWebhookAddress = "127.0.0.1:8081"
+	defaultSubagentWaitTimeout    = 15 * time.Minute
+	defaultSubagentMaxWait        = 2 * time.Hour
+	defaultLogLevel               = "info"
+	defaultLogFormat              = "compact"
+	defaultShutdownTimeout        = 30 * time.Second
+	defaultLLMTimeout             = 60 * time.Second
+	defaultConnectTimeout         = 90 * time.Second
+	defaultSendTimeout            = 30 * time.Second
+	defaultInboundQueue           = 512
+	defaultInboundWorkers         = 4
+	defaultMessageDebounce        = 350 * time.Millisecond
+	defaultMessageBurstCap        = 8
+	defaultHistoryWindow          = 64
+	defaultMaxContextBytes        = 64 * 1024
+	defaultHistoryKeepLatest      = 256
+	defaultHistoryMaxAge          = 30 * 24 * time.Hour
+	defaultLLMConcurrency         = 4
+	defaultMaxOutputTokens        = 1024
+	defaultMaxResponseBytes       = 16 * 1024
+	defaultProviderID             = "openai-compatible"
+	defaultPolicyID               = "part1-chat-gate.v1"
+	defaultTypeSafeEndpoint       = "https://api.typesafe.ai/v1/systemone"
+	defaultTypeSafeModel          = "jev-latest"
+	defaultWhatsAppEnabled        = true
+	defaultPairingOutput          = "terminal"
+	maxShutdownTimeout            = 5 * time.Minute
+	maxResponseBytes              = 16 * 1024
 )
 
 type LookupEnv func(string) (string, bool)
@@ -52,6 +56,7 @@ type Snapshot struct {
 	httpAddress          string
 	directInvokeAPIKey   string
 	directInvokeAddress  string
+	subagent             SubagentSettings
 	logLevel             string
 	logFormat            string
 	shutdownTimeout      time.Duration
@@ -194,6 +199,11 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		TypeSafeAPIKey: value(lookup, "TYPESAFE_API_KEY"), TypeSafeEndpoint: value(lookup, "TYPESAFE_ENDPOINT"),
 		TypeSafeModel:      value(lookup, "TYPESAFE_MODEL"),
 		DirectInvokeAPIKey: value(lookup, "DIRECT_INVOKE_API_KEY"), DirectInvokeAddress: value(lookup, "DIRECT_INVOKE_ADDRESS"),
+		Subagent: SubagentSettings{
+			URL: value(lookup, "SUBAGENT_URL"), APIToken: value(lookup, "SUBAGENT_API_TOKEN"),
+			WebhookAddress: value(lookup, "SUBAGENT_WEBHOOK_ADDRESS"), WebhookURL: value(lookup, "SUBAGENT_WEBHOOK_URL"),
+			WebhookToken: value(lookup, "SUBAGENT_WEBHOOK_TOKEN"),
+		},
 		DataDir: value(lookup, "WAZZAP_DATA_DIR"), HTTPAddress: value(lookup, "WAZZAP_HTTP_ADDRESS"),
 		PairingOutput: value(lookup, "WAZZAP_PAIRING_OUTPUT"),
 	}
@@ -202,6 +212,9 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		return Settings{}, err
 	}
 	if settings.AgentEnabled, err = parseBool(lookup, "WAZZAP_AGENT_ENABLED", settings.WhatsAppEnabled); err != nil {
+		return Settings{}, err
+	}
+	if settings.Subagent.EnabledDefault, err = parseBool(lookup, "SUBAGENT_ENABLED_DEFAULT", false); err != nil {
 		return Settings{}, err
 	}
 	if settings.PolicyRevision, err = parseUint(lookup, "WAZZAP_POLICY_REVISION", 0, 1, ^uint64(0)); err != nil {
@@ -217,6 +230,7 @@ func SettingsFromEnv(lookup LookupEnv) (Settings, error) {
 		{"WAZZAP_CONNECT_TIMEOUT", &settings.ConnectTimeout}, {"WAZZAP_SEND_TIMEOUT", &settings.SendTimeout},
 		{"WAZZAP_MESSAGE_DEBOUNCE", &settings.MessageDebounce}, {"WAZZAP_HISTORY_MAX_AGE", &settings.HistoryMaxAge},
 		{"WAZZAP_SMART_TRIGGER_DEBOUNCE", &settings.SmartTriggerDebounce},
+		{"SUBAGENT_WAIT_TIMEOUT", &settings.Subagent.WaitTimeout}, {"SUBAGENT_MAX_WAIT", &settings.Subagent.MaxWait},
 	}
 	for _, field := range durations {
 		if *field.target, err = parseDuration(lookup, field.key, 0, time.Duration(1<<63-1)); err != nil {
@@ -263,6 +277,10 @@ func (snapshot Snapshot) HTTPAddress() string { return snapshot.httpAddress }
 // DirectInvokeAPIKey is the secret of the direct-invoke endpoint; empty
 // means the endpoint is off.
 func (snapshot Snapshot) DirectInvokeAPIKey() string { return snapshot.directInvokeAPIKey }
+
+// Subagent is the WazzapSubAgents connection; its URL is empty when there is
+// no sub-agent.
+func (snapshot Snapshot) Subagent() SubagentSettings { return snapshot.subagent }
 
 // DirectInvokeAddress is the listen address of the direct-invoke endpoint.
 func (snapshot Snapshot) DirectInvokeAddress() string        { return snapshot.directInvokeAddress }
@@ -331,6 +349,7 @@ func (snapshot Snapshot) Redacted() map[string]any {
 		"data_dir":                snapshot.dataDir,
 		"http_address":            snapshot.httpAddress,
 		"direct_invoke_enabled":   snapshot.directInvokeAPIKey != "",
+		"subagent_configured":     snapshot.subagent.URL != "",
 		"log_level":               snapshot.logLevel,
 		"log_format":              snapshot.logFormat,
 		"shutdown_timeout":        snapshot.shutdownTimeout.String(),

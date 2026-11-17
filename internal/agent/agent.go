@@ -142,6 +142,11 @@ func (agent *Agent) BuildInput(ctx context.Context, version ConfigVersion, curre
 	return messages, nil
 }
 
+// ReadChatContext reads the chat's current metadata, as a turn would.
+func (agent *Agent) ReadChatContext(ctx context.Context) (ChatContext, error) {
+	return agent.chatContext.ReadChatContext(ctx, agent.key)
+}
+
 func (agent *Agent) Invoke(ctx context.Context, invocation Invocation) (InvokeResult, error) {
 	return agent.invoke(ctx, invocation, nil, nil)
 }
@@ -533,6 +538,11 @@ func validateModelResult(result ModelResult, capabilities CapabilitySet, context
 				return Errorf(ErrorProviderFailure, "validate model result", "model effect target is outside supplied history")
 			}
 		}
+		for _, fileMessageID := range planned.Intent.FileMessageIDs {
+			if _, ok := allowedTargets[fileMessageID]; !ok {
+				return Errorf(ErrorProviderFailure, "validate model result", "sub-agent file is outside supplied history")
+			}
+		}
 		if _, exists := callIDs[planned.CallID]; exists {
 			return Errorf(ErrorProviderFailure, "validate model result", "provider duplicated a tool call ID")
 		}
@@ -553,7 +563,11 @@ func cloneInvocation(invocation Invocation) Invocation {
 }
 
 func cloneModelEffects(effects []ModelEffect) []ModelEffect {
-	return append([]ModelEffect(nil), effects...)
+	cloned := append([]ModelEffect(nil), effects...)
+	for index := range cloned {
+		cloned[index].Intent.FileMessageIDs = append([]identity.MessageID(nil), cloned[index].Intent.FileMessageIDs...)
+	}
+	return cloned
 }
 
 func contextError(operation string, err error) error {

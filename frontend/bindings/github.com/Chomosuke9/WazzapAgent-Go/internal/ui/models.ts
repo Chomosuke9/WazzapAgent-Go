@@ -121,6 +121,8 @@ export interface SecretPatchDTO {
     "langSmithAPIKey": SecretUpdateDTO;
     "typeSafeAPIKey": SecretUpdateDTO;
     "directInvokeKey": SecretUpdateDTO;
+    "subagentToken": SecretUpdateDTO;
+    "subagentWebhookToken": SecretUpdateDTO;
 }
 
 export interface SecretUpdateDTO {
@@ -168,6 +170,12 @@ export interface SettingsValuesDTO {
     "typeSafeEndpoint": string;
     "typeSafeModel": string;
     "directInvokeAddress": string;
+    "subagentURL": string;
+    "subagentWebhookAddress": string;
+    "subagentWebhookURL": string;
+    "subagentEnabledDefault": boolean;
+    "subagentWaitTimeout": string;
+    "subagentMaxWait": string;
     "llmTimeout": string;
     "llmConcurrency": number;
     "maxOutputTokens": number;
@@ -211,6 +219,8 @@ export interface SettingsValuesDTO {
     "langSmithAPIKeyConfigured": boolean;
     "typeSafeAPIKeyConfigured": boolean;
     "directInvokeKeyConfigured": boolean;
+    "subagentTokenConfigured": boolean;
+    "subagentWebhookTokenConfigured": boolean;
 }
 
 export interface SettingsViewDTO {

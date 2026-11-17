@@ -464,6 +464,8 @@ func modelEffectPayload(intent agent.EffectIntent) (effect.Effect, error) {
 		return effect.RunCommand{Command: intent.Command, TargetMessageID: intent.TargetMessageID}, nil
 	case agent.EffectSticker:
 		return effect.Sticker{Name: intent.Sticker, QuotedMessageID: intent.TargetMessageID}, nil
+	case agent.EffectSubtask:
+		return effect.Subtask{Instruction: intent.Instruction, FileMessageIDs: append([]identity.MessageID(nil), intent.FileMessageIDs...), HighQuality: intent.HighQuality}, nil
 	default:
 		return nil, agent.NewError(agent.ErrorInvalidArgument, "convert model effect", errors.New("effect kind is invalid"))
 	}

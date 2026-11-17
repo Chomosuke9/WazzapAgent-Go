@@ -48,6 +48,9 @@ type ChatContext struct {
 	// Location is the bot's time zone. Message times, task times and daily
 	// tasks all use it; nil means UTC.
 	Location *time.Location
+	// Subagent is set for chats whose sub-agent is on; it adds the
+	// <subagent> block to the model's context.
+	Subagent *SubagentContext
 }
 
 func (chat ChatContext) location() *time.Location {
@@ -150,6 +153,12 @@ func (builder *DeterministicContextBuilder) Build(request ContextBuildRequest) (
 		Role: ModelUser, Provenance: ProvenanceChatState,
 		Content: formatChatState(request.Chat, request.Config),
 	})
+	if request.Chat.Subagent != nil {
+		messages = append(messages, ModelMessage{
+			Role: ModelUser, Provenance: ProvenanceSubagent,
+			Content: formatSubagentContext(*request.Chat.Subagent, request.History, builder.assistantName),
+		})
+	}
 	type builtHistoryEntry struct {
 		rendered     string
 		invocationID identity.InvocationID
@@ -583,6 +592,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	overrideCount := 0
 	chatInformationCount := 0
 	chatStateCount := 0
+	subagentCount := 0
 	historyTranscriptCount := 0
 	promptPhase := true
 	for _, message := range messages {
@@ -622,6 +632,11 @@ func ValidateModelMessages(messages []ModelMessage) error {
 			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0 &&
 				strings.HasPrefix(message.Content, "<chat_state>\n") && strings.HasSuffix(message.Content, "\n</chat_state>")
 			promptPhase = false
+		case ProvenanceSubagent:
+			subagentCount++
+			valid = message.Role == ModelUser && historyTranscriptCount == 0 && currentCount == 0 &&
+				strings.HasPrefix(message.Content, "<subagent>\n")
+			promptPhase = false
 		case ProvenanceHistorySystem:
 			promptPhase = false
 			valid = message.Role == ModelSystem
@@ -654,7 +669,7 @@ func ValidateModelMessages(messages []ModelMessage) error {
 	} else if currentCount != 1 || last != ProvenanceCurrentUser {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("current user message must be last"))
 	}
-	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 || chatStateCount > 1 {
+	if basePromptCount > 1 || overrideCount > 1 || chatInformationCount > 1 || chatStateCount > 1 || subagentCount > 1 {
 		return NewError(ErrorInvalidArgument, "validate model messages", fmt.Errorf("model prompts must not be duplicated"))
 	}
 	return nil

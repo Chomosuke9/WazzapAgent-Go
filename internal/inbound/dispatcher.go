@@ -35,6 +35,8 @@ type Options struct {
 	Muter MuteDeleter
 	// Stickers, when set, lists the chat's sticker catalog for send_sticker.
 	Stickers StickerLister
+	// Subagent, when set, says which chats get the execute_subtask tool.
+	Subagent SubagentSwitch
 	Clock    agent.Clock
 	// Location is the time zone daily tasks follow. Nil means the
 	// computer's own (time.Local, which the TZ variable can set).
@@ -49,6 +51,11 @@ type Options struct {
 
 type StickerLister interface {
 	StickerNames(context.Context, agent.Key) ([]string, error)
+}
+
+// SubagentSwitch reports whether a chat's sub-agent is on.
+type SubagentSwitch interface {
+	Enabled(context.Context, agent.Key) bool
 }
 
 type MuteDeleter interface {

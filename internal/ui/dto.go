@@ -35,6 +35,13 @@ type SettingsValuesDTO struct {
 
 	DirectInvokeAddress string `json:"directInvokeAddress"`
 
+	SubagentURL            string `json:"subagentURL"`
+	SubagentWebhookAddress string `json:"subagentWebhookAddress"`
+	SubagentWebhookURL     string `json:"subagentWebhookURL"`
+	SubagentEnabledDefault bool   `json:"subagentEnabledDefault"`
+	SubagentWaitTimeout    string `json:"subagentWaitTimeout"`
+	SubagentMaxWait        string `json:"subagentMaxWait"`
+
 	LLMTimeout       string `json:"llmTimeout"`
 	LLMConcurrency   uint32 `json:"llmConcurrency"`
 	MaxOutputTokens  uint32 `json:"maxOutputTokens"`
@@ -80,6 +87,8 @@ type SettingsValuesDTO struct {
 	LangSmithAPIKeyConfigured bool `json:"langSmithAPIKeyConfigured"`
 	TypeSafeAPIKeyConfigured  bool `json:"typeSafeAPIKeyConfigured"`
 	DirectInvokeKeyConfigured bool `json:"directInvokeKeyConfigured"`
+	SubagentTokenConfigured   bool `json:"subagentTokenConfigured"`
+	SubagentWebhookConfigured bool `json:"subagentWebhookTokenConfigured"`
 }
 
 // PublicSettingsDTO and SettingsDTO are descriptive aliases for generated
@@ -136,6 +145,8 @@ type SecretPatchDTO struct {
 	LangSmithAPIKey SecretUpdateDTO `json:"langSmithAPIKey"`
 	TypeSafeAPIKey  SecretUpdateDTO `json:"typeSafeAPIKey"`
 	DirectInvokeKey SecretUpdateDTO `json:"directInvokeKey"`
+	SubagentToken   SecretUpdateDTO `json:"subagentToken"`
+	SubagentWebhook SecretUpdateDTO `json:"subagentWebhookToken"`
 }
 
 // SettingsPatchDTO accepts Draft as its canonical field. Settings and Values
@@ -282,6 +293,10 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
 		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
 		DirectInvokeAddress: settings.DirectInvokeAddress, DirectInvokeKeyConfigured: values.DirectInvokeKeyConfigured,
+		SubagentURL: settings.Subagent.URL, SubagentWebhookAddress: settings.Subagent.WebhookAddress,
+		SubagentWebhookURL: settings.Subagent.WebhookURL, SubagentEnabledDefault: settings.Subagent.EnabledDefault,
+		SubagentWaitTimeout: optionalDuration(settings.Subagent.WaitTimeout), SubagentMaxWait: optionalDuration(settings.Subagent.MaxWait),
+		SubagentTokenConfigured: values.SubagentTokenConfigured, SubagentWebhookConfigured: values.SubagentWebhookConfigured,
 	}
 }
 
@@ -346,6 +361,14 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	if err != nil {
 		return config.Settings{}, err
 	}
+	settings.Subagent.WaitTimeout, err = fieldDuration(values.SubagentWaitTimeout, "subagentWaitTimeout")
+	if err != nil {
+		return config.Settings{}, err
+	}
+	settings.Subagent.MaxWait, err = fieldDuration(values.SubagentMaxWait, "subagentMaxWait")
+	if err != nil {
+		return config.Settings{}, err
+	}
 	settings.PolicyRevision, err = parseUint(values.PolicyRevision, "policyRevision")
 	if err != nil {
 		return config.Settings{}, err
@@ -369,6 +392,8 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
 	settings.FallbackEndpoint, settings.TypeSafeEndpoint, settings.TypeSafeModel = values.FallbackEndpoint, values.TypeSafeEndpoint, values.TypeSafeModel
 	settings.DirectInvokeAddress = values.DirectInvokeAddress
+	settings.Subagent.URL, settings.Subagent.WebhookAddress = values.SubagentURL, values.SubagentWebhookAddress
+	settings.Subagent.WebhookURL, settings.Subagent.EnabledDefault = values.SubagentWebhookURL, values.SubagentEnabledDefault
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
 	settings.HistoryWindow, settings.MaxContextBytes, settings.HistoryKeepLatest = values.HistoryWindow, values.MaxContextBytes, values.HistoryKeepLatest
 	settings.InboundQueue, settings.InboundWorkers = values.InboundQueue, values.InboundWorkers
@@ -408,6 +433,8 @@ func patchFromDTO(patch SettingsPatchDTO) (control.SettingsPatch, error) {
 		LangSmithAPIKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.LangSmithAPIKey.Action), Value: patch.Secrets.LangSmithAPIKey.Value},
 		TypeSafeAPIKey:  control.SecretUpdate{Action: control.SecretAction(patch.Secrets.TypeSafeAPIKey.Action), Value: patch.Secrets.TypeSafeAPIKey.Value},
 		DirectInvokeKey: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.DirectInvokeKey.Action), Value: patch.Secrets.DirectInvokeKey.Value},
+		SubagentToken:   control.SecretUpdate{Action: control.SecretAction(patch.Secrets.SubagentToken.Action), Value: patch.Secrets.SubagentToken.Value},
+		SubagentWebhook: control.SecretUpdate{Action: control.SecretAction(patch.Secrets.SubagentWebhook.Action), Value: patch.Secrets.SubagentWebhook.Value},
 	}}, nil
 }
 

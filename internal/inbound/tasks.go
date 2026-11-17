@@ -317,13 +317,21 @@ func (dispatcher *Dispatcher) runTask(ctx context.Context, task ScheduledTask) e
 // The caller supplies the invocation's identity and text; the chat's config,
 // permissions, commands, and stickers are read here.
 func (dispatcher *Dispatcher) runSystemTurn(ctx context.Context, key agent.Key, invocation agent.Invocation) error {
+	_, err := dispatcher.runSystemTurnWith(ctx, key, invocation, nil)
+	return err
+}
+
+// runSystemTurnWith is runSystemTurn with a hook: adjust, when set, may
+// change the chat context and the invocation just before the model runs.
+func (dispatcher *Dispatcher) runSystemTurnWith(ctx context.Context, key agent.Key, invocation agent.Invocation, adjust func(*agent.ChatContext, *agent.Invocation)) (agent.InvokeResult, error) {
+	var result agent.InvokeResult
 	currentAgent, err := dispatcher.agents.AgentFor(ctx, key)
 	if err != nil {
-		return err
+		return result, err
 	}
 	snapshot, err := currentAgent.Config().Refresh(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	var observedChat *agent.ChatContext
 	chatKind := conversation.ChatDirect
@@ -337,34 +345,96 @@ func (dispatcher *Dispatcher) runSystemTurn(ctx context.Context, key agent.Key, 
 	}
 	principal, err := policy.ModelPrincipal(key, invocation.ID)
 	if err != nil {
-		return err
+		return result, err
 	}
 	// The same check as a command the model issues: the kill switch is on
 	// and the chat is still allowlisted.
 	facts, err := dispatcher.commandPermissionFacts(ctx, principal, snapshot.Permission, true, chatKind)
 	if err != nil {
-		return err
+		return result, err
 	}
 	capabilities, err := dispatcher.policy.ModelCapabilities(snapshot.Permission)
 	if err != nil {
-		return err
+		return result, err
 	}
 	commandNames, err := modelCommandNames(facts)
 	if err != nil {
-		return err
+		return result, err
 	}
 	invocation.Capabilities = capabilities
 	invocation.Commands = commandNames
 	invocation.Stickers = dispatcher.stickerNames(ctx, key)
 	invocation.PolicyVersion = snapshot.Version
+	if adjust != nil {
+		if observedChat == nil {
+			// The hook needs a chat to adjust; without one the turn cannot
+			// show the model what the hook adds.
+			chat, readErr := currentAgent.ReadChatContext(ctx)
+			if readErr != nil {
+				return result, readErr
+			}
+			observedChat = &chat
+		}
+		adjust(observedChat, &invocation)
+	}
 	_ = dispatcher.options.Activity.SetComposing(ctx, key, true)
 	defer func() {
 		pauseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = dispatcher.options.Activity.SetComposing(pauseCtx, key, false)
 	}()
-	_, err = currentAgent.InvokeWith(ctx, invocation, snapshot, observedChat)
-	return err
+	return currentAgent.InvokeWith(ctx, invocation, snapshot, observedChat)
+}
+
+// SubagentTurn tells the model a sub-agent task finished: text is the
+// 【SUBTASK FINISHED】 system entry at the end of the transcript, and
+// resultBlock says, for this turn only, what the model may do with it. The
+// turn may call execute_subtask again to correct the result. Running it again
+// with the same invocation resumes the same turn. It implements
+// subagent.Turns.
+func (dispatcher *Dispatcher) SubagentTurn(ctx context.Context, key agent.Key, invocationID identity.InvocationID, causationID identity.CausationID, text, resultBlock string, requestedAt time.Time) (agent.InvokeResult, error) {
+	if err := key.Validate(); err != nil {
+		return agent.InvokeResult{}, err
+	}
+	text = strings.ToValidUTF8(text, "")
+	if len(text) > agent.MaxInputBytes {
+		text = strings.ToValidUTF8(text[:agent.MaxInputBytes], "")
+	}
+	if invocationID.IsZero() || causationID.IsZero() || strings.TrimSpace(text) == "" {
+		return agent.InvokeResult{}, agent.NewError(agent.ErrorInvalidArgument, "run sub-agent turn", errors.New("turn identity and text are required"))
+	}
+	if requestedAt.IsZero() {
+		requestedAt = dispatcher.options.Clock.Now()
+	}
+	dispatcher.mu.Lock()
+	if dispatcher.ctx.Err() != nil {
+		dispatcher.mu.Unlock()
+		return agent.InvokeResult{}, agent.NewError(agent.ErrorNotReady, "run sub-agent turn", errors.New("the application is shutting down"))
+	}
+	dispatcher.turns.Add(1)
+	dispatcher.mu.Unlock()
+	defer dispatcher.turns.Done()
+	// Nobody is waiting to ask again, so the model call is retried through
+	// rate limits and outages like a direct invoke's.
+	if dispatcher.options.PersistModel != nil {
+		defer dispatcher.options.PersistModel(invocationID)()
+	}
+	turnCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(dispatcher.ctx, cancel)
+	defer stop()
+	return dispatcher.runSystemTurnWith(turnCtx, key, agent.Invocation{
+		ID:          invocationID,
+		Cause:       agent.CauseSubagentResult,
+		Causation:   agent.CausationRef{Kind: agent.CausationSubagent, ID: causationID},
+		Input:       []agent.ContentPart{agent.TextPart{Text: text}},
+		RequestedAt: requestedAt,
+	}, func(chat *agent.ChatContext, invocation *agent.Invocation) {
+		// The task was started while the chat's sub-agent was on, so its
+		// result may be corrected even if the switch was turned off since.
+		chat.Subagent = &agent.SubagentContext{Result: resultBlock}
+		invocation.Capabilities = invocation.Capabilities.With(agent.CapabilitySubagent)
+	})
 }
 
 // scheduledTaskText is what the model reads when a task fires.

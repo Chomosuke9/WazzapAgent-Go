@@ -40,6 +40,8 @@ export function SettingsPage() {
   const [langSmithSecret, setLangSmithSecret] = useState("");
   const [typeSafeSecret, setTypeSafeSecret] = useState("");
   const [directInvokeSecret, setDirectInvokeSecret] = useState("");
+  const [subagentSecret, setSubagentSecret] = useState("");
+  const [subagentWebhookSecret, setSubagentWebhookSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -97,6 +99,8 @@ export function SettingsPage() {
             langSmithAPIKey: langSmithSecret ? { action: "replace", value: langSmithSecret } : secretKeep(),
             typeSafeAPIKey: typeSafeSecret ? { action: "replace", value: typeSafeSecret } : secretKeep(),
             directInvokeKey: directInvokeSecret ? { action: "replace", value: directInvokeSecret } : secretKeep(),
+            subagentToken: subagentSecret ? { action: "replace", value: subagentSecret } : secretKeep(),
+            subagentWebhookToken: subagentWebhookSecret ? { action: "replace", value: subagentWebhookSecret } : secretKeep(),
           },
         },
       });
@@ -107,6 +111,8 @@ export function SettingsPage() {
       setLangSmithSecret("");
       setTypeSafeSecret("");
       setDirectInvokeSecret("");
+      setSubagentSecret("");
+      setSubagentWebhookSecret("");
       setSaved(true);
       await refreshRuntime();
     } catch (reason: unknown) {
@@ -229,6 +235,15 @@ export function SettingsPage() {
         <label><span>Direct invoke key {draft.directInvokeKeyConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={directInvokeSecret} onChange={(event) => { setDirectInvokeSecret(event.target.value); setSaved(false); }} /></label>
         <label><span>Direct invoke address</span><input value={draft.directInvokeAddress} placeholder="127.0.0.1:8090" onChange={(event) => update("directInvokeAddress", event.target.value)} /></label>
         <p className="muted small wide">Direct invoke lets another program make the bot send a message first: GET or POST /post?q=&lt;prompt&gt;&amp;jid=&lt;chat or phone number&gt; with the key in the X-Api-Key header. It is off until a key is saved, takes effect the next time the Agent starts, and stays on this computer unless you change the address. A request whose model call hits a rate limit or timeout is retried for up to 10 minutes.</p>
+        <label><span>Sub-agent URL</span><input value={draft.subagentURL} placeholder="http://localhost:5000" onChange={(event) => update("subagentURL", event.target.value)} /></label>
+        <label><span>Sub-agent API token {draft.subagentTokenConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={subagentSecret} onChange={(event) => { setSubagentSecret(event.target.value); setSaved(false); }} /></label>
+        <label><span>Sub-agent webhook address</span><input value={draft.subagentWebhookAddress} placeholder="127.0.0.1:8081" onChange={(event) => update("subagentWebhookAddress", event.target.value)} /></label>
+        <label><span>Sub-agent webhook URL</span><input value={draft.subagentWebhookURL} placeholder="http://localhost:8081/subagent/callback" onChange={(event) => update("subagentWebhookURL", event.target.value)} /></label>
+        <label><span>Sub-agent webhook token {draft.subagentWebhookTokenConfigured ? "(saved)" : ""}</span><input type="password" placeholder="Leave blank to keep the current value" value={subagentWebhookSecret} onChange={(event) => { setSubagentWebhookSecret(event.target.value); setSaved(false); }} /></label>
+        <label><span>Sub-agent silence timeout</span><input value={draft.subagentWaitTimeout} placeholder="15m0s" onChange={(event) => update("subagentWaitTimeout", event.target.value)} /></label>
+        <label><span>Sub-agent maximum run time</span><input value={draft.subagentMaxWait} placeholder="2h0m0s" onChange={(event) => update("subagentMaxWait", event.target.value)} /></label>
+        <label className="wide"><input type="checkbox" checked={draft.subagentEnabledDefault} onChange={(event) => update("subagentEnabledDefault", event.target.checked)} /> Turn the sub-agent on for chats that have not used /subagent</label>
+        <p className="muted small wide">The sub-agent hands tasks the Agent cannot do alone (files, code, the web) to a WazzapSubAgents service. It is off until a URL is saved and takes effect the next time the Agent starts; owners switch it per chat with /subagent on|off. The service calls back on the webhook address; give it the webhook URL it can reach (for a service in Docker, for example http://host.docker.internal:8081/subagent/callback). Use the same API token and webhook token on both sides. A webhook listening beyond this computer requires a webhook token.</p>
         <p className="muted small wide">The TypeSafe key powers the Smart group trigger. With the trigger on, messages it checks are sent to the TypeSafe endpoint and model (Jev on System One by default). Leave either blank for the default.</p>
       </div>
 

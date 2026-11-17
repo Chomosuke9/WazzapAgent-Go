@@ -15,6 +15,7 @@ import (
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/policy"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/sticker"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/subagent"
 )
 
 // Command is one slash command.
@@ -72,9 +73,19 @@ type Platform struct {
 	// MessageMedia reads the media of a message a command targets, for
 	// commands the bot runs, which have no inbox record of their own.
 	MessageMedia MessageMediaReader
+	// Subagent is the sub-agent switch (/subagent). Nil means no sub-agent
+	// service is configured.
+	Subagent SubagentControl
 	// AssistantName is the bot's configured display name, used to write
 	// its "@Name (Bot)" mention.
 	AssistantName string
+}
+
+// SubagentControl reads and sets whether chats may delegate tasks to the
+// sub-agent.
+type SubagentControl interface {
+	Enabled(ctx context.Context, key agent.Key) bool
+	SetEnabled(ctx context.Context, key agent.Key, scope subagent.Scope, enabled bool) error
 }
 
 type TextSender interface {

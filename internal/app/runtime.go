@@ -17,6 +17,9 @@ func (runtime *conversationRuntime) run(ctx context.Context) error {
 		runtime.maintenance.Run,
 		runtime.redeliver,
 	}
+	if runtime.subagent != nil {
+		runners = append(runners, func(ctx context.Context) error { return runtime.subagent.serve(ctx, runtime.logger) })
+	}
 	errorsChannel := make(chan error, len(runners))
 	for _, runner := range runners {
 		runner := runner
@@ -53,12 +56,28 @@ func (runtime *conversationRuntime) redeliver(ctx context.Context) error {
 				recovered = runtime.recoverInbound(ctx)
 			}
 			runtime.flushOutbox(ctx, time.Time{})
+			runtime.recoverSubagent(ctx)
 		case now := <-sweep.C:
 			if !recovered && runtime.account.Ready() {
 				recovered = runtime.recoverInbound(ctx)
 			}
 			runtime.flushOutbox(ctx, now.Add(-outboxSweep))
+			if runtime.account.Ready() {
+				runtime.recoverSubagent(ctx)
+			}
 		}
+	}
+}
+
+// recoverSubagent picks up sub-agent tasks that nothing here is waiting for
+// or delivering: those the last run left, and deliveries that failed while
+// WhatsApp was offline.
+func (runtime *conversationRuntime) recoverSubagent(ctx context.Context) {
+	if runtime.subagent == nil {
+		return
+	}
+	if err := runtime.subagent.coordinator.Recover(ctx); err != nil && ctx.Err() == nil {
+		runtime.logger.Warn("sub-agent recovery failed", "code", agent.CodeOf(err), "error", err)
 	}
 }
 

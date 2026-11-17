@@ -336,6 +336,9 @@ type effectPayload struct {
 	Emoji       string               `json:"emoji,omitempty"`
 	Command     string               `json:"command,omitempty"`
 	Sticker     string               `json:"sticker,omitempty"`
+	Instruction string               `json:"instruction,omitempty"`
+	Files       []string             `json:"files,omitempty"`
+	HighQuality bool                 `json:"high_quality,omitempty"`
 }
 
 // encodeEffect returns the kind, the queryable target column and the JSON
@@ -358,6 +361,11 @@ func encodeEffect(request effect.PlanRequest) (uint8, any, string, error) {
 		target, payload.Command = typed.TargetMessageID, typed.Command
 	case effect.Sticker:
 		target, payload.Sticker = typed.QuotedMessageID, typed.Name
+	case effect.Subtask:
+		payload.Instruction, payload.HighQuality = typed.Instruction, typed.HighQuality
+		for _, id := range typed.FileMessageIDs {
+			payload.Files = append(payload.Files, id.String())
+		}
 	default:
 		return 0, nil, "", agent.NewError(agent.ErrorInvalidArgument, "encode typed effect", errors.New("effect type is not supported"))
 	}
@@ -403,6 +411,16 @@ func decodeEffect(ref effect.Ref, kind effect.Kind, target sql.NullString, raw s
 		value = effect.RunCommand{Command: payload.Command, TargetMessageID: targetID}
 	case effect.KindSticker:
 		value = effect.Sticker{Name: payload.Sticker, QuotedMessageID: targetID}
+	case effect.KindSubtask:
+		subtask := effect.Subtask{Instruction: payload.Instruction, HighQuality: payload.HighQuality}
+		for _, raw := range payload.Files {
+			id, parseErr := identity.ParseMessageID(raw)
+			if parseErr != nil {
+				return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect files", parseErr)
+			}
+			subtask.FileMessageIDs = append(subtask.FileMessageIDs, id)
+		}
+		value = subtask
 	default:
 		return policy.Principal{}, nil, agent.NewError(agent.ErrorIntegrityFailure, "decode typed effect", errors.New("effect kind is invalid"))
 	}

@@ -30,8 +30,9 @@ const (
 // commandMedia picks the media a message carries for commands. For a slash
 // command it is the image or video the command was the caption of, or else
 // the image, video or sticker it replied to. For any other message it is the
-// image, video or sticker the message itself is, so a command the bot runs
-// later can target it (/add-sticker); view-once media is never kept then. It
+// image, video, sticker, document or audio the message itself is, so a
+// command the bot runs later can target it (/add-sticker) and a sub-agent
+// task can be given it; view-once media is never kept then. It
 // returns that one media message, without its context info, serialized for
 // the command store; nil when there is none.
 func commandMedia(text string, message *waE2E.Message, contextInfo *waE2E.ContextInfo) []byte {
@@ -43,7 +44,9 @@ func commandMedia(text string, message *waE2E.Message, contextInfo *waE2E.Contex
 			media = mediaOnly(contextInfo.GetQuotedMessage())
 		}
 	case !isViewOnce(message):
-		media = mediaOnly(message)
+		if media = mediaOnly(message); media == nil {
+			media = fileOnly(message)
+		}
 	}
 	if media == nil {
 		return nil

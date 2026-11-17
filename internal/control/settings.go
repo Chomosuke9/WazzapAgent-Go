@@ -77,6 +77,8 @@ func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, 
 	merged.LangSmithAPIKey = current.LangSmithAPIKey
 	merged.TypeSafeAPIKey = current.TypeSafeAPIKey
 	merged.DirectInvokeAPIKey = current.DirectInvokeAPIKey
+	merged.Subagent.APIToken = current.Subagent.APIToken
+	merged.Subagent.WebhookToken = current.Subagent.WebhookToken
 	if err := mergeSecret(&merged.LLMAPIKey, patch.Secrets.LLMAPIKey, "WAZZAP_LLM_API_KEY"); err != nil {
 		return config.Settings{}, err
 	}
@@ -90,6 +92,12 @@ func mergePatch(current config.Settings, patch SettingsPatch) (config.Settings, 
 		return config.Settings{}, err
 	}
 	if err := mergeSecret(&merged.DirectInvokeAPIKey, patch.Secrets.DirectInvokeKey, "DIRECT_INVOKE_API_KEY"); err != nil {
+		return config.Settings{}, err
+	}
+	if err := mergeSecret(&merged.Subagent.APIToken, patch.Secrets.SubagentToken, "SUBAGENT_API_TOKEN"); err != nil {
+		return config.Settings{}, err
+	}
+	if err := mergeSecret(&merged.Subagent.WebhookToken, patch.Secrets.SubagentWebhook, "SUBAGENT_WEBHOOK_TOKEN"); err != nil {
 		return config.Settings{}, err
 	}
 	return merged, nil
