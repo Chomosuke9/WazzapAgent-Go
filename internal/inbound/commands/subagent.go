@@ -39,16 +39,16 @@ func runSubagent(ctx context.Context, c *command.Context) error {
 			"_/subagent global on/off_ - enable/disable for all chats\n" +
 			"_/subagent default on/off_ - set for chats that haven't set their own"
 		if control == nil {
-			text += "\n\nThe sub-agent isn't configured yet: set its URL in Settings first."
+			text += "\n\nThe sub-agent isn't configured yet: in Settings, pick Meta AI as its backend or set a service URL first."
 		}
 		return c.Reply(ctx, text)
 	}
 	if control == nil {
 		if !enabled {
-			return c.Reply(ctx, "Subagent is already off: no sub-agent service is configured.")
+			return c.Reply(ctx, "Subagent is already off: no sub-agent is configured.")
 		}
 		// Turning it on would do nothing until the service URL is set.
-		return c.Reply(ctx, "The sub-agent isn't configured yet. Set the sub-agent URL (SUBAGENT_URL) in Settings and restart the Agent before enabling it.")
+		return c.Reply(ctx, "The sub-agent isn't configured yet. In Settings, pick Meta AI as the sub-agent backend (SUBAGENT_BACKEND=metaai) or set a service URL (SUBAGENT_URL), then restart the Agent before enabling it.")
 	}
 	if err := control.SetEnabled(ctx, c.Key(), scope, enabled); err != nil {
 		return err

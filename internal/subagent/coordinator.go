@@ -42,7 +42,9 @@ type Coordinator struct {
 	tenantID  identity.TenantID
 	accountID identity.AccountID
 	store     Store
+	// client is the WazzapSubAgents service; nil when metaAI runs tasks.
 	client    *Client
+	metaAI    *metaAI
 	messenger Messenger
 	inputs    Inputs
 	clock     agent.Clock
@@ -96,13 +98,17 @@ type Dependencies struct {
 	// Authorize, when set, is the send policy (the Agent switch and the
 	// allowlist) checked before a task starts or is steered.
 	Authorize func(context.Context, agent.Key) error
+	// MetaAI, when set, runs tasks through Meta AI instead of a service; no
+	// service URL or webhook is needed then.
+	MetaAI MetaAIChat
 }
 
 func NewCoordinator(config Config, dependencies Dependencies) (*Coordinator, error) {
 	config = config.withDefaults()
 	config.URL = strings.TrimRight(strings.TrimSpace(config.URL), "/")
-	if config.URL == "" || strings.TrimSpace(config.WebhookURL) == "" || strings.TrimSpace(config.DataDir) == "" {
-		return nil, agent.NewError(agent.ErrorInvalidArgument, "create sub-agent coordinator", errors.New("service URL, webhook URL and data directory are required"))
+	if strings.TrimSpace(config.DataDir) == "" ||
+		(dependencies.MetaAI == nil && (config.URL == "" || strings.TrimSpace(config.WebhookURL) == "")) {
+		return nil, agent.NewError(agent.ErrorInvalidArgument, "create sub-agent coordinator", errors.New("a data directory and either Meta AI or a service URL and webhook URL are required"))
 	}
 	if dependencies.TenantID.IsZero() || dependencies.AccountID.IsZero() || dependencies.Store == nil ||
 		dependencies.Messenger == nil || dependencies.Inputs == nil {
@@ -115,9 +121,16 @@ func NewCoordinator(config Config, dependencies Dependencies) (*Coordinator, err
 		dependencies.Logger = slog.New(slog.DiscardHandler)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	var client *Client
+	var backend *metaAI
+	if dependencies.MetaAI != nil {
+		backend = newMetaAI(dependencies.MetaAI, dependencies.Logger)
+	} else {
+		client = NewClient(config)
+	}
 	return &Coordinator{
 		config: config, tenantID: dependencies.TenantID, accountID: dependencies.AccountID,
-		store: dependencies.Store, client: NewClient(config), messenger: dependencies.Messenger,
+		store: dependencies.Store, client: client, metaAI: backend, messenger: dependencies.Messenger,
 		inputs: dependencies.Inputs, clock: dependencies.Clock, logger: dependencies.Logger,
 		ctx: ctx, cancel: cancel, authorize: dependencies.Authorize,
 		live: make(map[string]*liveTask), owned: make(map[string]bool), corrected: make(map[string]bool),
@@ -154,6 +167,22 @@ func (coordinator *Coordinator) spawn(fn func()) bool {
 	return true
 }
 
+// Backend reports what runs the tasks.
+func (coordinator *Coordinator) Backend() agent.SubagentBackend {
+	if coordinator.metaAI != nil {
+		return agent.SubagentMetaAI
+	}
+	return agent.SubagentService
+}
+
+// ReceiveMetaAI takes one of Meta AI's messages to the account. It never
+// blocks, and does nothing when tasks do not go to Meta AI.
+func (coordinator *Coordinator) ReceiveMetaAI(event MetaAIEvent) {
+	if coordinator.metaAI != nil {
+		coordinator.metaAI.receive(event)
+	}
+}
+
 // Enabled reports whether the chat's model gets execute_subtask.
 func (coordinator *Coordinator) Enabled(ctx context.Context, key agent.Key) bool {
 	enabled, set, err := coordinator.store.SubagentEnabled(ctx, key)
@@ -174,9 +203,9 @@ func (coordinator *Coordinator) SetEnabled(ctx context.Context, key agent.Key, s
 // ChatContext is the chat's <subagent> block.
 func (coordinator *Coordinator) ChatContext(ctx context.Context, key agent.Key) *agent.SubagentContext {
 	if !coordinator.Enabled(ctx, key) {
-		return &agent.SubagentContext{Off: true}
+		return &agent.SubagentContext{Off: true, Backend: coordinator.Backend()}
 	}
-	return &agent.SubagentContext{Status: coordinator.statusBlock(ctx, key)}
+	return &agent.SubagentContext{Backend: coordinator.Backend(), Status: coordinator.statusBlock(ctx, key)}
 }
 
 // ExecuteSubtaskEffect handles one execute_subtask call. A chat with a
@@ -287,10 +316,23 @@ func (coordinator *Coordinator) steer(task Task, instruction string, fileMessage
 			defer os.RemoveAll(dir)
 			var files []string
 			if files, err = coordinator.resolveInputs(ctx, task.Key, dir, fileMessageIDs); err == nil {
-				err = coordinator.client.Steer(ctx, task.SessionID, instruction, files)
+				if coordinator.metaAI != nil {
+					err = coordinator.metaAI.steer(task, instruction, files)
+				} else {
+					err = coordinator.client.Steer(ctx, task.SessionID, instruction, files)
+				}
 			}
 		}
-		if err != nil && ctx.Err() == nil {
+		var unsupported *metaAIUnsupportedError
+		switch {
+		case err == nil || ctx.Err() != nil:
+		case errors.Is(err, errMetaAINotRunning):
+			// The answer is already on its way; its delivering turn can still
+			// correct it.
+			coordinator.logger.Info("sub-agent steering arrived after the Meta AI task finished", "session", task.SessionID)
+		case errors.As(err, &unsupported):
+			coordinator.notify(task.Key, "Meta AI can only take images, so I couldn't pass that file along.", replyTo)
+		default:
 			coordinator.logger.Error("sub-agent steering failed", "session", task.SessionID, "error", err)
 			coordinator.notify(task.Key, "I couldn't deliver that update and its file to the running task. "+
 				"Please resend the file or try the instruction again.", replyTo)
@@ -320,6 +362,10 @@ func (coordinator *Coordinator) run(task Task) {
 		})
 		return
 	}
+	if coordinator.metaAI != nil {
+		coordinator.runMetaAI(ctx, task, files)
+		return
+	}
 	err = coordinator.client.Submit(ctx, task.SessionID, task.Instruction, files, task.HighQuality, task.PreviousSessionID)
 	if ctx.Err() != nil {
 		return
@@ -336,6 +382,26 @@ func (coordinator *Coordinator) run(task Task) {
 	if coordinator.wait(task) {
 		coordinator.deliver(task.SessionID)
 	}
+}
+
+// runMetaAI has Meta AI carry out task and delivers the outcome. The task is
+// never marked submitted: Meta AI's answer lives only in this exchange, so a
+// restart in the middle ends the task instead of waiting for it.
+func (coordinator *Coordinator) runMetaAI(ctx context.Context, task Task, files []string) {
+	started := coordinator.clock.Now()
+	result, report, err := coordinator.metaAI.run(ctx, task, files, coordinator.outputDir(task.SessionID))
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		coordinator.logger.Error("Meta AI task failed", "session", task.SessionID, "error", err)
+		coordinator.finish(task.SessionID, Result{}, "Meta AI task failed: "+err.Error())
+	} else {
+		coordinator.logger.Info("Meta AI task finished", "session", task.SessionID, "images", len(result.Files),
+			"elapsed", coordinator.clock.Now().Sub(started).Round(time.Millisecond))
+		coordinator.finish(task.SessionID, result, report)
+	}
+	coordinator.deliver(task.SessionID)
 }
 
 // wait blocks until the task finished, giving it up when it has been silent
@@ -456,7 +522,10 @@ func (coordinator *Coordinator) Recover(ctx context.Context) error {
 		if !coordinator.spawn(func() {
 			defer coordinator.release(task.SessionID)
 			if task.Status == StatusRunning {
-				if !task.Submitted {
+				if coordinator.metaAI != nil {
+					// Meta AI's answer went with the exchange that waited for it.
+					coordinator.finish(task.SessionID, Result{}, "The task was interrupted by a restart while Meta AI was working on it.")
+				} else if !task.Submitted {
 					// The app stopped before the service had the task.
 					coordinator.finish(task.SessionID, Result{}, "The task was interrupted by a restart before it reached the sub-agent.")
 				} else if !coordinator.wait(task) {
@@ -554,7 +623,7 @@ func (coordinator *Coordinator) deliverOnce(ctx context.Context, sessionID strin
 		}
 	}
 	for index, file := range staged {
-		part := fmt.Sprintf("file:%d:%s:%d", index, file.Name, file.Size)
+		part := filePart(index, file)
 		if err := coordinator.sendPart(ctx, sessionID, part, func() error {
 			return coordinator.messenger.SendFile(ctx, task.Key, file)
 		}); err != nil {
@@ -569,6 +638,66 @@ func (coordinator *Coordinator) deliverOnce(ctx context.Context, sessionID strin
 	coordinator.mu.Unlock()
 	coordinator.logger.Info("sub-agent result delivered", "session", sessionID, "success", completed, "files", len(staged), "correction", corrected)
 	return nil
+}
+
+// filePart names the delivery part of a task's index-th output file.
+func filePart(index int, file StagedFile) string {
+	return fmt.Sprintf("file:%d:%s:%d", index, file.Name, file.Size)
+}
+
+// captionImage is the output image that the reply of invocationID carries
+// as its caption, and its delivery part: the first image of the task that
+// turn delivers, not yet sent. A turn that starts a correction carries none,
+// since its reply announces new work rather than presenting this result.
+func (coordinator *Coordinator) captionImage(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (*Task, StagedFile, string, error) {
+	task, err := coordinator.store.TaskByInvocation(ctx, key, invocationID)
+	if err != nil || task == nil || task.Status != StatusCompleted || !task.DeliveredAt.IsZero() {
+		return nil, StagedFile{}, "", err
+	}
+	staged, _ := stageOutputs(task.Result.Files)
+	for index, file := range staged {
+		if file.Kind != "image" {
+			continue
+		}
+		part := filePart(index, file)
+		if done, err := coordinator.store.DeliveryPartDone(ctx, coordinator.tenantID, task.SessionID, part); err != nil || done {
+			return nil, StagedFile{}, "", err
+		}
+		correction, err := coordinator.store.TurnStartsSubtask(ctx, key, invocationID)
+		if err != nil || correction {
+			return nil, StagedFile{}, "", err
+		}
+		return task, file, part, nil
+	}
+	return nil, StagedFile{}, "", nil
+}
+
+// ReplyAttachment returns the image the reply of invocationID goes out with
+// as its caption, if that reply delivers a task's result.
+func (coordinator *Coordinator) ReplyAttachment(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (*StagedFile, error) {
+	task, file, _, err := coordinator.captionImage(ctx, key, invocationID)
+	if err != nil || task == nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
+// AttachmentSent records that the reply of invocationID carried its task's
+// image, so delivery does not send it again, and keeps it as a file the bot
+// sent for later tasks.
+func (coordinator *Coordinator) AttachmentSent(ctx context.Context, key agent.Key, invocationID identity.InvocationID, providerReceipt string) error {
+	task, file, part, err := coordinator.captionImage(ctx, key, invocationID)
+	if err != nil || task == nil {
+		return err
+	}
+	if err := coordinator.store.MarkDeliveryPartDone(ctx, coordinator.tenantID, task.SessionID, part); err != nil {
+		return err
+	}
+	coordinator.logger.Info("sub-agent image sent as the reply's caption", "session", task.SessionID, "file", file.Name)
+	if providerReceipt == "" {
+		return nil
+	}
+	return coordinator.messenger.RecordSentFile(ctx, key, file, providerReceipt)
 }
 
 // sendPart sends one part of a result unless it was sent before.
@@ -736,6 +865,11 @@ func (coordinator *Coordinator) statusBlock(ctx context.Context, key agent.Key) 
 		if age := coordinator.clock.Now().Sub(finished.EndedAt); age >= 0 && age <= recentFinishedAge {
 			return formatRecentFinished(*finished)
 		}
+	}
+	if coordinator.metaAI != nil {
+		return "## Sub-agent status\n" +
+			"No Meta AI task is currently running or recently finished.\n" +
+			"If the user wants an image generated or edited, something answered about an image in this chat, or anything current looked up on the internet, call `execute_subtask` immediately."
 	}
 	return "## Sub-agent status\n" +
 		"No sub-agent task is currently running or recently finished.\n" +

@@ -126,6 +126,8 @@ type Adapter struct {
 	stopDone        chan struct{}
 	stopErr         error
 	stripes         [sendStripeCount]sync.Mutex
+	// metaAI receives Meta AI's messages; see SetMetaAIHandler.
+	metaAI atomic.Pointer[func(MetaAIMessage)]
 }
 
 func Open(ctx context.Context, config Config) (*Adapter, error) {
@@ -506,6 +508,9 @@ func (adapter *Adapter) handleEvent(event any) {
 			adapter.cacheGroupName(adapter.rootCtx, typed.JID, typed.Name.Name)
 		}
 	case *events.Message:
+		if adapter.routeMetaAI(typed) {
+			return
+		}
 		candidate, ok := adapter.normalizer.normalizeMessage(adapter.rootCtx, typed)
 		if !ok {
 			adapter.logger.Debug("inbound event ignored", "reason", ignoredNativeReason(typed))

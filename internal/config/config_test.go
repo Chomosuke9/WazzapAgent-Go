@@ -456,3 +456,16 @@ func mapLookup(values map[string]string) LookupEnv {
 		return value, ok
 	}
 }
+
+func TestMetaAISubagentNeedsNoServiceURL(t *testing.T) {
+	settings := SubagentSettings{Backend: "MetaAI"}
+	if !settings.MetaAI() || !settings.Configured() || settings.issue() != nil {
+		t.Fatalf("Meta AI backend: metaai=%v configured=%v issue=%v", settings.MetaAI(), settings.Configured(), settings.issue())
+	}
+	if issue := (SubagentSettings{Backend: "gemini"}).issue(); issue == nil || issue.Field != "SUBAGENT_BACKEND" {
+		t.Fatalf("unknown backend issue = %v", issue)
+	}
+	if (SubagentSettings{}).Configured() {
+		t.Fatal("a service backend without a URL counts as configured")
+	}
+}

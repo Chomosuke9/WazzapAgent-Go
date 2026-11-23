@@ -221,6 +221,9 @@ type ModelRequest struct {
 	// Images are the images of the current messages, oldest first. They go
 	// with the transcript; older messages' images are never sent.
 	Images []ModelImage
+	// SubagentBackend is what runs execute_subtask, which decides how the
+	// tool is described.
+	SubagentBackend SubagentBackend
 }
 
 const MaxModelEffects = 8

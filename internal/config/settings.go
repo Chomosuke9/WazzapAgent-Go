@@ -132,9 +132,13 @@ type Settings struct {
 	AccountID identity.AccountID
 }
 
-// SubagentSettings is the WazzapSubAgents connection. With no URL there is
-// no sub-agent: the model never gets execute_subtask.
+// SubagentSettings is the sub-agent: a WazzapSubAgents service, or Meta AI
+// on the bot's own WhatsApp account. A service backend with no URL means
+// there is no sub-agent: the model never gets execute_subtask.
 type SubagentSettings struct {
+	// Backend is SubagentBackendService (also when empty) or
+	// SubagentBackendMetaAI. Meta AI needs no URL or webhook.
+	Backend string
 	// URL is the service, such as http://localhost:5000.
 	URL string
 	// APIToken authenticates this app to the service.
@@ -458,7 +462,7 @@ func SettingsSchema() []FieldDescriptor {
 		{Key: "TYPESAFE_API_KEY", Group: "typesafe", Kind: FieldSecret, Sensitive: true}, {Key: "TYPESAFE_ENDPOINT", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeEndpoint},
 		{Key: "TYPESAFE_MODEL", Group: "typesafe", Kind: FieldString, Default: defaultTypeSafeModel},
 		{Key: "WAZZAP_DATA_DIR", Group: "storage", Kind: FieldString, Default: defaultDataDir}, {Key: "WAZZAP_ENV_FILE", Group: "source", Kind: FieldString, CLIOnly: true}, {Key: "WAZZAP_HTTP_ADDRESS", Group: "http", Kind: FieldString, CLIOnly: true, Default: defaultHTTPAddress}, {Key: "WAZZAP_PAIRING_OUTPUT", Group: "pairing", Kind: FieldString, CLIOnly: true, Default: defaultPairingOutput},
-		{Key: "SUBAGENT_URL", Group: "subagent", Kind: FieldString}, {Key: "SUBAGENT_API_TOKEN", Group: "subagent", Kind: FieldSecret, Sensitive: true},
+		{Key: "SUBAGENT_BACKEND", Group: "subagent", Kind: FieldString, Default: SubagentBackendService}, {Key: "SUBAGENT_URL", Group: "subagent", Kind: FieldString}, {Key: "SUBAGENT_API_TOKEN", Group: "subagent", Kind: FieldSecret, Sensitive: true},
 		{Key: "SUBAGENT_WEBHOOK_ADDRESS", Group: "subagent", Kind: FieldString, Default: defaultSubagentWebhookAddress}, {Key: "SUBAGENT_WEBHOOK_URL", Group: "subagent", Kind: FieldString},
 		{Key: "SUBAGENT_WEBHOOK_TOKEN", Group: "subagent", Kind: FieldSecret, Sensitive: true}, {Key: "SUBAGENT_ENABLED_DEFAULT", Group: "subagent", Kind: FieldBool, Default: "false"},
 		{Key: "SUBAGENT_WAIT_TIMEOUT", Group: "subagent", Kind: FieldDuration, Default: defaultSubagentWaitTimeout.String()}, {Key: "SUBAGENT_MAX_WAIT", Group: "subagent", Kind: FieldDuration, Default: defaultSubagentMaxWait.String()},

@@ -395,7 +395,7 @@ func completionTools(request agent.ModelRequest, registry *command.Registry) ([]
 		Parameters:  replyParameters,
 	}}}
 	for _, capability := range capabilities {
-		name, description, parameters, ok := toolSchema(capability, contextIDs, request.Stickers)
+		name, description, parameters, ok := toolSchema(capability, contextIDs, request.Stickers, request.SubagentBackend)
 		if !ok {
 			// Group command capabilities authorize command strings carried by
 			// reply_message. They are deliberately not standalone provider tools.
@@ -415,7 +415,7 @@ func sortedContextMessageIDs(contextMessages map[string]identity.MessageID) []st
 	return ids
 }
 
-func toolSchema(capability agent.Capability, contextIDs, stickers []string) (string, string, json.RawMessage, bool) {
+func toolSchema(capability agent.Capability, contextIDs, stickers []string, subagentBackend agent.SubagentBackend) (string, string, json.RawMessage, bool) {
 	switch capability {
 	case agent.CapabilityMessageSticker:
 		// Without a catalog there is nothing to send, so no tool is offered.
@@ -481,6 +481,12 @@ func toolSchema(capability agent.Capability, contextIDs, stickers []string) (str
 		})
 		if err != nil {
 			return "", "", nil, false
+		}
+		if subagentBackend == agent.SubagentMetaAI {
+			return "execute_subtask", "Ask Meta AI to generate or edit an image, to look at images from this chat and answer about them, or to search the internet for current information. " +
+				"It only accepts images (and stickers) as input and only returns text and images; it cannot read documents, run code or make files. " +
+				"Generated images are automatically sent to the chat after your text reply — you do not need to upload them yourself. " +
+				"While a task is running in this chat, calling this again sends a follow-up to Meta AI in the same conversation.", parameters, true
 		}
 		return "execute_subtask", "Delegate a complex task to a sub-agent for execution. " +
 			"The sub-agent will process the instruction and return a report. " +

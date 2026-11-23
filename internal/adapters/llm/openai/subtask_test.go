@@ -75,3 +75,24 @@ func TestExecuteSubtaskWithAnUnknownFileIsDroppedWithItsConfirmation(t *testing.
 		t.Fatalf("ungranted execute_subtask err = %v", err)
 	}
 }
+
+func TestExecuteSubtaskDescribesMetaAIsLimits(t *testing.T) {
+	providerID, _ := identity.ParseProviderID("openai-compatible")
+	request := modelRequest(t, providerID)
+	request.Capabilities, _ = agent.NewCapabilitySet(agent.CapabilitySubagent)
+	request.SubagentBackend = agent.SubagentMetaAI
+	tools, err := completionTools(request, inbound.CommandRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		if tool.Function.Name == "execute_subtask" {
+			if !bytes.Contains([]byte(tool.Function.Description), []byte("only accepts images")) ||
+				!bytes.Contains([]byte(tool.Function.Description), []byte("search the internet")) {
+				t.Fatalf("description = %q", tool.Function.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("execute_subtask not offered")
+}

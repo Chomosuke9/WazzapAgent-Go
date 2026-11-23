@@ -170,6 +170,7 @@ export interface SettingsValuesDTO {
     "typeSafeEndpoint": string;
     "typeSafeModel": string;
     "directInvokeAddress": string;
+    "subagentBackend": string;
     "subagentURL": string;
     "subagentWebhookAddress": string;
     "subagentWebhookURL": string;

@@ -34,3 +34,21 @@ func TestFilesInChatListsTheMessageThatHoldsTheFile(t *testing.T) {
 		t.Fatalf("a report closed the block: %s", escaped)
 	}
 }
+
+func TestMetaAISubagentIsDescribedWithItsUsesAndLimits(t *testing.T) {
+	block := formatSubagentContext(SubagentContext{Backend: SubagentMetaAI}, nil, "Vivy")
+	for _, want := range []string{"it is Meta AI", "GENERATING AND EDITING IMAGES", "LOOKING AT IMAGES", "SEARCHING THE INTERNET", "CANNOT", "run code", "produce files"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("Meta AI block lacks %q: %s", want, block)
+		}
+	}
+	if strings.Contains(block, "browse the internet for you") {
+		t.Fatalf("Meta AI block still says it cannot search: %s", block)
+	}
+	if strings.Contains(block, "full internet + system access") {
+		t.Fatalf("Meta AI block promises a computer: %s", block)
+	}
+	if service := formatSubagentContext(SubagentContext{}, nil, "Vivy"); strings.Contains(service, "Meta AI") {
+		t.Fatalf("service block mentions Meta AI: %s", service)
+	}
+}

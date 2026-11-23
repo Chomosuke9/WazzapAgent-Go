@@ -155,3 +155,31 @@ func TestStickerEffectRoundTripsWithAndWithoutQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestTurnStartsSubtaskSeesOnlyThatTurnsSubtaskEffects(t *testing.T) {
+	store := openTestStore(t)
+	key := testKey(t)
+	target := seedEffectTarget(t, store, key)
+	principal, err := policy.SystemPrincipal(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := func(invocation identity.InvocationID, value effect.Effect) {
+		t.Helper()
+		effectID, _ := identity.NewEffectID()
+		if _, err := store.Effects().Plan(context.Background(), effect.PlanRequest{
+			Ref: effect.Ref{Key: key, EffectID: effectID}, InvocationID: invocation, Principal: principal, Effect: value,
+		}, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reacting, _ := identity.NewInvocationID()
+	correcting, _ := identity.NewInvocationID()
+	plan(reacting, effect.React{TargetMessageID: target, Emoji: "✅"})
+	plan(correcting, effect.Subtask{Instruction: "Make it orange"})
+	for invocation, want := range map[identity.InvocationID]bool{reacting: false, correcting: true} {
+		if got, err := store.Subagent().TurnStartsSubtask(context.Background(), key, invocation); err != nil || got != want {
+			t.Fatalf("TurnStartsSubtask = %v, %v; want %v", got, err, want)
+		}
+	}
+}

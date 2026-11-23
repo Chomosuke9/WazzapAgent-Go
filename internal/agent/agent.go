@@ -280,6 +280,9 @@ func (agent *Agent) invoke(ctx context.Context, invocation Invocation, config *C
 		ContextMessages:  contextMessageMap(page.Entries),
 		Images:           agent.currentImages(ctx, page.Entries, chat),
 	}
+	if chat.Subagent != nil {
+		request.SubagentBackend = chat.Subagent.Backend
+	}
 	invokeStarted := time.Now()
 	chatName := chat.Name
 	if chat.Kind == "private" && invocation.Sender != nil {

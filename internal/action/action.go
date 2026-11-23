@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
@@ -57,6 +58,44 @@ type SendTextRequest struct {
 	// A tap comes back as the tapped choice's text.
 	Choices []string
 }
+
+// SendImageRequest sends a reply as an image whose caption is the reply's
+// text. Mentions and the quote work as they do for SendTextRequest.
+type SendImageRequest struct {
+	Key             agent.Key
+	ActionID        identity.ActionID
+	Caption         string
+	QuotedMessageID identity.MessageID
+	Path            string
+	Mime            string
+}
+
+// ImageSender is a TextSender that can also send a reply as a captioned
+// image.
+type ImageSender interface {
+	SendImageReply(context.Context, SendImageRequest) (SendTextResult, error)
+}
+
+// Attachment is the image a reply goes out with.
+type Attachment struct {
+	Path string
+	Mime string
+}
+
+// AttachmentSource decides which replies go out as a captioned image: the
+// reply that delivers a sub-agent's result carries its first image.
+type AttachmentSource interface {
+	// ReplyAttachment returns the image the reply of invocationID goes out
+	// with, or nil.
+	ReplyAttachment(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (*Attachment, error)
+	// AttachmentSent records that the image went out with the reply, as the
+	// message providerReceipt names.
+	AttachmentSent(ctx context.Context, key agent.Key, invocationID identity.InvocationID, providerReceipt string) error
+}
+
+// MaxCaptionRunes is the longest reply sent as an image caption; a longer
+// one goes out as text, and the image on its own.
+const MaxCaptionRunes = 1024
 
 // SendCopyCodeRequest sends Code behind a single "copy" button.
 type SendCopyCodeRequest struct {
@@ -127,6 +166,30 @@ type Dispatcher struct {
 	sender   TextSender
 	clock    agent.Clock
 	observer Observer
+	// attachments, when set, gives some replies an image to go out with.
+	attachments AttachmentSource
+}
+
+// SetAttachments makes replies that source names go out as a captioned
+// image. Call it before the first Dispatch.
+func (dispatcher *Dispatcher) SetAttachments(source AttachmentSource) {
+	dispatcher.attachments = source
+}
+
+// attachmentFor returns the image the reply goes out with, or nil. A reply
+// with choices, one too long for a caption, or a failed lookup goes as text.
+func (dispatcher *Dispatcher) attachmentFor(ctx context.Context, action StoredAction, text string, choices []string) *Attachment {
+	if dispatcher.attachments == nil || len(choices) > 0 || utf8.RuneCountInString(text) > MaxCaptionRunes || action.InvocationID.IsZero() {
+		return nil
+	}
+	if _, ok := dispatcher.sender.(ImageSender); !ok {
+		return nil
+	}
+	attachment, err := dispatcher.attachments.ReplyAttachment(ctx, action.Ref.Key, action.InvocationID)
+	if err != nil || attachment == nil || attachment.Path == "" {
+		return nil
+	}
+	return attachment
 }
 
 func NewDispatcher(store Store, policy SendAuthorizer, sender TextSender, clock agent.Clock, observer Observer) (*Dispatcher, error) {
@@ -173,14 +236,24 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 	if !dispatcher.sender.Ready() {
 		return pending, agent.NewError(agent.ErrorNotReady, "dispatch response", fmt.Errorf("text sender is not ready"))
 	}
+	text, choices := SplitChoices(action.Text)
+	attachment := dispatcher.attachmentFor(ctx, action, text, choices)
 	if err := dispatcher.store.Start(ctx, ref, dispatcher.clock.Now()); err != nil {
 		if agent.IsCode(err, agent.ErrorConflict) {
 			return pending, agent.NewError(agent.ErrorDeliveryPending, "dispatch response", fmt.Errorf("delivery is already in progress"))
 		}
 		return pending, err
 	}
-	text, choices := SplitChoices(action.Text)
-	sent, sendErr := dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Choices: choices})
+	var sent SendTextResult
+	var sendErr error
+	if attachment != nil {
+		sent, sendErr = dispatcher.sender.(ImageSender).SendImageReply(ctx, SendImageRequest{
+			Key: ref.Key, ActionID: ref.ActionID, Caption: text, QuotedMessageID: action.ReplyToMessageID,
+			Path: attachment.Path, Mime: attachment.Mime,
+		})
+	} else {
+		sent, sendErr = dispatcher.sender.SendText(ctx, SendTextRequest{Key: ref.Key, ActionID: ref.ActionID, Text: text, QuotedMessageID: action.ReplyToMessageID, Choices: choices})
+	}
 	if sendErr != nil {
 		// The request may have reached WhatsApp. Never send it a second time.
 		code := agent.CodeOf(sendErr)
@@ -195,6 +268,13 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, ref agent.DispatchRe
 			return dispatcher.store.MarkUnknown(ctx, ref, agent.ErrorStorageFailure, dispatcher.clock.Now())
 		})
 		return agent.DeliveryResult{ActionID: ref.ActionID, Status: agent.DeliveryUnknownOutcome}, agent.NewError(agent.ErrorUnknownOutcome, "record delivery receipt", fmt.Errorf("complete storage failed: %w", err))
+	}
+	if attachment != nil {
+		// Recorded before anything else is sent, so the image does not go
+		// out a second time on its own. A failed record risks only that.
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_ = dispatcher.attachments.AttachmentSent(recordCtx, ref.Key, action.InvocationID, sent.ProviderReceipt)
+		cancel()
 	}
 	if code := FirstCodeBlock(text); code != "" {
 		_ = dispatcher.sender.SendCopyCode(ctx, SendCopyCodeRequest{Key: ref.Key, Code: code})

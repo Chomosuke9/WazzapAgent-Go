@@ -433,7 +433,11 @@ func (dispatcher *Dispatcher) SubagentTurn(ctx context.Context, key agent.Key, i
 	}, func(chat *agent.ChatContext, invocation *agent.Invocation) {
 		// The task was started while the chat's sub-agent was on, so its
 		// result may be corrected even if the switch was turned off since.
-		chat.Subagent = &agent.SubagentContext{Result: resultBlock, ResultImages: images}
+		backend := agent.SubagentService
+		if chat.Subagent != nil {
+			backend = chat.Subagent.Backend
+		}
+		chat.Subagent = &agent.SubagentContext{Backend: backend, Result: resultBlock, ResultImages: images}
 		invocation.Capabilities = invocation.Capabilities.With(agent.CapabilitySubagent)
 	})
 }

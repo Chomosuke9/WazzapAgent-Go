@@ -23,11 +23,13 @@ import (
 
 // memoryStore is an in-memory Store.
 type memoryStore struct {
-	mu       sync.Mutex
-	tasks    map[string]Task
-	parts    map[string]bool
-	enabled  map[agent.Key]bool
-	fallback *bool
+	mu      sync.Mutex
+	tasks   map[string]Task
+	parts   map[string]bool
+	enabled map[agent.Key]bool
+	// subtaskTurns are the invocations that planned an execute_subtask call.
+	subtaskTurns map[identity.InvocationID]bool
+	fallback     *bool
 }
 
 func newMemoryStore() *memoryStore {
@@ -140,6 +142,12 @@ func (store *memoryStore) MarkTaskDelivered(_ context.Context, _ identity.Tenant
 
 func (store *memoryStore) ChatExists(context.Context, agent.Key) (bool, error) { return true, nil }
 
+func (store *memoryStore) TurnStartsSubtask(_ context.Context, _ agent.Key, invocation identity.InvocationID) (bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.subtaskTurns[invocation], nil
+}
+
 func (store *memoryStore) SubagentEnabled(_ context.Context, key agent.Key) (bool, bool, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -159,7 +167,9 @@ type recorder struct {
 	mu    sync.Mutex
 	texts []string
 	files []StagedFile
-	turns []string
+	// recorded are files sent another way: "name@receipt".
+	recorded []string
+	turns    []string
 	// turn decides what the model does on a result turn.
 	turn func(key agent.Key, invocation identity.InvocationID, text string) (agent.InvokeResult, error)
 	sent chan struct{}
@@ -175,6 +185,13 @@ func (rec *recorder) SendText(_ context.Context, _ agent.Key, text string, _ ide
 func (rec *recorder) SendFile(_ context.Context, _ agent.Key, file StagedFile) error {
 	rec.mu.Lock()
 	rec.files = append(rec.files, file)
+	rec.mu.Unlock()
+	return nil
+}
+
+func (rec *recorder) RecordSentFile(_ context.Context, _ agent.Key, file StagedFile, receipt string) error {
+	rec.mu.Lock()
+	rec.recorded = append(rec.recorded, file.Name+"@"+receipt)
 	rec.mu.Unlock()
 	return nil
 }

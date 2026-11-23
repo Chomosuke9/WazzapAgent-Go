@@ -5,9 +5,26 @@ import (
 	"strings"
 )
 
+// SubagentBackend is what runs execute_subtask tasks. It decides what the
+// model is told the sub-agent can do.
+type SubagentBackend uint8
+
+const (
+	// SubagentService is a WazzapSubAgents service: a shell, files and the
+	// internet.
+	SubagentService SubagentBackend = iota
+	// SubagentMetaAI is Meta AI on the bot's own WhatsApp account. It
+	// generates and edits images, looks at images and searches the internet,
+	// answering with text or images; it cannot read documents, run code or
+	// produce files.
+	SubagentMetaAI
+)
+
 // SubagentContext is what a chat with the sub-agent switched on adds to the
 // model's context, after <chat_state>.
 type SubagentContext struct {
+	// Backend is what runs the chat's tasks.
+	Backend SubagentBackend
 	// Off is set for a chat whose sub-agent is switched off: the model is
 	// told it cannot act beyond chatting, so it does not pretend to.
 	Off bool
@@ -46,6 +63,30 @@ Steering / correction (re-using the sub-agent's live memory):
 - If a sub-agent IS currently running, you can steer it mid-task by calling ` + "`execute_subtask`" + ` again — e.g. user changes "draw a dog" to a cat: "Change the dog to a cat, keep everything else the same."
 - You can ALSO attach NEW files while steering: pass their ` + "`context_msg_ids`" + ` (same rule as above — the ID that holds the file). The running sub-agent receives them mid-task. e.g. user sends a logo and says "add this logo": call ` + "`execute_subtask`" + ` with the logo's ` + "`context_msg_ids`" + `.
 - On the re-invoke AFTER the sub-agent delivered its result (your LAST chance), you can protest/correct using the same memory — e.g. "The zip you sent shows as a compressed file, not an image. Send the image directly as a PNG, not zipped."
+</subagent>`
+
+// metaAISubagentRules tells the model when to delegate to Meta AI and,
+// above all, what it cannot do, so it never promises a file or a code run.
+const metaAISubagentRules = `<subagent>
+SUB-AGENT is ALLOWED, and it is Meta AI. Use ` + "`execute_subtask`" + ` for these three things:
+1. GENERATING AND EDITING IMAGES: drawing, illustrating or imagining a picture ("draw a cat astronaut", "make me a poster of...", "generate a logo idea"), or changing an image from this chat ("make the sky purple", "remove the background", "turn this photo into an anime drawing") — pass that image's ID.
+2. LOOKING AT IMAGES: describing, reading text in (OCR), identifying, or answering questions about an image or sticker someone sent in this chat. Images you receive with the current messages you can already see yourself; use the sub-agent when you need an image from earlier in the chat or a second, closer look.
+3. SEARCHING THE INTERNET: anything current or that you can't be sure of from your own knowledge — news, today's events, weather, prices and exchange rates, sports results, schedules, releases, what a company or person did recently, or checking a fact that may have changed. Don't answer these from memory and don't say "I don't know" or "I can't browse": ask Meta AI to search.
+
+Meta AI CANNOT:
+- read documents, PDFs, spreadsheets, CSV, audio, video or any file that is not an image;
+- run code or do anything on a computer;
+- produce files: no documents, spreadsheets, code files, zips. Its only outputs are text and images.
+For those requests, do NOT call ` + "`execute_subtask`" + ` and do NOT pretend to do them. Say plainly that you can't do it here, and help with what you can from your own knowledge.
+
+Do NOT use for: conversational replies, greetings, opinions, timeless knowledge you already know, moderation, or tasks covered by built-in commands (stickers, tasks, memory, group management, etc.). Meta AI has no WhatsApp access.
+
+Rules:
+- Call ` + "`execute_subtask`" + ` immediately when applicable. Acknowledgement goes in ` + "`confirmation_text`" + `, NOT as a separate ` + "`reply_message`" + `.
+- ` + "`instruction`" + `: Meta AI has NO chat history and NO memory of earlier tasks. Write a self-contained request in English: for an image to generate, describe subject, style, composition and any text that should appear; for an image to edit, say exactly what to change and what to keep; for an image to look at, say exactly what to find out; for a search, ask the precise question, with the place and date it is about, and ask it to search the web and name its sources.
+- ` + "`context_msg_ids`" + `: only messages that HOLD AN IMAGE or sticker (at most 4), or null. Never pass documents, audio or video — the task fails. Take the IDs from ` + "`<files_in_chat>`" + `.
+- ` + "`high_quality`" + ` makes no difference for Meta AI; pass false.
+- To change a generated image, call ` + "`execute_subtask`" + ` again on the turn that delivers it with what to change (e.g. "Same picture, but make the cat orange"), or pass the generated image's ID as input.
 </subagent>`
 
 // subagentOffRules is the block for a chat whose sub-agent is off.
@@ -88,7 +129,11 @@ func formatSubagentContext(context SubagentContext, history []HistoryEntry, assi
 	if context.Off {
 		return subagentOffRules
 	}
-	blocks := []string{subagentRules}
+	rules := subagentRules
+	if context.Backend == SubagentMetaAI {
+		rules = metaAISubagentRules
+	}
+	blocks := []string{rules}
 	if status := strings.TrimSpace(context.Status); status != "" {
 		blocks = append(blocks, escapeSubagentBoundary(status))
 	}

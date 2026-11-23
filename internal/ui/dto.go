@@ -35,6 +35,7 @@ type SettingsValuesDTO struct {
 
 	DirectInvokeAddress string `json:"directInvokeAddress"`
 
+	SubagentBackend        string `json:"subagentBackend"`
 	SubagentURL            string `json:"subagentURL"`
 	SubagentWebhookAddress string `json:"subagentWebhookAddress"`
 	SubagentWebhookURL     string `json:"subagentWebhookURL"`
@@ -293,7 +294,8 @@ func publicSettingsDTO(values config.PublicSettings) SettingsValuesDTO {
 		LLMAPIKeyConfigured: values.LLMAPIKeyConfigured, FallbackAPIKeyConfigured: values.FallbackAPIKeyConfigured,
 		LangSmithAPIKeyConfigured: values.LangSmithAPIKeyConfigured, TypeSafeAPIKeyConfigured: values.TypeSafeAPIKeyConfigured,
 		DirectInvokeAddress: settings.DirectInvokeAddress, DirectInvokeKeyConfigured: values.DirectInvokeKeyConfigured,
-		SubagentURL: settings.Subagent.URL, SubagentWebhookAddress: settings.Subagent.WebhookAddress,
+		SubagentBackend: settings.Subagent.Backend,
+		SubagentURL:     settings.Subagent.URL, SubagentWebhookAddress: settings.Subagent.WebhookAddress,
 		SubagentWebhookURL: settings.Subagent.WebhookURL, SubagentEnabledDefault: settings.Subagent.EnabledDefault,
 		SubagentWaitTimeout: optionalDuration(settings.Subagent.WaitTimeout), SubagentMaxWait: optionalDuration(settings.Subagent.MaxWait),
 		SubagentTokenConfigured: values.SubagentTokenConfigured, SubagentWebhookConfigured: values.SubagentWebhookConfigured,
@@ -392,6 +394,7 @@ func settingsFromDTO(values SettingsValuesDTO) (config.Settings, error) {
 	settings.LLMEndpoint, settings.LLMModel, settings.LLMProviderID = values.LLMEndpoint, values.LLMModel, values.LLMProviderID
 	settings.FallbackEndpoint, settings.TypeSafeEndpoint, settings.TypeSafeModel = values.FallbackEndpoint, values.TypeSafeEndpoint, values.TypeSafeModel
 	settings.DirectInvokeAddress = values.DirectInvokeAddress
+	settings.Subagent.Backend = values.SubagentBackend
 	settings.Subagent.URL, settings.Subagent.WebhookAddress = values.SubagentURL, values.SubagentWebhookAddress
 	settings.Subagent.WebhookURL, settings.Subagent.EnabledDefault = values.SubagentWebhookURL, values.SubagentEnabledDefault
 	settings.LLMConcurrency, settings.MaxOutputTokens, settings.MaxResponseBytes = values.LLMConcurrency, values.MaxOutputTokens, values.MaxResponseBytes
