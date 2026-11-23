@@ -205,6 +205,9 @@ type Store interface {
 	ActiveTask(context.Context, agent.Key) (*Task, error)
 	// TaskByInvocation returns the task whose result turn is invocationID, or nil.
 	TaskByInvocation(context.Context, agent.Key, identity.InvocationID) (*Task, error)
+	// TurnStartsSubtask reports whether invocationID planned an
+	// execute_subtask call.
+	TurnStartsSubtask(context.Context, agent.Key, identity.InvocationID) (bool, error)
 	// LatestUndelivered returns the chat's newest finished task that was not
 	// delivered yet, or nil.
 	LatestUndelivered(context.Context, agent.Key) (*Task, error)
@@ -227,6 +230,9 @@ type Messenger interface {
 	SendText(ctx context.Context, key agent.Key, text string, quoted identity.MessageID) error
 	// SendFile sends one output file as its own message.
 	SendFile(ctx context.Context, key agent.Key, file StagedFile) error
+	// RecordSentFile records file as sent in the message providerReceipt
+	// names, which went out another way: as the image of a captioned reply.
+	RecordSentFile(ctx context.Context, key agent.Key, file StagedFile, providerReceipt string) error
 }
 
 // MessageInput is what a chat message gives a task: its files, written

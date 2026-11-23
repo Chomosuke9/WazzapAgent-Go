@@ -183,13 +183,14 @@ func (application *Application) composeRuntime(ctx context.Context) (_ *conversa
 	subagentRuntime := application.openSubagent(store, waAdapter, gate.AuthorizeSend)
 	defer func() {
 		if resultErr != nil && subagentRuntime != nil {
-			_ = subagentRuntime.listener.Close()
-			subagentRuntime.coordinator.Close()
+			subagentRuntime.close()
 		}
 	}()
 	chatState := chatStateReader{chats: waAdapter, tasks: store.Inbound(), memories: store.Memories(), stickers: store.Stickers()}
 	if subagentRuntime != nil {
 		chatState.subagent = subagentRuntime.coordinator
+		// The reply that delivers a result carries its first image.
+		dispatcher.SetAttachments(subagentAttachments{coordinator: subagentRuntime.coordinator})
 	}
 	factory := agent.FactoryFunc(func(factoryCtx context.Context, key agent.Key) (*agent.Agent, error) {
 		return agent.New(factoryCtx, key, agent.Dependencies{

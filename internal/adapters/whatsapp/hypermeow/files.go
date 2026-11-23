@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/action"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
 )
 
@@ -335,4 +336,62 @@ func imageThumbnail(path string, size int64) (thumbnail []byte, width, height ui
 		return nil, 0, 0, false
 	}
 	return encoded.Bytes(), uint32(config.Width), uint32(config.Height), true
+}
+
+// SendImageReply sends a reply as an image with the reply's text as its
+// caption. Mentions and the quote are rendered as SendText renders them. The
+// upload has the file transfer time limit; only the send is bound by the
+// send timeout.
+func (adapter *Adapter) SendImageReply(ctx context.Context, request action.SendImageRequest) (action.SendTextResult, error) {
+	const operation = "send WhatsApp image reply"
+	if !adapter.Ready() {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorNotReady, operation, errors.New("account is not connected"))
+	}
+	info, err := os.Stat(request.Path)
+	if err != nil || !info.Mode().IsRegular() {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorNotFound, operation, errors.New("image does not exist"))
+	}
+	if info.Size() > maxFileBytes {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorInvalidArgument, operation, errMediaTooLarge)
+	}
+	source, err := os.Open(request.Path)
+	if err != nil {
+		return action.SendTextResult{}, agent.NewError(agent.ErrorStorageFailure, operation, err)
+	}
+	defer source.Close()
+	uploadCtx, cancel := context.WithTimeout(ctx, fileTransferTimeout)
+	defer cancel()
+	uploaded, err := adapter.client.UploadReader(uploadCtx, source, nil, whatsmeow.MediaImage)
+	if err != nil {
+		return action.SendTextResult{}, nativeEffectError(uploadCtx, "upload WhatsApp image", err)
+	}
+	mimeType := request.Mime
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+	value := &waE2E.ImageMessage{
+		URL: proto.String(uploaded.URL), DirectPath: proto.String(uploaded.DirectPath), MediaKey: uploaded.MediaKey,
+		FileEncSHA256: uploaded.FileEncSHA256, FileSHA256: uploaded.FileSHA256, FileLength: proto.Uint64(uploaded.FileLength),
+		Mimetype: proto.String(mimeType),
+	}
+	if thumbnail, width, height, ok := imageThumbnail(request.Path, info.Size()); ok {
+		value.JPEGThumbnail, value.Width, value.Height = thumbnail, proto.Uint32(width), proto.Uint32(height)
+	}
+	return adapter.send(ctx, request.Key, operation, func(sendCtx context.Context, address string, target types.JID) (*waE2E.Message, error) {
+		if strings.TrimSpace(request.Caption) != "" {
+			text, err := adapter.textMessage(sendCtx, action.SendTextRequest{
+				Key: request.Key, ActionID: request.ActionID, Text: request.Caption, QuotedMessageID: request.QuotedMessageID,
+			}, address, target)
+			if err != nil {
+				return nil, err
+			}
+			value.Caption = proto.String(text.GetExtendedTextMessage().GetText())
+			value.ContextInfo = text.GetExtendedTextMessage().GetContextInfo()
+		} else if quote, err := adapter.quoteContext(sendCtx, request.Key, address, target, request.QuotedMessageID); err != nil {
+			return nil, err
+		} else {
+			value.ContextInfo = quote
+		}
+		return &waE2E.Message{ImageMessage: value}, nil
+	})
 }

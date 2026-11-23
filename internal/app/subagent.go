@@ -56,8 +56,14 @@ func (messenger subagentMessenger) SendFile(ctx context.Context, key agent.Key, 
 	if err != nil {
 		return err
 	}
-	// The transcript shows the file like an incoming one, so the model can
-	// name it in <files_in_chat>.
+	// The message is out: a failed record only hides it from the transcript.
+	_ = messenger.RecordSentFile(context.WithoutCancel(ctx), key, file, receipt)
+	return nil
+}
+
+// RecordSentFile shows the file in the transcript like an incoming one, so
+// the model can name it in <files_in_chat> and a later task can take it.
+func (messenger subagentMessenger) RecordSentFile(ctx context.Context, key agent.Key, file subagent.StagedFile, receipt string) error {
 	placeholder := map[string]string{
 		"image": conversation.PlaceholderImage, "video": conversation.PlaceholderVideo, "audio": conversation.PlaceholderAudio,
 	}[file.Kind]
@@ -65,8 +71,25 @@ func (messenger subagentMessenger) SendFile(ctx context.Context, key agent.Key, 
 		placeholder = conversation.PlaceholderDocument
 	}
 	sent := &subagent.SentFile{Path: file.Path, Name: file.Name, Mime: file.Mime, Kind: file.Kind, Size: file.Size}
-	_ = messenger.store.RecordSubagentMessage(context.WithoutCancel(ctx), key, placeholder+" "+file.Name, receipt, sent, messenger.clock.Now())
-	return nil
+	return messenger.store.RecordSubagentMessage(ctx, key, placeholder+" "+file.Name, receipt, sent, messenger.clock.Now())
+}
+
+// subagentAttachments lets the reply that delivers a sub-agent result carry
+// the result's first image, the reply's text as its caption.
+type subagentAttachments struct {
+	coordinator *subagent.Coordinator
+}
+
+func (attachments subagentAttachments) ReplyAttachment(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (*action.Attachment, error) {
+	file, err := attachments.coordinator.ReplyAttachment(ctx, key, invocationID)
+	if err != nil || file == nil {
+		return nil, err
+	}
+	return &action.Attachment{Path: file.Path, Mime: file.Mime}, nil
+}
+
+func (attachments subagentAttachments) AttachmentSent(ctx context.Context, key agent.Key, invocationID identity.InvocationID, providerReceipt string) error {
+	return attachments.coordinator.AttachmentSent(ctx, key, invocationID, providerReceipt)
 }
 
 // subagentInputs reads a chat message for a task: the file of a message
@@ -167,6 +190,9 @@ type subagentRuntime struct {
 // only leave the chat waiting.
 func (application *Application) openSubagent(store *appsqlite.Store, adapter *whatsapp.Adapter, authorize func(context.Context, agent.Key) error) *subagentRuntime {
 	settings := application.config.Subagent()
+	if settings.MetaAI() {
+		return application.openMetaAISubagent(store, adapter, authorize)
+	}
 	if settings.URL == "" {
 		return nil
 	}
@@ -197,12 +223,52 @@ func (application *Application) openSubagent(store *appsqlite.Store, adapter *wh
 	return &subagentRuntime{coordinator: coordinator, listener: listener}
 }
 
+// openMetaAISubagent creates the sub-agent that hands tasks to Meta AI on
+// the bot's own account. It needs no callback server.
+func (application *Application) openMetaAISubagent(store *appsqlite.Store, adapter *whatsapp.Adapter, authorize func(context.Context, agent.Key) error) *subagentRuntime {
+	settings := application.config.Subagent()
+	coordinator, err := subagent.NewCoordinator(subagent.Config{
+		DataDir: filepath.Join(application.config.TenantDataDir(), "subagent"), EnabledDefault: settings.EnabledDefault,
+	}, subagent.Dependencies{
+		TenantID: application.config.TenantID(), AccountID: application.config.AccountID(), Store: store.Subagent(),
+		Messenger: subagentMessenger{adapter: adapter, store: store.Subagent(), authorize: authorize, clock: agent.SystemClock{}},
+		Inputs:    subagentInputs{adapter: adapter, inbound: store.Inbound(), store: store.Subagent()},
+		Authorize: authorize, Logger: application.logger.With("component", "subagent", "backend", "metaai"),
+		MetaAI: adapter,
+	})
+	if err != nil {
+		application.logger.Error("sub-agent disabled", "error", err)
+		return nil
+	}
+	adapter.SetMetaAIHandler(func(message whatsapp.MetaAIMessage) {
+		coordinator.ReceiveMetaAI(subagent.MetaAIEvent{
+			ReplyID: message.ReplyID, Final: message.Final, ImagePending: message.ImagePending,
+			Text: message.Text, Image: message.Image, ImageMime: message.ImageMime,
+		})
+	})
+	return &subagentRuntime{coordinator: coordinator}
+}
+
+// close releases the sub-agent of an Agent that failed to start.
+func (runtime *subagentRuntime) close() {
+	if runtime.listener != nil {
+		_ = runtime.listener.Close()
+	}
+	runtime.coordinator.Close()
+}
+
 // serve answers the service's callbacks until ctx ends, then stops waiting
-// for tasks. Tasks stay saved for the next start.
+// for tasks. Tasks stay saved for the next start. Meta AI has no callbacks:
+// it only waits for ctx.
 func (runtime *subagentRuntime) serve(ctx context.Context, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
 }) error {
+	if runtime.listener == nil {
+		<-ctx.Done()
+		runtime.coordinator.Close()
+		return nil
+	}
 	server := &http.Server{
 		Handler: runtime.coordinator.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		// A completion may carry large inline files.

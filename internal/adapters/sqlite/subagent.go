@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/agent"
+	"github.com/Chomosuke9/WazzapAgent-Go/internal/effect"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/identity"
 	"github.com/Chomosuke9/WazzapAgent-Go/internal/subagent"
 )
@@ -100,6 +101,26 @@ func (store *SubagentStore) ActiveTask(ctx context.Context, key agent.Key) (*sub
 
 func (store *SubagentStore) TaskByInvocation(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (*subagent.Task, error) {
 	return store.chatTask(ctx, key, `invocation_id = ?`, invocationID.String())
+}
+
+// TurnStartsSubtask reports whether invocationID planned an execute_subtask
+// effect in the chat.
+func (store *SubagentStore) TurnStartsSubtask(ctx context.Context, key agent.Key, invocationID identity.InvocationID) (bool, error) {
+	if err := key.Validate(); err != nil || invocationID.IsZero() {
+		return false, agent.NewError(agent.ErrorInvalidArgument, "read sub-agent turn", errors.New("chat and invocation are required"))
+	}
+	var found int
+	err := store.read.QueryRowContext(ctx, `SELECT 1 FROM typed_effects
+	  WHERE tenant_id = ? AND account_id = ? AND chat_id = ? AND invocation_id = ? AND kind = ? LIMIT 1`,
+		key.TenantID.String(), key.AccountID.String(), key.ChatID.String(), invocationID.String(), uint8(effect.KindSubtask),
+	).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, storageError("read sub-agent turn", err)
+	}
+	return true, nil
 }
 
 func (store *SubagentStore) LatestUndelivered(ctx context.Context, key agent.Key) (*subagent.Task, error) {

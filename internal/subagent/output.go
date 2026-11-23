@@ -340,7 +340,9 @@ func resultBlock(finished string) string {
 		"1. RESULT IS GOOD → send EXACTLY ONE `reply_message` summarising " +
 		"the report for the user, in their language and WhatsApp " +
 		"formatting. Output files (if any) are auto-attached after your " +
-		"reply; do NOT mention paths or upload them yourself.\n" +
+		"reply; do NOT mention paths or upload them yourself. If an image " +
+		"is attached, your reply is sent as its caption: keep it under " +
+		"1000 characters and write it as a caption for that image.\n" +
 		"2. RESULT IS WRONG / INCOMPLETE / FAILED → call `execute_subtask` " +
 		"again now with a revised instruction to fix or retry it. The " +
 		"sub-agent KEEPS its workspace and every file already sent, so do " +

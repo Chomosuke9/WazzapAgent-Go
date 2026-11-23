@@ -8,8 +8,31 @@ import (
 	"time"
 )
 
+const (
+	// SubagentBackendService hands tasks to a WazzapSubAgents service.
+	SubagentBackendService = "service"
+	// SubagentBackendMetaAI hands tasks to Meta AI over the bot's own
+	// WhatsApp account. It generates and edits images, looks at images and
+	// searches the internet, answering with text and images.
+	SubagentBackendMetaAI = "metaai"
+)
+
+// MetaAI reports whether tasks go to Meta AI.
+func (settings SubagentSettings) MetaAI() bool {
+	return strings.EqualFold(strings.TrimSpace(settings.Backend), SubagentBackendMetaAI)
+}
+
+// Configured reports whether there is a sub-agent at all.
+func (settings SubagentSettings) Configured() bool {
+	return settings.MetaAI() || strings.TrimSpace(settings.URL) != ""
+}
+
 // normalized trims the values and fills in the defaults.
 func (settings SubagentSettings) normalized() SubagentSettings {
+	settings.Backend = strings.ToLower(strings.TrimSpace(settings.Backend))
+	if settings.Backend == "" {
+		settings.Backend = SubagentBackendService
+	}
 	settings.URL = strings.TrimRight(strings.TrimSpace(settings.URL), "/")
 	settings.APIToken = strings.TrimSpace(settings.APIToken)
 	settings.WebhookAddress = nonempty(strings.TrimSpace(settings.WebhookAddress), defaultSubagentWebhookAddress)
@@ -45,13 +68,16 @@ func (settings SubagentSettings) WebhookLoopback() bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// issue is the first problem with a configured sub-agent, or nil. Nothing is
-// checked while no URL is set.
+// issue is the first problem with a configured sub-agent, or nil. Nothing
+// about the service is checked while no URL is set or Meta AI is used.
 func (settings SubagentSettings) issue() *ReadinessIssue {
-	if strings.TrimSpace(settings.URL) == "" {
+	normalized := settings.normalized()
+	if normalized.Backend != SubagentBackendService && normalized.Backend != SubagentBackendMetaAI {
+		return &ReadinessIssue{Field: "SUBAGENT_BACKEND", Code: "invalid", Message: "sub-agent backend must be service or metaai"}
+	}
+	if normalized.MetaAI() || normalized.URL == "" {
 		return nil
 	}
-	normalized := settings.normalized()
 	for _, field := range []struct{ key, value string }{{"SUBAGENT_URL", normalized.URL}, {"SUBAGENT_WEBHOOK_URL", normalized.WebhookURL}} {
 		if err := validateServiceURL(field.value); err != nil {
 			return &ReadinessIssue{Field: field.key, Code: "invalid", Message: "sub-agent URL is invalid"}
