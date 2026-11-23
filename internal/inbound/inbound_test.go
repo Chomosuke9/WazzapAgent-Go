@@ -740,9 +740,10 @@ func TestPermissionCommandDurablyControlsModerationWithoutChangingDefaultReactio
 		request.Capabilities.Has("group.mute") || request.Capabilities.Has("group.kick") {
 		t.Fatalf("model invocation capabilities = %#v", request.Capabilities.Values())
 	}
-	// The bot may run the settings, memory, sticker and task commands; the
-	// prompt says for whom. /catch, /help and /info are for people only.
-	if !slices.Equal(request.Commands, []string{"add-sticker", "daily-task", "memory", "permission", "prompt", "remove-sticker", "schedule-task"}) {
+	// The bot may run the settings, memory, sticker and task commands, and
+	// make stickers; the prompt says for whom. /catch, /help and /info are
+	// for people only.
+	if !slices.Equal(request.Commands, []string{"add-sticker", "daily-task", "memory", "permission", "prompt", "remove-sticker", "schedule-task", "sticker"}) {
 		t.Fatalf("model command grants = %#v / %#v", request.Capabilities.Values(), request.Commands)
 	}
 

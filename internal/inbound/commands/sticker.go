@@ -11,11 +11,14 @@ import (
 
 func init() {
 	register(command.Command{
-		Name:        "sticker",
-		Aliases:     []string{"stiker"},
-		Permission:  "public and !fromMe",
-		Description: "Turns an image, GIF, video or sticker into a sticker. Send it with the caption /sticker, or reply to it with /sticker. Add meme text with /sticker top text#bottom text.",
-		Run:         runSticker,
+		Name:    "sticker",
+		Aliases: []string{"stiker"},
+		// The bot runs it too, when asked, with the media's message as the
+		// command target; see <chat_settings> in the system prompt.
+		Permission: "public",
+		Description: "Turns an image, GIF, video or sticker into a sticker. Send it with the caption /sticker, or reply to it with /sticker. Add meme text with /sticker top text#bottom text. " +
+			"The AI runs it with the media's message as the command target.",
+		Run: runSticker,
 	})
 }
 

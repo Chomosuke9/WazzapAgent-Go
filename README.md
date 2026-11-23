@@ -11,7 +11,7 @@ WazzapAgent Go is a complete rewrite of WazzapAgent: a self-hosted WhatsApp assi
 - Send broadcasts to multiple groups immediately or schedule them for later.
 - View conversation activity and Agent usage in the dashboard and analytics pages.
 - Use group moderation commands when the requester and the bot account have the required permissions.
-- Make stickers with `/sticker`, and save named stickers with `/add-sticker` that the Agent can send in that chat.
+- Make stickers with `/sticker` (or ask the Agent to make one), and save named stickers with `/add-sticker` that the Agent can send in that chat.
 - Delegate tasks the Agent cannot do alone (files, code, the web) to a [WazzapSubAgents](https://github.com/Chomosuke9/WazzapSubAgents) sub-agent, per chat with `/subagent on`: the Agent can steer a running task, the chat sees its queue position, and the report and output files are delivered when it finishes. Configure it under Settings or with the `SUBAGENT_*` variables in `.env.example`. Without a service, `SUBAGENT_BACKEND=metaai` uses Meta AI from the bot's own WhatsApp account instead, for generating and editing images, answering about images and searching the internet.
 - Keep conversation history and Agent actions durable across restarts.
 
